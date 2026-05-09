@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.43] - 2026-05-09
+
+### Security
+- Closed the silent suppression in `mcp/health.py`: the
+  `notifications/initialized` best-effort send during health-check
+  initialize previously swallowed all exceptions with `pass`. It now
+  catches only `httpx.HTTPError` and logs at DEBUG with the affected
+  server name, mirroring the equivalent fix in `mcp/proxy.py` (1.2.38).
+
+### Changed
+- Closed `mcp/health.py` for the audit's A1 finding by narrowing the
+  remaining `except Exception` blocks:
+  - Health-check loop guard (top of `_health_check_loop`): kept broad
+    with `# noqa: BLE001` and a comment — this is an intentional
+    long-running-loop backstop that must absorb anything to keep the
+    checker alive between intervals.
+  - Token-refresh attempt during 401 handling: `(httpx.HTTPError,
+    sqlite3.Error, ValueError, KeyError)`.
+  - Per-server check fallback (after specific TimeoutException /
+    HTTPStatusError): `(httpx.HTTPError, json.JSONDecodeError,
+    ValueError, KeyError, sqlite3.Error, RuntimeError)`.
+  - Initialize attempt outer: `(httpx.HTTPError, json.JSONDecodeError,
+    ValueError, KeyError, RuntimeError)`.
+
+### Notes
+- No behaviour change. 184 tests pass.
+
 ## [1.2.42] - 2026-05-09
 
 ### Changed
@@ -324,6 +351,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.43]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.43
 [1.2.42]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.42
 [1.2.41]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.41
 [1.2.40]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.40

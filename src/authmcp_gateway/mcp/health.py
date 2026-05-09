@@ -1,7 +1,9 @@
 """Health check mechanism for backend MCP servers."""
 
 import asyncio
+import json
 import logging
+import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
@@ -88,7 +90,11 @@ class HealthChecker:
         while self._running:
             try:
                 await self.check_all_servers()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — loop guard, must never die
+                # Long-running background loop. Any failure (transient
+                # network glitch, DB lock, bug in a downstream call) must
+                # be logged and absorbed so the health checker keeps
+                # running for subsequent intervals.
                 logger.error(f"Error in health check loop: {e}")
 
             # Wait for next check
@@ -256,7 +262,12 @@ class HealthChecker:
                             logger.error(
                                 f"Token refresh failed during health check for {server_name}: {error}"
                             )
-                    except Exception as refresh_error:
+                    except (
+                        httpx.HTTPError,
+                        sqlite3.Error,
+                        ValueError,
+                        KeyError,
+                    ) as refresh_error:
                         logger.error(
                             f"Exception during token refresh in health check: {refresh_error}"
                         )
@@ -326,7 +337,18 @@ class HealthChecker:
                 "checked_at": datetime.now(timezone.utc),
             }
 
-        except Exception as e:
+        except (
+            httpx.HTTPError,
+            json.JSONDecodeError,
+            ValueError,
+            KeyError,
+            sqlite3.Error,
+            RuntimeError,
+        ) as e:
+            # Catches everything the inner try block can realistically raise
+            # that wasn't handled by the specific httpx.TimeoutException /
+            # HTTPStatusError above. RuntimeError covers backends that turn
+            # JSON-RPC errors into Python exceptions during initialize.
             error_msg = str(e)
             logger.error(f"Health check: {server_name} - Unexpected error: {error_msg}")
 
@@ -386,11 +408,24 @@ class HealthChecker:
                         json={"jsonrpc": "2.0", "method": "notifications/initialized"},
                         headers=notify_headers,
                     )
-                except Exception:
-                    pass
+                except httpx.HTTPError as notify_err:
+                    # Best-effort post-init handshake; log so operators can
+                    # correlate degraded backend behaviour. Same rationale as
+                    # the parallel block in mcp/proxy.py.
+                    logger.debug(
+                        "Health-check notifications/initialized to %s failed " "(best-effort): %s",
+                        server_name,
+                        notify_err,
+                    )
 
             return session_id
-        except Exception as e:
+        except (
+            httpx.HTTPError,
+            json.JSONDecodeError,
+            ValueError,
+            KeyError,
+            RuntimeError,
+        ) as e:
             logger.debug(f"Health check: initialize failed for {server_name}: {e}")
             return ""
 

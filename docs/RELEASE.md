@@ -18,6 +18,20 @@ Update both files to the same version:
 
 Example: `1.2.19 -> 1.2.20`
 
+## 2b. Update CHANGELOG
+
+Add a new entry to `CHANGELOG.md` for the new version. Follow the
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) sections
+(`### Security / Added / Changed / Fixed / Removed`) and add the link
+reference at the bottom of the file:
+
+```
+[X.Y.Z]: https://github.com/loglux/authmcp-gateway/releases/tag/vX.Y.Z
+```
+
+This is the user-visible release record on PyPI / GitHub — commit messages
+alone are not discoverable.
+
 ## 3. Commit And Push
 
 ```bash

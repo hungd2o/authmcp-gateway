@@ -7,7 +7,7 @@ from urllib.parse import urlencode, urlparse
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 
-from authmcp_gateway.utils import get_request_ip
+from authmcp_gateway.utils import get_request_ip, validate_scopes
 
 from ..rate_limiter import get_rate_limiter
 from .client_store import (
@@ -80,13 +80,22 @@ async def authorize_page(request: Request) -> Response:
             status_code=400,
         )
 
+    # OAuth 2.1 §3.3 / RFC 6749 §3.3: reject scopes outside the server allowlist
+    # so clients cannot inflate permissions with arbitrary strings.
+    config = request.app.state.config
+    scopes_ok, unknown_scopes = validate_scopes(scope, config.auth.allowed_scopes)
+    if not scopes_ok:
+        unknown_str = " ".join(sorted(unknown_scopes))
+        return HTMLResponse(
+            f"<h1>Error</h1><p>Unsupported scope(s): {html.escape(unknown_str)}.</p>",
+            status_code=400,
+        )
+
     # Validate client_id — seamless approach:
     # 1. Known DCR client → strict redirect_uri check against registered URIs
     # 2. URL-based client_id (e.g. https://claude.ai) → accept if redirect_uri same-origin
     # 3. Unknown non-URL client → reject
     try:
-        config = request.app.state.config
-
         # Check DCR-registered clients first
         registered_client = get_oauth_client_by_client_id(config.auth.sqlite_path, client_id)
         if registered_client:

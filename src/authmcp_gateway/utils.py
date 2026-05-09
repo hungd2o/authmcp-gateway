@@ -1,6 +1,6 @@
 """Utility functions for AuthMCP Gateway."""
 
-from typing import List, Optional
+from typing import Iterable, List, Optional, Set, Tuple
 
 from starlette.requests import Request
 
@@ -25,6 +25,29 @@ def _parse_scopes(scopes_value: str) -> List[str]:
         return []
     parts = [part.strip() for part in scopes_value.replace(",", " ").split()]
     return [part for part in parts if part]
+
+
+def validate_scopes(
+    requested_scope: Optional[str], allowed: Iterable[str]
+) -> Tuple[bool, Set[str]]:
+    """Check that every requested scope token is present in *allowed*.
+
+    Args:
+        requested_scope: Raw scope string from the OAuth request, or None.
+        allowed: Iterable of permitted scope tokens (typically AuthConfig.allowed_scopes).
+
+    Returns:
+        ``(True, empty_set)`` when every requested token is in *allowed* (or the
+        request has no scope at all). Otherwise ``(False, unknown_scope_tokens)``.
+    """
+    allowed_set = set(allowed)
+    if not requested_scope:
+        return True, set()
+    requested = set(_parse_scopes(requested_scope))
+    unknown = requested - allowed_set
+    if unknown:
+        return False, unknown
+    return True, set()
 
 
 def get_request_ip(request: Optional[Request]) -> Optional[str]:

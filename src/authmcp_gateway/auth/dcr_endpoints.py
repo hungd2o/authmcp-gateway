@@ -9,7 +9,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from ..rate_limiter import get_rate_limiter
-from ..utils import get_request_ip
+from ..utils import get_request_ip, validate_scopes
 from .client_store import (
     create_oauth_client,
     delete_oauth_client,
@@ -156,6 +156,14 @@ async def register_client(request: Request) -> JSONResponse:
             "UNSUPPORTED_AUTH_METHOD",
         )
 
+    scopes_ok, unknown_scopes = validate_scopes(metadata.get("scope"), config.auth.allowed_scopes)
+    if not scopes_ok:
+        return _error_response(
+            400,
+            f"Unsupported scope(s): {' '.join(sorted(unknown_scopes))}",
+            "INVALID_SCOPE",
+        )
+
     registration_client_uri_base = f"{config.mcp_public_url}/oauth/register"
     base = create_oauth_client(
         db_path=config.auth.sqlite_path,
@@ -238,6 +246,14 @@ async def update_client(request: Request) -> JSONResponse:
             400,
             f"Unsupported token_endpoint_auth_method: {token_auth_method}",
             "UNSUPPORTED_AUTH_METHOD",
+        )
+
+    scopes_ok, unknown_scopes = validate_scopes(metadata.get("scope"), config.auth.allowed_scopes)
+    if not scopes_ok:
+        return _error_response(
+            400,
+            f"Unsupported scope(s): {' '.join(sorted(unknown_scopes))}",
+            "INVALID_SCOPE",
         )
 
     updated = update_oauth_client(config.auth.sqlite_path, client_id, metadata)

@@ -193,7 +193,8 @@ def test_openid_configuration_advertises_supported_auth_code_metadata(db_path):
         assert body["response_types_supported"] == ["code"]
         assert body["grant_types_supported"] == ["authorization_code", "refresh_token"]
         assert body["token_endpoint_auth_methods_supported"] == ["none"]
-        assert body["code_challenge_methods_supported"] == ["S256", "plain"]
+        # 'plain' was removed in 1.2.32 (RFC 7636 §4.2 / OAuth 2.1 — S256 only).
+        assert body["code_challenge_methods_supported"] == ["S256"]
         assert "offline_access" in body["scopes_supported"]
 
 
@@ -216,6 +217,23 @@ def test_dcr_register_omits_null_optional_fields_for_public_client(db_path):
         assert body["redirect_uris"] == ["http://localhost:3000/callback"]
         assert "client_secret" not in body
         assert "scope" not in body
+
+
+def test_dcr_register_rejects_unknown_scope(db_path):
+    """DCR client metadata with non-allowlisted scope must be rejected (S6)."""
+    with _create_test_client(db_path, allow_dcr=True) as client:
+        response = client.post(
+            "/oauth/register",
+            json={
+                "redirect_uris": ["http://localhost:3000/callback"],
+                "token_endpoint_auth_method": "none",
+                "client_name": "Bad Scope Client",
+                "scope": "openid admin:everything",
+            },
+        )
+        assert response.status_code == 400
+        body = response.json()
+        assert "scope" in str(body).lower()
 
 
 def test_oauth_token_auth_code_returns_scope_and_id_token_for_openid(db_path):

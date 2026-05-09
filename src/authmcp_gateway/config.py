@@ -135,6 +135,12 @@ class AuthConfig:
     password_require_lowercase: bool = True
     password_require_digit: bool = True
     password_require_special: bool = True
+    # OAuth scope allowlist — requests for any scope outside this set are rejected
+    # at /authorize and /oauth/register. The default mirrors the OIDC scopes the
+    # gateway can actually fulfil today; extend via AUTH_ALLOWED_SCOPES env.
+    allowed_scopes: Set[str] = field(
+        default_factory=lambda: {"openid", "profile", "email", "offline_access"}
+    )
 
 
 @dataclass
@@ -287,6 +293,11 @@ def load_config() -> AppConfig:
     )
 
     # Auth Configuration
+    # AUTH_ALLOWED_SCOPES accepts space- or comma-separated scope tokens
+    # (e.g. "openid profile email" or "openid,profile,email").
+    from .utils import _parse_scopes
+
+    allowed_scopes_env = set(_parse_scopes(os.getenv("AUTH_ALLOWED_SCOPES", "")))
     auth_config = AuthConfig(
         allow_registration=_env_bool("ALLOW_REGISTRATION", False),
         allow_dcr=_env_bool("ALLOW_DCR", False),
@@ -298,6 +309,7 @@ def load_config() -> AppConfig:
         password_require_lowercase=_env_bool("PASSWORD_REQUIRE_LOWERCASE", True),
         password_require_digit=_env_bool("PASSWORD_REQUIRE_DIGIT", True),
         password_require_special=_env_bool("PASSWORD_REQUIRE_SPECIAL", True),
+        **({"allowed_scopes": allowed_scopes_env} if allowed_scopes_env else {}),
     )
 
     # Rate Limiting Configuration

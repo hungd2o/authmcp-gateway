@@ -209,12 +209,21 @@ def create_app(config=None):
     # ENDPOINT CLOSURES (capture config, mcp_handler, mcp_proxy from scope)
     # ========================================================================
 
+    def _sorted_scopes(extra_excluded: set = frozenset()) -> list:
+        """Render allowed_scopes in deterministic order, optionally dropping some."""
+        return sorted(s for s in config.auth.allowed_scopes if s not in extra_excluded)
+
     async def oauth_protected_resource(_: Request) -> JSONResponse:
-        """OAuth protected resource metadata."""
+        """OAuth protected resource metadata.
+
+        Per MCP authorization spec, ``offline_access`` SHOULD NOT appear in
+        Protected Resource Metadata ``scopes_supported`` — it concerns refresh
+        token issuance on the AS, not access to this resource.
+        """
         body = {
             "resource": config.mcp_public_url,
             "authorization_servers": [f"{config.mcp_public_url}/"],
-            "scopes_supported": ["openid", "profile", "email", "offline_access"],
+            "scopes_supported": _sorted_scopes(extra_excluded={"offline_access"}),
         }
         return JSONResponse(body)
 
@@ -225,11 +234,11 @@ def create_app(config=None):
             "authorization_endpoint": f"{config.mcp_public_url}/authorize",
             "token_endpoint": f"{config.mcp_public_url}/oauth/token",
             "jwks_uri": f"{config.mcp_public_url}/.well-known/jwks.json",
-            "scopes_supported": ["openid", "profile", "email", "offline_access"],
+            "scopes_supported": _sorted_scopes(),
             "response_types_supported": ["code"],
             "grant_types_supported": ["authorization_code", "password", "refresh_token"],
             "token_endpoint_auth_methods_supported": ["none"],
-            "code_challenge_methods_supported": ["S256", "plain"],
+            "code_challenge_methods_supported": ["S256"],
         }
         if config.auth.allow_dcr:
             response["token_endpoint_auth_methods_supported"] = [
@@ -251,12 +260,12 @@ def create_app(config=None):
             "token_endpoint": f"{config.mcp_public_url}/oauth/token",
             "userinfo_endpoint": f"{config.mcp_public_url}/auth/me",
             "jwks_uri": f"{config.mcp_public_url}/.well-known/jwks.json",
-            "scopes_supported": ["openid", "profile", "email", "offline_access"],
+            "scopes_supported": _sorted_scopes(),
             "response_types_supported": ["code"],
             "grant_types_supported": ["authorization_code", "refresh_token"],
             "subject_types_supported": ["public"],
             "token_endpoint_auth_methods_supported": ["none"],
-            "code_challenge_methods_supported": ["S256", "plain"],
+            "code_challenge_methods_supported": ["S256"],
             "id_token_signing_alg_values_supported": [config.jwt.algorithm],
         }
         if config.auth.allow_dcr:

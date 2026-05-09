@@ -6,7 +6,7 @@ import sqlite3
 from dataclasses import replace
 
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from authmcp_gateway.auth.password import hash_password, validate_password_strength
 from authmcp_gateway.auth.user_store import create_user, get_all_users
@@ -29,8 +29,8 @@ def is_setup_required(request: Request) -> bool:
         return False
 
 
-async def setup_page(request: Request) -> HTMLResponse:
-    """Display setup wizard page."""
+async def setup_page(request: Request) -> Response:
+    """Display setup wizard page (or redirect to /admin if setup is done)."""
     if not is_setup_required(request):
         return RedirectResponse(url="/admin", status_code=302)
 

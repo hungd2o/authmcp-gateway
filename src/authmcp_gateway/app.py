@@ -4,6 +4,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import AbstractSet
 
 from starlette.applications import Starlette
 from starlette.middleware.gzip import GZipMiddleware
@@ -209,7 +210,7 @@ def create_app(config=None):
     # ENDPOINT CLOSURES (capture config, mcp_handler, mcp_proxy from scope)
     # ========================================================================
 
-    def _sorted_scopes(extra_excluded: set = frozenset()) -> list:
+    def _sorted_scopes(extra_excluded: AbstractSet[str] = frozenset()) -> list:
         """Render allowed_scopes in deterministic order, optionally dropping some."""
         return sorted(s for s in config.auth.allowed_scopes if s not in extra_excluded)
 
@@ -298,7 +299,9 @@ def create_app(config=None):
                 raw = value.to_bytes(byte_len, "big")
                 return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
-            public_key = serialization.load_pem_public_key(config.jwt.public_key.encode("utf-8"))
+            public_key = serialization.load_pem_public_key(  # type: ignore[attr-defined]
+                config.jwt.public_key.encode("utf-8")
+            )
             if not isinstance(public_key, rsa.RSAPublicKey):
                 logger.warning("RS256 is enabled but configured public key is not RSA")
                 return JSONResponse({"keys": []})

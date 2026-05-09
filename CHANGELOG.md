@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.61] - 2026-05-09
+
+### Changed
+- mypy cleanup (Admin + misc, **final batch**): cleared the last 8
+  errors across 6 files. **mypy: 0 errors across 52 source files.**
+- One real defensive hardening: `admin_auth.py` had the same
+  `int(payload.get("sub"))` gap as `auth/endpoints.py` and
+  `admin/user_pages.py` — would crash on `int(None)` for a
+  malformed admin JWT. Now guards with `if not sub:` and returns
+  the standard `_unauthorized` response.
+- `setup_wizard.py:setup_page` declared `-> HTMLResponse` but already
+  returned `RedirectResponse` when setup was complete. Widened to
+  `Response` (same fix applied to `user_portal` in 1.2.55).
+- `admin/mcp_tokens_api.py:api_get_token_audit_logs` reassigned
+  `server_id` from `Optional[str]` → `int` in-place. mypy can't
+  type-narrow across reassignment. Renamed the raw value to
+  `server_id_raw` and built the `Optional[int]` cleanly.
+- `admin/routes.py` `get_config` and the `api_error_handler`
+  decorator wrapper had `[no-any-return]` because Starlette's
+  `request.app.state` is typed `Any`. Added explicit
+  `cast(AppConfig, ...)` and `cast(JSONResponse, ...)`.
+- `app.py:_sorted_scopes` declared `extra_excluded: set =
+  frozenset()` — `frozenset` is not a `set`. Switched to
+  `AbstractSet[str]` so callers can pass either, and the default
+  `frozenset()` is type-correct.
+- `app.py` JWKS `serialization.load_pem_public_key(...)` —
+  cryptography's typeshed stubs don't expose this re-export at the
+  module level even though it's part of the public API. Tagged
+  with `# type: ignore[attr-defined]`.
+
+### mypy campaign complete
+- Started in 1.2.52 at 135 errors across 23 files.
+- 10 releases (1.2.52–1.2.61) covering Auth, MCP, Admin, security,
+  config, and app boot layers.
+- 8 real defensive-coding gaps closed along the way:
+  - Three `int(payload.get("sub"))` crash sites (admin_auth,
+    auth/endpoints ×2, admin/user_pages).
+  - `asyncio.gather(return_exceptions=True)` BaseException leakage
+    in 4 fan-out sites (proxy.py + health.py + token_refresher.py).
+  - `get_mcp_server` None-deref in proxy.py 401 retry and health.py
+    401 retry.
+  - `auth/authorize_endpoint.py` accepting `UploadFile` in the
+    `username` form field.
+  - `mcp/proxy.py:read_resource` declared `-> Dict` but actually
+    returned `Tuple` — caller already unpacked.
+
+### Notes
+- mypy: 8 -> 0 errors. 184 tests pass.
+- `make typecheck` is now part of the green-build set.
+
 ## [1.2.60] - 2026-05-09
 
 ### Changed
@@ -806,6 +856,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.61]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.61
 [1.2.60]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.60
 [1.2.59]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.59
 [1.2.58]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.58

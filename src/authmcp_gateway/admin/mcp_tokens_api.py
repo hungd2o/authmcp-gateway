@@ -84,10 +84,8 @@ async def api_get_token_audit_logs(request: Request) -> JSONResponse:
 
     # Get limit from query params
     limit = int(request.query_params.get("limit", 50))
-    server_id = request.query_params.get("server_id")
-
-    if server_id:
-        server_id = int(server_id)
+    server_id_raw = request.query_params.get("server_id")
+    server_id = int(server_id_raw) if server_id_raw else None
 
     logs = get_token_audit_logs(
         db_path=get_config(request).auth.sqlite_path, mcp_server_id=server_id, limit=limit

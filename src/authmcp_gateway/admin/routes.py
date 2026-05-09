@@ -10,7 +10,7 @@ import logging
 import os
 from functools import wraps
 from pathlib import Path
-from typing import Callable
+from typing import Callable, cast
 
 from jinja2 import Environment, FileSystemLoader
 from starlette.requests import Request
@@ -49,7 +49,7 @@ def get_config(request: Request) -> AppConfig:
 
     Submodules call this at *runtime* to access the live AppConfig.
     """
-    return request.app.state.config
+    return cast(AppConfig, request.app.state.config)
 
 
 def render_template(template_name: str, **context) -> HTMLResponse:
@@ -84,7 +84,7 @@ def api_error_handler(func: Callable) -> Callable:
     @wraps(func)
     async def wrapper(*args, **kwargs) -> JSONResponse:
         try:
-            return await func(*args, **kwargs)
+            return cast(JSONResponse, await func(*args, **kwargs))
         except Exception as e:
             logger.exception(f"{func.__name__} failed: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)

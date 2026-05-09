@@ -81,7 +81,10 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                 return self._unauthorized(request, "Token has been revoked")
 
             # Check if user is superuser
-            user_id = int(payload.get("sub"))
+            sub = payload.get("sub")
+            if not sub:
+                return self._unauthorized(request, "Invalid token: missing sub")
+            user_id = int(sub)
             is_superuser = payload.get("is_superuser", False)
 
             # Enforce single active token per user (if enabled)

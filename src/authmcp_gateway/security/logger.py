@@ -2,6 +2,7 @@
 
 import json
 import logging
+import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
@@ -67,7 +68,7 @@ def log_security_event(
             f"user={username or 'N/A'}, ip={ip_address or 'N/A'})"
         )
 
-    except Exception as e:
+    except sqlite3.Error as e:
         logger.error(f"Failed to log security event: {e}")
 
 
@@ -219,7 +220,10 @@ def log_mcp_request(
                             f"running cleanup with days_to_keep={days}"
                         )
                         cleanup_old_logs(db_path, days_to_keep=days)
-                except Exception as e:
+                except (sqlite3.Error, OSError) as e:
+                    # PRAGMA queries + cleanup_old_logs (which writes an
+                    # archive file when configured). Either failing here is
+                    # non-critical; the log record itself is already saved.
                     logger.debug(f"MCP DB size check failed: {e}")
 
         logger.debug(
@@ -227,7 +231,7 @@ def log_mcp_request(
             f"success={success}, time={response_time_ms}ms)"
         )
 
-    except Exception as e:
+    except sqlite3.Error as e:
         logger.error(f"Failed to log MCP request: {e}")
 
 
@@ -312,7 +316,9 @@ def cleanup_old_logs(db_path: str, days_to_keep: int = 30) -> Dict[str, int]:
 
         return result
 
-    except Exception as e:
+    except (sqlite3.Error, OSError) as e:
+        # Cleanup runs DELETE statements and may write a JSONL archive file
+        # when the config enables it; either path can fail non-fatally.
         logger.error(f"Failed to cleanup old logs: {e}")
         return {"error": str(e)}
 
@@ -362,7 +368,7 @@ def get_security_events(
             cursor.execute(query, params)
             return [dict(row) for row in cursor.fetchall()]
 
-    except Exception as e:
+    except sqlite3.Error as e:
         logger.error(f"Failed to get security events: {e}")
         return []
 
@@ -452,7 +458,7 @@ def get_mcp_request_stats(db_path: str, last_hours: int = 24) -> Dict[str, Any]:
             "time_window_hours": last_hours,
         }
 
-    except Exception as e:
+    except sqlite3.Error as e:
         logger.error(f"Failed to get MCP request stats: {e}")
         return {
             "error": str(e),
@@ -646,6 +652,9 @@ def get_mcp_requests(
         requests.sort(key=lambda x: x["timestamp"], reverse=True)
         return requests[:limit]
 
-    except Exception as e:
+    except (sqlite3.Error, OSError, KeyError) as e:
+        # Reads from SQLite (DB-enabled path) and may fall through to a
+        # rotating log file (OSError on missing/locked file). KeyError
+        # protects the dict-access in row → dict mapping.
         logger.error(f"Error reading MCP requests: {e}")
         return []

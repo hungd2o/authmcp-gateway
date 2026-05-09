@@ -1,7 +1,9 @@
 """Admin: User portal pages (login, account, token management)."""
 
 import logging
+import sqlite3
 
+import jwt
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
@@ -43,7 +45,7 @@ async def user_portal(request: Request) -> HTMLResponse:
         payload = verify_token(token, "access", _config.jwt)
         if payload.get("is_superuser"):
             return RedirectResponse(url="/admin", status_code=302)
-    except Exception:
+    except jwt.PyJWTError:
         return RedirectResponse(url="/login", status_code=302)
 
     username = payload.get("username")
@@ -52,7 +54,10 @@ async def user_portal(request: Request) -> HTMLResponse:
             user = get_user_by_id(_config.auth.sqlite_path, int(payload["sub"]))
             if user:
                 username = user.get("username")
-        except Exception:
+        except (sqlite3.Error, ValueError, TypeError):
+            # ValueError/TypeError on int(payload["sub"]) for malformed sub;
+            # sqlite3.Error from the DB lookup. Either is non-fatal — page
+            # still renders without a friendly username.
             username = None
 
     return render_template("user_portal.html", username=username)
@@ -101,7 +106,7 @@ async def user_login_api(request: Request) -> JSONResponse:
     if upgraded_hash:
         try:
             update_user_password_hash(_config.auth.sqlite_path, user["id"], upgraded_hash)
-        except Exception:
+        except sqlite3.Error:
             logger.exception("Failed to upgrade password hash for user '%s'", username)
 
     if user.get("is_superuser"):
@@ -159,7 +164,7 @@ async def user_account_token(request: Request) -> JSONResponse:
             return JSONResponse(
                 {"detail": "Admin accounts must use the admin panel."}, status_code=403
             )
-    except Exception:
+    except (jwt.PyJWTError, sqlite3.Error):
         return JSONResponse({"detail": "Invalid or expired token"}, status_code=401)
 
     user_id = payload.get("sub")
@@ -211,7 +216,7 @@ async def user_account_rotate_token(request: Request) -> JSONResponse:
             return JSONResponse(
                 {"detail": "Admin accounts must use the admin panel."}, status_code=403
             )
-    except Exception:
+    except (jwt.PyJWTError, sqlite3.Error):
         return JSONResponse({"detail": "Invalid or expired token"}, status_code=401)
 
     user_id = int(payload.get("sub"))
@@ -262,7 +267,7 @@ async def user_account_info(request: Request) -> JSONResponse:
             return JSONResponse(
                 {"detail": "Admin accounts must use the admin panel."}, status_code=403
             )
-    except Exception:
+    except (jwt.PyJWTError, sqlite3.Error):
         return JSONResponse({"detail": "Invalid or expired token"}, status_code=401)
 
     user_id = payload.get("sub")
@@ -287,7 +292,10 @@ async def user_account_info(request: Request) -> JSONResponse:
         try:
             expires_at = exp_dt.isoformat()
             expires_in_seconds = int((exp_dt - datetime.now(timezone.utc)).total_seconds())
-        except Exception:
+        except (TypeError, ValueError, AttributeError):
+            # Defensive: malformed exp_dt (naive datetime, wrong type) is
+            # presented without an expires_in field rather than failing
+            # the whole token-info response.
             pass
 
     servers = list_mcp_servers(

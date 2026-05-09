@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.45] - 2026-05-09
+
+### Changed
+- Closed `admin/user_pages.py` for the audit's A1 finding by narrowing
+  all seven `except Exception` blocks. No broad catch remains in this
+  file:
+  - Page-level `verify_token` for `/account` (redirects to /login on
+    failure): `jwt.PyJWTError`.
+  - User lookup for friendly username (`get_user_by_id` + int conversion
+    on `payload["sub"]`): `(sqlite3.Error, ValueError, TypeError)`.
+  - Password-hash upgrade after login: `sqlite3.Error`.
+  - Three token-verify-and-blacklist combos (`/account/api/profile`,
+    `/account/api/get-token`, `/account/api/regenerate`):
+    `(jwt.PyJWTError, sqlite3.Error)`.
+  - `expires_in_seconds` datetime arithmetic on token-info responses:
+    `(TypeError, ValueError, AttributeError)`.
+
+### Notes
+- No behaviour change. 184 tests pass.
+
 ## [1.2.44] - 2026-05-09
 
 ### Changed
@@ -368,6 +388,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.45]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.45
 [1.2.44]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.44
 [1.2.43]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.43
 [1.2.42]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.42

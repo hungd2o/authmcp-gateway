@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.65] - 2026-05-09
+
+### Added
+- 18 new integration-style tests for `auth/endpoints.py`. Brings the
+  largest still-uncovered file from 0% → 52% coverage. Total
+  coverage 46% → 48%.
+- Test layout: each test builds a real Starlette `Request` (so
+  `request.headers`, `request.scope.client`, `request.app.state.config`
+  behave like in production) but stubs `request.json` / `request.form`
+  to return fixture payloads — no live ASGI server, no router, no
+  middleware indirection.
+- Coverage by endpoint:
+  - `/auth/register`: blocked when `allow_registration=False`, weak
+    password 400, happy path (verifies `is_superuser=False` for
+    public registration), 409 on duplicate username.
+  - `/auth/login`: invalid credentials 401, happy path returns valid
+    JWT signed with the configured secret, account-disabled 403.
+  - `/auth/refresh`: invalid token 401, happy path issues a new
+    access token (and intentionally omits a new refresh token from
+    the response).
+  - `/auth/logout`: invalid access token 401, happy path blacklists
+    the access token's JTI in the DB.
+  - `/auth/me`: missing token 401, valid token returns OIDC-shaped
+    payload (`sub`, `preferred_username`, `name`, `email_verified`),
+    blacklisted token 401 (`TOKEN_REVOKED`).
+  - `/oauth/token`: missing `grant_type` 400, password grant via
+    form-data (the OAuth2 standard, what Claude Desktop sends),
+    invalid creds → `invalid_grant` 401, refresh-token grant
+    happy path.
+
+### Notes
+- 217 + 18 = 235 tests pass. mypy still 0.
+
 ## [1.2.64] - 2026-05-09
 
 ### Added
@@ -968,6 +1001,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.65]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.65
 [1.2.64]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.64
 [1.2.63]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.63
 [1.2.62]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.62

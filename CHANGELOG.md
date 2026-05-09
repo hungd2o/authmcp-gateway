@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.39] - 2026-05-09
+
+### Changed
+- Annotated the nine intentional broad `except Exception` blocks in
+  `mcp/handler.py` with `# noqa: BLE001` and explanatory comments.
+  These are the JSON-RPC dispatcher backstops (one outer, eight
+  per-method) that translate any escaped exception into a JSON-RPC
+  `-32603` internal-error response so the MCP client never sees a
+  Python traceback. They were already logging via `logger.exception`;
+  this release just documents the intent for future reviewers.
+- Narrowed the two non-backstop catches:
+  - `_handle_initialize` capabilities discovery now catches only
+    `(httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError,
+    RuntimeError, sqlite3.Error)` — the same exception domain as
+    `proxy._fetch_capabilities_from_server`.
+  - `_log_mcp` security-log helper now catches only
+    `(sqlite3.Error, OSError)` so unrelated runtime errors propagate.
+
+### Notes
+- No behaviour change. 184 tests pass.
+
 ## [1.2.38] - 2026-05-09
 
 ### Security
@@ -234,6 +255,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.39]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.39
 [1.2.38]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.38
 [1.2.37]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.37
 [1.2.36]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.36

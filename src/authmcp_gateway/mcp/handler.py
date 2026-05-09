@@ -3,10 +3,13 @@
 Supports full MCP protocol: tools, resources, prompts, completions, ping.
 """
 
+import json
 import logging
+import sqlite3
 import time
 from typing import Any, Dict, Optional
 
+import httpx
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -115,7 +118,11 @@ class McpHandler:
                 logger.warning(f"Unknown MCP method: {method}")
                 return self._error_response(jsonrpc_id or 1, -32601, f"Method not found: {method}")
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — outer JSON-RPC last-resort
+            # Top-level dispatcher backstop. Any exception that escapes the
+            # per-method handlers below is logged and surfaced to the client
+            # as JSON-RPC -32603 (internal error) so we never leak a Python
+            # traceback through the MCP transport.
             logger.exception(f"Error handling MCP request: {e}")
             return self._error_response(1, -32603, f"Internal error: {str(e)}")
 
@@ -143,7 +150,17 @@ class McpHandler:
             capabilities = await self.proxy.get_aggregated_capabilities(
                 user_id=user_id, server_name=server_name
             )
-        except Exception as e:
+        except (
+            httpx.HTTPError,
+            json.JSONDecodeError,
+            ValueError,
+            KeyError,
+            RuntimeError,
+            sqlite3.Error,
+        ) as e:
+            # Same exception domain as proxy._fetch_capabilities_from_server:
+            # transport, parsing, and backend-state errors. We degrade to an
+            # empty tools capability so the client can still initialise.
             logger.error(f"Failed to discover capabilities: {e}")
             capabilities = {"tools": {}}
 
@@ -208,7 +225,7 @@ class McpHandler:
                 {"jsonrpc": "2.0", "id": jsonrpc_id, "result": {"tools": formatted_tools}}
             )
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — per-method JSON-RPC last-resort backstop
             logger.exception(f"Error in tools/list: {e}")
             self._log_mcp(
                 method="tools/list",
@@ -311,7 +328,7 @@ class McpHandler:
             logger.warning(f"Invalid params: {e}")
             return self._error_response(jsonrpc_id, -32602, str(e))
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — per-method JSON-RPC last-resort backstop
             logger.exception(f"Error calling tool '{tool_name}': {e}")
             return self._error_response(jsonrpc_id, -32603, str(e))
 
@@ -350,7 +367,7 @@ class McpHandler:
                 {"jsonrpc": "2.0", "id": jsonrpc_id, "result": {"resources": formatted}}
             )
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — per-method JSON-RPC last-resort backstop
             logger.exception(f"Error in resources/list: {e}")
             self._log_mcp(
                 method="resources/list",
@@ -422,7 +439,7 @@ class McpHandler:
         except PermissionError as e:
             return self._error_response(jsonrpc_id, -32000, str(e))
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — per-method JSON-RPC last-resort backstop
             logger.exception(f"Error reading resource '{uri}': {e}")
             return self._error_response(jsonrpc_id, -32603, str(e))
 
@@ -461,7 +478,7 @@ class McpHandler:
                 }
             )
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — per-method JSON-RPC last-resort backstop
             logger.exception(f"Error in resources/templates/list: {e}")
             return self._error_response(jsonrpc_id, -32603, str(e))
 
@@ -499,7 +516,7 @@ class McpHandler:
                 {"jsonrpc": "2.0", "id": jsonrpc_id, "result": {"prompts": formatted}}
             )
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — per-method JSON-RPC last-resort backstop
             logger.exception(f"Error in prompts/list: {e}")
             self._log_mcp(
                 method="prompts/list",
@@ -572,7 +589,7 @@ class McpHandler:
         except PermissionError as e:
             return self._error_response(jsonrpc_id, -32000, str(e))
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — per-method JSON-RPC last-resort backstop
             logger.exception(f"Error getting prompt '{name}': {e}")
             return self._error_response(jsonrpc_id, -32603, str(e))
 
@@ -622,7 +639,7 @@ class McpHandler:
         except (ResourceNotFoundError, PromptNotFoundError) as e:
             return self._error_response(jsonrpc_id, -32602, str(e))
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — per-method JSON-RPC last-resort backstop
             logger.exception(f"Error in completion/complete: {e}")
             return self._error_response(jsonrpc_id, -32603, str(e))
 
@@ -667,7 +684,9 @@ class McpHandler:
                 path=request.url.path if request else None,
                 event_kind="work" if method == "tools/call" else "system",
             )
-        except Exception as log_err:
+        except (sqlite3.Error, OSError) as log_err:
+            # log_mcp_request writes to SQLite and may also touch the
+            # file-based logger; failures here must not abort the request.
             logger.error(f"Failed to log MCP request: {log_err}")
 
     def _error_response(self, jsonrpc_id: int, code: int, message: str) -> JSONResponse:

@@ -2,12 +2,15 @@
 
 import logging
 import sqlite3
+from typing import Any, Dict, Optional, Tuple
 
 import jwt
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from authmcp_gateway.admin.routes import get_config, render_template
+from authmcp_gateway.auth.jwt_handler import decode_token_unsafe, verify_token
+from authmcp_gateway.auth.user_store import is_token_blacklisted
 from authmcp_gateway.utils import get_request_ip
 
 logger = logging.getLogger(__name__)
@@ -31,9 +34,43 @@ def _is_https_request(request: Request) -> bool:
     return request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
 
 
+def _verify_user_token_or_401(
+    token: str, _config
+) -> Tuple[Optional[Dict[str, Any]], Optional[JSONResponse]]:
+    """Verify a user-portal access token from the cookie.
+
+    Centralises the JWT verify + JTI blacklist + admin-rejection sequence
+    used by every authenticated user-portal endpoint.
+
+    Returns:
+        ``(payload, None)`` on success, where ``payload`` is the decoded
+        JWT claims dict.
+
+        ``(None, JSONResponse)`` on failure — the response is the 401/403
+        the caller must return immediately:
+
+        * 401 ``Token revoked`` if the JTI is blacklisted.
+        * 403 ``Admin accounts must use the admin panel.`` if the token
+          belongs to an admin (user portal is for non-admins only).
+        * 401 ``Invalid or expired token`` for any
+          ``jwt.PyJWTError`` / ``sqlite3.Error``.
+    """
+    try:
+        payload = verify_token(token, "access", _config.jwt)
+        jti = decode_token_unsafe(token).get("jti")
+        if jti and is_token_blacklisted(_config.auth.sqlite_path, jti):
+            return None, JSONResponse({"detail": "Token revoked"}, status_code=401)
+        if payload.get("is_superuser"):
+            return None, JSONResponse(
+                {"detail": "Admin accounts must use the admin panel."}, status_code=403
+            )
+        return payload, None
+    except (jwt.PyJWTError, sqlite3.Error):
+        return None, JSONResponse({"detail": "Invalid or expired token"}, status_code=401)
+
+
 async def user_portal(request: Request) -> HTMLResponse:
     """User portal page for obtaining access token (non-admin)."""
-    from authmcp_gateway.auth.jwt_handler import verify_token
     from authmcp_gateway.auth.user_store import get_user_by_id
 
     _config = get_config(request)
@@ -146,26 +183,17 @@ async def user_logout(request: Request) -> Response:
 
 async def user_account_token(request: Request) -> JSONResponse:
     """Return access token for authenticated non-admin user."""
-    from authmcp_gateway.auth.jwt_handler import decode_token_unsafe, verify_token
     from authmcp_gateway.auth.token_service import get_or_create_user_token
-    from authmcp_gateway.auth.user_store import get_user_by_id, is_token_blacklisted
+    from authmcp_gateway.auth.user_store import get_user_by_id
 
     _config = get_config(request)
     token = request.cookies.get("user_token")
     if not token:
         return JSONResponse({"detail": "Not authenticated"}, status_code=401)
 
-    try:
-        payload = verify_token(token, "access", _config.jwt)
-        jti = decode_token_unsafe(token).get("jti")
-        if jti and is_token_blacklisted(_config.auth.sqlite_path, jti):
-            return JSONResponse({"detail": "Token revoked"}, status_code=401)
-        if payload.get("is_superuser"):
-            return JSONResponse(
-                {"detail": "Admin accounts must use the admin panel."}, status_code=403
-            )
-    except (jwt.PyJWTError, sqlite3.Error):
-        return JSONResponse({"detail": "Invalid or expired token"}, status_code=401)
+    payload, error = _verify_user_token_or_401(token, _config)
+    if error:
+        return error
 
     user_id = payload.get("sub")
     username = payload.get("username")
@@ -198,26 +226,16 @@ async def user_account_token(request: Request) -> JSONResponse:
 
 async def user_account_rotate_token(request: Request) -> JSONResponse:
     """Rotate access token for authenticated non-admin user."""
-    from authmcp_gateway.auth.jwt_handler import decode_token_unsafe, verify_token
     from authmcp_gateway.auth.token_service import rotate_user_token
-    from authmcp_gateway.auth.user_store import is_token_blacklisted
 
     _config = get_config(request)
     token = request.cookies.get("user_token")
     if not token:
         return JSONResponse({"detail": "Not authenticated"}, status_code=401)
 
-    try:
-        payload = verify_token(token, "access", _config.jwt)
-        jti = decode_token_unsafe(token).get("jti")
-        if jti and is_token_blacklisted(_config.auth.sqlite_path, jti):
-            return JSONResponse({"detail": "Token revoked"}, status_code=401)
-        if payload.get("is_superuser"):
-            return JSONResponse(
-                {"detail": "Admin accounts must use the admin panel."}, status_code=403
-            )
-    except (jwt.PyJWTError, sqlite3.Error):
-        return JSONResponse({"detail": "Invalid or expired token"}, status_code=401)
+    payload, error = _verify_user_token_or_401(token, _config)
+    if error:
+        return error
 
     user_id = int(payload.get("sub"))
     username = payload.get("username")
@@ -248,9 +266,8 @@ async def user_account_info(request: Request) -> JSONResponse:
     """Return user info, token expiry, and accessible MCP servers."""
     from datetime import datetime, timezone
 
-    from authmcp_gateway.auth.jwt_handler import decode_token_unsafe, verify_token
     from authmcp_gateway.auth.token_service import get_or_create_user_token
-    from authmcp_gateway.auth.user_store import get_user_by_id, is_token_blacklisted
+    from authmcp_gateway.auth.user_store import get_user_by_id
     from authmcp_gateway.mcp.store import list_mcp_servers
 
     _config = get_config(request)
@@ -258,17 +275,9 @@ async def user_account_info(request: Request) -> JSONResponse:
     if not token:
         return JSONResponse({"detail": "Not authenticated"}, status_code=401)
 
-    try:
-        payload = verify_token(token, "access", _config.jwt)
-        jti = decode_token_unsafe(token).get("jti")
-        if jti and is_token_blacklisted(_config.auth.sqlite_path, jti):
-            return JSONResponse({"detail": "Token revoked"}, status_code=401)
-        if payload.get("is_superuser"):
-            return JSONResponse(
-                {"detail": "Admin accounts must use the admin panel."}, status_code=403
-            )
-    except (jwt.PyJWTError, sqlite3.Error):
-        return JSONResponse({"detail": "Invalid or expired token"}, status_code=401)
+    payload, error = _verify_user_token_or_401(token, _config)
+    if error:
+        return error
 
     user_id = payload.get("sub")
     username = payload.get("username")

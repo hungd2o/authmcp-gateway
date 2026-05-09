@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.46] - 2026-05-09
+
+### Changed
+- Refactor: extracted `_verify_user_token_or_401()` helper in
+  `admin/user_pages.py`. Three byte-identical try/except blocks
+  (the JWT-verify + JTI-blacklist + admin-rejection sequence used
+  by `/account/api/get-token`, `/account/api/regenerate`, and
+  `/account/api/info`) collapsed into a single helper. Each call site
+  now reads:
+  ```
+  payload, error = _verify_user_token_or_401(token, _config)
+  if error:
+      return error
+  ```
+- Hoisted `verify_token`, `decode_token_unsafe`, and
+  `is_token_blacklisted` imports to module level (they're now used
+  by the shared helper).
+
+### Notes
+- No behaviour change. 184 tests pass. This is the first of three
+  planned helper-extraction releases motivated by patterns surfaced
+  during the A1 narrowing pass.
+
 ## [1.2.45] - 2026-05-09
 
 ### Changed
@@ -388,6 +411,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.46]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.46
 [1.2.45]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.45
 [1.2.44]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.44
 [1.2.43]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.43

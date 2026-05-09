@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.57] - 2026-05-09
+
+### Changed
+- mypy cleanup: cleared all 8 errors in `mcp/handler.py`. Two
+  signature corrections that bring the type hints in line with what
+  the code already does.
+- `handle_request(...) -> JSONResponse` → `-> Response`. The
+  notifications branch already returns a 204 plain `Response` (per
+  JSON-RPC spec, notifications must not have a body), and the
+  top-level dispatcher routes through this method, so widening to
+  the `Response` base class matches reality. The docstring spells
+  out the two response shapes.
+- `_log_mcp(... request_id: Optional[str] = None)` →
+  `request_id: Union[int, str, None] = None`. JSON-RPC 2.0 §4 allows
+  the `id` field to be a string, number, or null, and all 7 internal
+  callers pass `jsonrpc_id` (typed `int`) — the `str(request_id)`
+  cast inside the function already handles the conversion. The old
+  signature was lying about what callers actually pass.
+
+### Notes
+- mypy: 49 -> 41 errors. 184 tests pass. No behaviour change.
+
 ## [1.2.56] - 2026-05-09
 
 ### Changed
@@ -688,6 +710,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.57]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.57
 [1.2.56]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.56
 [1.2.55]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.55
 [1.2.54]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.54

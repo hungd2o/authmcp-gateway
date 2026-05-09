@@ -6,7 +6,7 @@ Supports full MCP protocol: tools, resources, prompts, completions, ping.
 import logging
 import sqlite3
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -26,10 +26,13 @@ class McpHandler:
         self.db_path = db_path
         self.proxy = proxy or McpProxy(db_path)
 
-    async def handle_request(
-        self, request: Request, server_name: Optional[str] = None
-    ) -> JSONResponse:
-        """Handle MCP JSON-RPC request."""
+    async def handle_request(self, request: Request, server_name: Optional[str] = None) -> Response:
+        """Handle MCP JSON-RPC request.
+
+        Returns a :class:`JSONResponse` for normal JSON-RPC results /
+        errors, or a 204 :class:`Response` (no body) for notifications
+        per the JSON-RPC 2.0 spec — hence the broader return type.
+        """
         try:
             data = await request.json()
             jsonrpc_id = data.get("id")
@@ -653,7 +656,7 @@ class McpHandler:
         success: bool = True,
         error_message: Optional[str] = None,
         response_time_ms: Optional[int] = None,
-        request_id: Optional[str] = None,
+        request_id: Union[int, str, None] = None,
         request: Optional[Request] = None,
     ) -> None:
         """Log MCP request to security logger (best-effort)."""

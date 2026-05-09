@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.55] - 2026-05-09
+
+### Changed
+- mypy cleanup: cleared all 15 errors in `admin/user_pages.py`. Two
+  patterns, one of which surfaced a real defensive-coding gap.
+- `user_portal` was annotated `-> HTMLResponse` but already returned
+  `RedirectResponse` in three branches (no token, admin user, JWT
+  failure). Widened to `Response` and added a docstring noting the
+  branches. No behaviour change.
+- The `_verify_user_token_or_401(token, _config) -> (payload, error)`
+  helper carries an undocumented invariant: `error is None ⟹ payload
+  is not None`. mypy can't track that across tuple unpacking, so the
+  three call sites were `payload.get(...)` on an `Optional[Dict]`,
+  and downstream `int(payload.get("sub"))` /
+  `username: str = payload.get("username")` were typed `Any | None`.
+- Added explicit `assert payload is not None` after each
+  `if error: return error` guard, plus proper validation:
+  - `sub = payload.get("sub")` + 401 if missing → then `int(sub)`.
+  - `username = payload.get("username") or ""` so the type is `str`,
+    not `Optional[str]`. The pre-existing DB fallback path
+    (`get_user_by_id` to look up username when missing) is preserved.
+- This is a real hardening: previously `int(None)` and a `None`
+  username could have crashed `get_or_create_user_token` /
+  `rotate_user_token` if a malformed JWT slipped past `verify_token`
+  with no `sub` claim. Now those return a clean 401.
+
+### Notes
+- mypy: 81 -> 66 errors. 184 tests pass.
+
 ## [1.2.54] - 2026-05-09
 
 ### Changed
@@ -637,6 +666,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.55]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.55
 [1.2.54]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.54
 [1.2.53]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.53
 [1.2.52]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.52

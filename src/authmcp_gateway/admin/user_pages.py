@@ -69,8 +69,13 @@ def _verify_user_token_or_401(
         return None, JSONResponse({"detail": "Invalid or expired token"}, status_code=401)
 
 
-async def user_portal(request: Request) -> HTMLResponse:
-    """User portal page for obtaining access token (non-admin)."""
+async def user_portal(request: Request) -> Response:
+    """User portal page for obtaining access token (non-admin).
+
+    Returns an :class:`HTMLResponse` for authenticated non-admins or a
+    :class:`RedirectResponse` to ``/login`` / ``/admin`` for unauthenticated
+    or admin users — hence the broader :class:`Response` return type.
+    """
     from authmcp_gateway.auth.user_store import get_user_by_id
 
     _config = get_config(request)
@@ -190,16 +195,20 @@ async def user_account_token(request: Request) -> JSONResponse:
     payload, error = _verify_user_token_or_401(token, _config)
     if error:
         return error
+    assert payload is not None  # _verify_user_token_or_401 invariant
 
-    user_id = payload.get("sub")
-    username = payload.get("username")
-    if not username and user_id:
-        user = get_user_by_id(_config.auth.sqlite_path, int(user_id))
+    sub = payload.get("sub")
+    if not sub:
+        return JSONResponse({"detail": "Invalid token: missing sub"}, status_code=401)
+    user_id = int(sub)
+    username = payload.get("username") or ""
+    if not username:
+        user = get_user_by_id(_config.auth.sqlite_path, user_id)
         username = user["username"] if user else ""
 
     access_token, _ = get_or_create_user_token(
         _config.auth.sqlite_path,
-        int(user_id),
+        user_id,
         username,
         False,
         _config.jwt,
@@ -232,9 +241,13 @@ async def user_account_rotate_token(request: Request) -> JSONResponse:
     payload, error = _verify_user_token_or_401(token, _config)
     if error:
         return error
+    assert payload is not None  # _verify_user_token_or_401 invariant
 
-    user_id = int(payload.get("sub"))
-    username = payload.get("username")
+    sub = payload.get("sub")
+    if not sub:
+        return JSONResponse({"detail": "Invalid token: missing sub"}, status_code=401)
+    user_id = int(sub)
+    username = payload.get("username") or ""
     new_token, _ = rotate_user_token(
         _config.auth.sqlite_path,
         user_id,
@@ -274,16 +287,20 @@ async def user_account_info(request: Request) -> JSONResponse:
     payload, error = _verify_user_token_or_401(token, _config)
     if error:
         return error
+    assert payload is not None  # _verify_user_token_or_401 invariant
 
-    user_id = payload.get("sub")
-    username = payload.get("username")
-    if not username and user_id:
-        user = get_user_by_id(_config.auth.sqlite_path, int(user_id))
+    sub = payload.get("sub")
+    if not sub:
+        return JSONResponse({"detail": "Invalid token: missing sub"}, status_code=401)
+    user_id = int(sub)
+    username = payload.get("username") or ""
+    if not username:
+        user = get_user_by_id(_config.auth.sqlite_path, user_id)
         username = user["username"] if user else ""
 
     access_token, exp_dt = get_or_create_user_token(
         _config.auth.sqlite_path,
-        int(user_id),
+        user_id,
         username,
         False,
         _config.jwt,
@@ -303,9 +320,7 @@ async def user_account_info(request: Request) -> JSONResponse:
             # the whole token-info response.
             pass
 
-    servers = list_mcp_servers(
-        _config.auth.sqlite_path, enabled_only=True, user_id=int(user_id) if user_id else None
-    )
+    servers = list_mcp_servers(_config.auth.sqlite_path, enabled_only=True, user_id=user_id)
     public_base = (_config.mcp_public_url or "").rstrip("/")
     server_list = []
     from authmcp_gateway.mcp.proxy import normalize_server_name

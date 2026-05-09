@@ -1,5 +1,6 @@
 """SQLite database operations for OAuth clients (Dynamic Client Registration)."""
 
+import hmac
 import json
 import secrets
 import sqlite3
@@ -266,7 +267,8 @@ def verify_client_secret(client: Dict[str, Any], client_secret: Optional[str]) -
         return True
     if not client_secret:
         return False
-    return hash_token(client_secret) == client.get("client_secret_hash")
+    stored_hash = client.get("client_secret_hash") or ""
+    return hmac.compare_digest(hash_token(client_secret), stored_hash)
 
 
 def is_redirect_uri_allowed(client: Dict[str, Any], redirect_uri: str) -> bool:

@@ -1,0 +1,16 @@
+[flake8]
+# Line length defers to black. E203 / W503 conflict with black formatting.
+# E501 (line too long) is reported informationally; black handles real cases.
+max-line-length = 100
+extend-ignore =
+    E203,
+    E501,
+    W503
+exclude =
+    .git,
+    __pycache__,
+    build,
+    dist,
+    venv,
+    .venv,
+    src/authmcp_gateway/static

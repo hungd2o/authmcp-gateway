@@ -39,13 +39,13 @@ async def admin_login_page(request: Request) -> HTMLResponse:
                     <i data-lucide="shield-check" class="w-12 h-12 text-white"></i>
                 </div>
             </div>
-            
+
             <!-- Title -->
             <div class="text-center mb-8">
                 <h2 class="text-3xl font-bold text-gray-900 mb-2">Admin Login</h2>
                 <p class="text-gray-600">AuthMCP Gateway</p>
             </div>
-            
+
             <!-- Form -->
             <form id="loginForm" class="space-y-6">
                 <!-- Username -->
@@ -57,17 +57,17 @@ async def admin_login_page(request: Request) -> HTMLResponse:
                         <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                             <i data-lucide="user" class="w-5 h-5 text-gray-400"></i>
                         </div>
-                        <input 
-                            type="text" 
-                            id="username" 
-                            required 
+                        <input
+                            type="text"
+                            id="username"
+                            required
                             autofocus
                             class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                             placeholder="Enter your username"
                         >
                     </div>
                 </div>
-                
+
                 <!-- Password -->
                 <div>
                     <label for="password" class="block text-sm font-medium text-gray-700 mb-2">
@@ -77,31 +77,31 @@ async def admin_login_page(request: Request) -> HTMLResponse:
                         <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                             <i data-lucide="lock" class="w-5 h-5 text-gray-400"></i>
                         </div>
-                        <input 
-                            type="password" 
-                            id="password" 
+                        <input
+                            type="password"
+                            id="password"
                             required
                             class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                             placeholder="Enter your password"
                         >
                     </div>
                 </div>
-                
+
                 <!-- Submit Button -->
-                <button 
-                    type="submit" 
+                <button
+                    type="submit"
                     class="w-full bg-gradient-to-r from-blue-600 to-cyan-600 text-white py-3 px-4 rounded-lg font-semibold hover:from-blue-700 hover:to-cyan-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
                 >
                     <i data-lucide="log-in" class="w-5 h-5"></i>
                     Login
                 </button>
-                
+
                 <!-- Error Message -->
                 <div id="errorMessage" class="hidden bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-start gap-2">
                     <i data-lucide="alert-circle" class="w-5 h-5 mt-0.5 flex-shrink-0"></i>
                     <span id="errorText"></span>
                 </div>
-                
+
                 <div class="text-center text-sm text-gray-500">
                     Not an admin? <a href="/account" class="text-blue-600 hover:underline">Go to your account</a>
                 </div>
@@ -112,25 +112,25 @@ async def admin_login_page(request: Request) -> HTMLResponse:
     <script>
         // Initialize Lucide icons
         lucide.createIcons();
-        
+
         document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            
+
             const username = document.getElementById('username').value;
             const password = document.getElementById('password').value;
             const errorDiv = document.getElementById('errorMessage');
             const errorText = document.getElementById('errorText');
-            
+
             // Hide error
             errorDiv.classList.add('hidden');
-            
+
             try {
                 const response = await fetch('/admin/api/login', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({username, password})
                 });
-                
+
                 if (response.ok) {
                     window.location.href = '/admin';
                 } else {

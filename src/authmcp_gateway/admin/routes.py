@@ -7,6 +7,7 @@ use the ``admin_routes.function_name`` pattern unchanged.
 """
 
 import logging
+import os
 from functools import wraps
 from pathlib import Path
 from typing import Callable
@@ -15,6 +16,7 @@ from jinja2 import Environment, FileSystemLoader
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
 
+from authmcp_gateway import __version__ as _app_version
 from authmcp_gateway.config import AppConfig
 
 logger = logging.getLogger(__name__)
@@ -38,12 +40,8 @@ TEMPLATE_DIR = Path(__file__).parent.parent / "templates"
 jinja_env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)), autoescape=True)
 
 # Inject version info as global template variables
-import os as _os
-
-from authmcp_gateway import __version__ as _app_version
-
 jinja_env.globals["app_version"] = _app_version
-jinja_env.globals["git_commit"] = _os.environ.get("GIT_COMMIT", "unknown")
+jinja_env.globals["git_commit"] = os.environ.get("GIT_COMMIT", "unknown")
 
 
 def get_config(request: Request) -> AppConfig:

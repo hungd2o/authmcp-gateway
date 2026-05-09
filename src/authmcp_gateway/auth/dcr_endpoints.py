@@ -1,5 +1,6 @@
 """OAuth Dynamic Client Registration endpoints (RFC 7591/7592)."""
 
+import hmac
 import logging
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlparse
@@ -109,7 +110,8 @@ async def register_client(request: Request) -> JSONResponse:
 
     if config.auth.dcr_require_initial_token:
         token = _parse_bearer_token(request)
-        if not token or token != config.auth.dcr_initial_access_token:
+        expected = config.auth.dcr_initial_access_token or ""
+        if not token or not hmac.compare_digest(token, expected):
             return _error_response(401, "Invalid initial access token", "INVALID_TOKEN")
 
     # Rate limit

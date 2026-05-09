@@ -413,7 +413,7 @@ async def login(request: Request) -> JSONResponse:
     if upgraded_hash:
         try:
             update_user_password_hash(db_path, user["id"], upgraded_hash)
-        except Exception:
+        except sqlite3.Error:
             logger.exception("Failed to upgrade password hash for user '%s'", login_data.username)
 
     # Check if user is active
@@ -481,7 +481,7 @@ async def login(request: Request) -> JSONResponse:
     # Update last login timestamp
     try:
         update_last_login(db_path, user["id"])
-    except Exception as e:
+    except sqlite3.Error as e:
         logger.warning("Failed to update last_login for user '%s': %s", login_data.username, str(e))
         # Non-critical, continue
 
@@ -549,7 +549,9 @@ async def refresh(request: Request) -> JSONResponse:
     except jwt.InvalidTokenError as e:
         logger.warning("Refresh failed: invalid token - %s", str(e))
         return _error_response(401, "Invalid refresh token", "INVALID_TOKEN")
-    except Exception as e:
+    except jwt.PyJWTError as e:
+        # PyJWTError parent for any subclass not handled above
+        # (DecodeError etc). Truly unexpected types now propagate.
         logger.error("Refresh token verification failed: %s", str(e))
         return _error_response(401, "Token verification failed", "VERIFICATION_ERROR")
 
@@ -646,7 +648,7 @@ async def logout(request: Request) -> JSONResponse:
     except jwt.InvalidTokenError as e:
         logger.warning("Logout failed: invalid access token - %s", str(e))
         return _error_response(401, "Invalid access token", "INVALID_TOKEN")
-    except Exception as e:
+    except jwt.PyJWTError as e:
         logger.error("Logout token verification failed: %s", str(e))
         return _error_response(401, "Token verification failed", "VERIFICATION_ERROR")
 
@@ -676,7 +678,7 @@ async def logout(request: Request) -> JSONResponse:
         refresh_token_hash = hash_token(logout_data.refresh_token)
         try:
             revoke_refresh_token(db_path, refresh_token_hash)
-        except Exception as e:
+        except sqlite3.Error as e:
             logger.warning("Failed to revoke refresh token: %s", str(e))
             # Non-critical, continue
 
@@ -691,7 +693,8 @@ async def logout(request: Request) -> JSONResponse:
             user_agent=_get_user_agent(request),
             success=True,
         )
-    except Exception as e:
+    except (sqlite3.Error, OSError) as e:
+        # log_auth_event writes to SQLite + file logger; either may fail.
         logger.warning("Failed to log logout event: %s", str(e))
         # Non-critical, continue
 
@@ -723,7 +726,10 @@ async def me(request: Request) -> JSONResponse:
         if token_jti and is_token_blacklisted(db_path, token_jti):
             logger.warning("Me endpoint called with blacklisted token")
             return _error_response(401, "Token has been revoked", "TOKEN_REVOKED")
-    except Exception as e:
+    except (jwt.PyJWTError, sqlite3.Error) as e:
+        # get_token_jti decodes the token (jwt errors), then we hit SQLite.
+        # Either failure is non-fatal here — the verify pass below is the
+        # real auth gate; we just lose the blacklist short-circuit.
         logger.warning("Failed to check token blacklist: %s", str(e))
         # Continue with verification
 
@@ -736,7 +742,7 @@ async def me(request: Request) -> JSONResponse:
     except jwt.InvalidTokenError as e:
         logger.warning("Me endpoint called with invalid token: %s", str(e))
         return _error_response(401, "Invalid token", "INVALID_TOKEN")
-    except Exception as e:
+    except jwt.PyJWTError as e:
         logger.error("Token verification failed: %s", str(e))
         return _error_response(401, "Token verification failed", "VERIFICATION_ERROR")
 
@@ -908,7 +914,7 @@ async def oauth_token(request: Request) -> JSONResponse:
             if upgraded_hash:
                 try:
                     update_user_password_hash(config.auth.sqlite_path, user["id"], upgraded_hash)
-                except Exception:
+                except sqlite3.Error:
                     logger.exception("Failed to upgrade password hash for user '%s'", username)
 
             # Check if user is active
@@ -1081,7 +1087,7 @@ async def oauth_token(request: Request) -> JSONResponse:
                         issued_at.isoformat(),
                         access_expires_at.isoformat(),
                     )
-            except Exception as e:
+            except sqlite3.Error as e:
                 logger.debug(f"Failed to update client token meta: {e}")
 
             logger.info(f"OAuth token refreshed for user: {user['username']}")
@@ -1249,7 +1255,7 @@ async def oauth_token(request: Request) -> JSONResponse:
                         _get_client_ip(request),
                         request.headers.get("user-agent"),
                     )
-            except Exception as e:
+            except sqlite3.Error as e:
                 logger.debug(f"Failed to update client last_seen: {e}")
 
             refresh_token = create_refresh_token(
@@ -1307,7 +1313,7 @@ async def oauth_token(request: Request) -> JSONResponse:
                         issued_at.isoformat(),
                         access_expires_at.isoformat(),
                     )
-            except Exception as e:
+            except sqlite3.Error as e:
                 logger.debug(f"Failed to update client token meta: {e}")
 
             # Update last login

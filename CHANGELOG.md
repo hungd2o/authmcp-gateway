@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.40] - 2026-05-09
+
+### Changed
+- Closed `auth/endpoints.py` for the audit's A1 finding by narrowing
+  the remaining 12 `except Exception` blocks (best-effort logs and
+  JWT verify residue paths). All catches in this file now declare
+  the specific exception types they handle:
+  - Password-hash upgrade in /auth/login and /oauth/token: `sqlite3.Error`.
+  - `update_last_login` post-login: `sqlite3.Error`.
+  - JWT verify residue catches in /auth/refresh, /auth/logout and
+    /auth/me (which sit after `jwt.ExpiredSignatureError` and
+    `jwt.InvalidTokenError`): `jwt.PyJWTError` — covers any sibling
+    PyJWT subclass while letting non-JWT runtime errors propagate.
+  - `revoke_refresh_token` on logout: `sqlite3.Error`.
+  - `log_auth_event` (logout audit write): `(sqlite3.Error, OSError)`
+    — SQLite write plus rotating file logger.
+  - Blacklist short-circuit in /auth/me (decode + DB):
+    `(jwt.PyJWTError, sqlite3.Error)`.
+  - Three `update_oauth_client_*` post-issue meta updates:
+    `sqlite3.Error`.
+- The single broad `except Exception` left in the file is the outer
+  /oauth/token last-resort wrap, already annotated with
+  `# noqa: BLE001` since 1.2.37.
+
+### Notes
+- No behaviour change. 184 tests pass. This release is pure narrowing
+  of already-logged catches; combined with 1.2.36 (Cat A) and 1.2.37
+  (Cat B), `auth/endpoints.py` is now fully audited for the A1
+  finding (27 sites total, 26 narrowed + 1 intentional outer wrap).
+
 ## [1.2.39] - 2026-05-09
 
 ### Changed
@@ -255,6 +285,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.40]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.40
 [1.2.39]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.39
 [1.2.38]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.38
 [1.2.37]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.37

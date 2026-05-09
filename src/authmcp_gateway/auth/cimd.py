@@ -24,7 +24,7 @@ import socket
 import threading
 import time
 from email.utils import parsedate_to_datetime
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple, cast
 from urllib.parse import urlparse
 
 import httpx
@@ -58,7 +58,7 @@ def _is_safe_target(host: str) -> bool:
     if not infos:
         return False
     for info in infos:
-        addr = info[4][0]
+        addr = cast(str, info[4][0])
         try:
             ip = ipaddress.ip_address(addr.split("%", 1)[0])  # strip IPv6 zone
         except ValueError:
@@ -194,7 +194,7 @@ def fetch_client_metadata(
         if ttl > 0:
             with _cache_lock:
                 _cache[url] = (now + ttl, metadata)
-        return metadata
+        return cast(Dict[str, Any], metadata)
     finally:
         if owns_client:
             client.close()

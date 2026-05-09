@@ -258,7 +258,7 @@ def delete_oauth_client(db_path: str, client_id: str) -> bool:
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM oauth_clients WHERE client_id = ?", (client_id,))
-        return cursor.rowcount > 0
+        return bool(cursor.rowcount > 0)
 
 
 def verify_client_secret(client: Dict[str, Any], client_secret: Optional[str]) -> bool:

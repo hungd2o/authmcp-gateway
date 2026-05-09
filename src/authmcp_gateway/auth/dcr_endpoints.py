@@ -205,6 +205,7 @@ async def get_client(request: Request) -> JSONResponse:
     client, error = _require_registration_token(request, client_id)
     if error:
         return error
+    assert client is not None  # _require_registration_token invariant
 
     metadata = _normalize_metadata(client)
     base = {

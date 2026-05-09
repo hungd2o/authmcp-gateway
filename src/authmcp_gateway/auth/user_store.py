@@ -5,7 +5,7 @@ import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 # Unified DB context manager — re-exported for backward compatibility
 from authmcp_gateway.db import get_db as get_db_connection  # noqa: F401
@@ -285,7 +285,7 @@ def create_user(
             """,
             (username, email, password_hash, full_name, is_superuser),
         )
-        return cursor.lastrowid
+        return cast(int, cursor.lastrowid)
 
 
 def get_user_by_username(db_path: str, username: str) -> Optional[Dict[str, Any]]:

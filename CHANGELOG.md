@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.60] - 2026-05-09
+
+### Changed
+- mypy cleanup (Auth domain): cleared all 16 errors across 6 files.
+  Two real defensive-coding hardenings, rest is annotation work.
+- Real hardening (same pattern as `admin/user_pages.py` in 1.2.55):
+  `auth/endpoints.py` had two `int(payload.get("sub"))` sites
+  (refresh-token and `/auth/me`) that would crash on `int(None)`
+  for a malformed JWT that slipped past `verify_token` without a
+  `sub` claim. Now each guards on `if not sub: return 401` first.
+- `auth/authorize_endpoint.py` form parsing accepted Starlette
+  `UploadFile | str | None` and passed straight into DB / hashing
+  helpers typed `str`. Tightened guard to
+  `not isinstance(username, str) or not isinstance(password, str)`
+  so file uploads under the `username` field name (which would have
+  reached `bcrypt.checkpw` as bytes) now return the standard
+  "Username and password are required" error.
+- `auth/authorize_endpoint.py` `_show_login_form_with_error` did
+  `form_html.body.decode("utf-8")` — `.body` is `bytes |
+  memoryview`. Added `bytes(body) if isinstance(body, memoryview)
+  else body` so memoryview-backed responses don't crash with
+  `AttributeError: 'memoryview' object has no attribute 'decode'`.
+- `auth/dcr_endpoints.py` `get_client` had the `(client, error)
+  tuple` invariant gap from
+  `_require_registration_token` — added `assert client is not None`
+  after the error guard.
+- Bookkeeping casts:
+  - `auth/user_store.py:create_user` — `cast(int, cursor.lastrowid)`.
+  - `auth/client_store.py:delete_oauth_client` — `bool(rowcount > 0)`.
+  - `auth/cimd.py` `_check_target` — `cast(str, info[4][0])`
+    (socket sockaddr[0] is typed `str | int`, but for AF_INET / AF_INET6
+    it's always the address string).
+  - `auth/cimd.py:fetch_client_metadata` — `cast(Dict[str, Any], metadata)`
+    on the json() result before returning into the typed slot.
+- `auth/endpoints.py:register_user` — `_error_response(400, error_msg
+  or "Password does not meet policy", ...)` so the `Optional[str]`
+  from `validate_password_strength` doesn't leak into the `str`-typed
+  `detail` arg.
+
+### Notes
+- mypy: 25 -> 9 errors. 184 tests pass.
+
 ## [1.2.59] - 2026-05-09
 
 ### Changed
@@ -764,6 +806,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.60]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.60
 [1.2.59]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.59
 [1.2.58]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.58
 [1.2.57]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.57

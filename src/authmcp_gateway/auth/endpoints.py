@@ -259,7 +259,7 @@ async def register(request: Request) -> JSONResponse:
     is_valid, error_msg = validate_password_strength(user_data.password, policy)
     if not is_valid:
         logger.warning("Registration failed: weak password for %s", user_data.username)
-        return _error_response(400, error_msg, "WEAK_PASSWORD")
+        return _error_response(400, error_msg or "Password does not meet policy", "WEAK_PASSWORD")
 
     # Check if username or email already exists
     existing_user = get_user_by_username(db_path, user_data.username)
@@ -552,7 +552,10 @@ async def refresh(request: Request) -> JSONResponse:
         return _error_response(401, "Token verification failed", "VERIFICATION_ERROR")
 
     # Get user_id from token
-    token_user_id = int(payload.get("sub"))
+    sub = payload.get("sub")
+    if not sub:
+        return _error_response(401, "Invalid refresh token: missing sub", "INVALID_TOKEN")
+    token_user_id = int(sub)
     if token_user_id != user_id:
         logger.error("Refresh token user_id mismatch: token=%d, db=%d", token_user_id, user_id)
         return _error_response(401, "Invalid refresh token", "TOKEN_MISMATCH")
@@ -743,7 +746,10 @@ async def me(request: Request) -> JSONResponse:
         return _error_response(401, "Token verification failed", "VERIFICATION_ERROR")
 
     # Get user_id from token
-    user_id = int(payload.get("sub"))
+    sub = payload.get("sub")
+    if not sub:
+        return _error_response(401, "Invalid token: missing sub", "INVALID_TOKEN")
+    user_id = int(sub)
 
     # Get user from DB
     user = get_user_by_id(db_path, user_id)

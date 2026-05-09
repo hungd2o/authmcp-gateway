@@ -385,7 +385,12 @@ async def _process_login(
     username = form.get("username")
     password = form.get("password")
 
-    if not username or not password:
+    if (
+        not isinstance(username, str)
+        or not isinstance(password, str)
+        or not username
+        or not password
+    ):
         return _show_login_form_with_error(
             "Username and password are required",
             client_id,
@@ -527,7 +532,9 @@ def _show_login_form_with_error(
 
     # Inject error message (escaped to prevent XSS)
     error_html = f'<div class="error">{html.escape(error)}</div>'
-    html_with_error = form_html.body.decode("utf-8").replace(
+    body = form_html.body
+    body_bytes = bytes(body) if isinstance(body, memoryview) else body
+    html_with_error = body_bytes.decode("utf-8").replace(
         '<form method="POST"', f'{error_html}<form method="POST"'
     )
 

@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.52] - 2026-05-09
+
+### Changed
+- mypy cleanup (start of campaign): cleaned all 4 mypy errors in
+  `auth/jwt_handler.py` — the foundational JWT module that every
+  request flows through.
+- 3× implicit Optional defaults made explicit:
+  - `create_access_token(expire_minutes: int = None)` ->
+    `expire_minutes: int | None = None`.
+  - `create_refresh_token(expire_days: int = None)` ->
+    `expire_days: int | None = None`.
+  - `create_id_token(expire_minutes: int = None)` ->
+    `expire_minutes: int | None = None`.
+  PEP 484 prohibits implicit Optional and recent mypy enforces it.
+- 1× `[no-any-return]`: `get_token_jti` was declared to return `str`
+  but pulled out of a `dict[str, Any]`. Now wrapped in
+  `typing.cast(str, payload["jti"])` to express that the JWT spec
+  guarantees JTI is a string.
+
+### Notes
+- No behaviour change. 184 tests pass.
+- mypy: 135 -> 131 errors. Per-release cleanup continues.
+
 ## [1.2.51] - 2026-05-09
 
 ### Changed
@@ -559,6 +582,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.52]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.52
 [1.2.51]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.51
 [1.2.50]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.50
 [1.2.49]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.49

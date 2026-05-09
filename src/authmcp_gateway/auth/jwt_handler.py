@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict
+from typing import Any, Dict, cast
 
 import jwt
 
@@ -14,7 +14,7 @@ def create_access_token(
     username: str,
     is_superuser: bool,
     config: JWTConfig,
-    expire_minutes: int = None,
+    expire_minutes: int | None = None,
     client_id: str | None = None,
 ) -> str:
     """Create JWT access token.
@@ -48,7 +48,7 @@ def create_access_token(
     return _encode_token(payload, config)
 
 
-def create_refresh_token(user_id: int, config: JWTConfig, expire_days: int = None) -> str:
+def create_refresh_token(user_id: int, config: JWTConfig, expire_days: int | None = None) -> str:
     """Create JWT refresh token.
 
     Args:
@@ -82,7 +82,7 @@ def create_id_token(
     audience: str,
     issuer: str,
     config: JWTConfig,
-    expire_minutes: int = None,
+    expire_minutes: int | None = None,
 ) -> str:
     """Create OpenID Connect ID token."""
     now = datetime.now(timezone.utc)
@@ -165,7 +165,7 @@ def get_token_jti(token: str) -> str:
         KeyError: If JTI is not present in token
     """
     payload = decode_token_unsafe(token)
-    return payload["jti"]
+    return cast(str, payload["jti"])
 
 
 def _encode_token(payload: Dict[str, Any], config: JWTConfig) -> str:

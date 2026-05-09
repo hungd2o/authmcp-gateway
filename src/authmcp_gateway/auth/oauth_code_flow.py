@@ -2,6 +2,7 @@
 
 import base64
 import hashlib
+import hmac
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -140,25 +141,26 @@ def verify_authorization_code(
             logger.warning(f"Authorization code expired: {code}")
             return None
 
-        # Verify PKCE if present
-        if row["code_challenge"]:
-            if not code_verifier:
-                logger.warning("PKCE challenge present but no verifier provided")
-                return None
+        # PKCE is mandatory per OAuth 2.1 §4.1.1.  Defense in depth: even if
+        # /authorize somehow let a code through without a challenge, refuse
+        # to exchange it here.
+        if not row["code_challenge"]:
+            logger.warning("Authorization code missing PKCE challenge — rejected")
+            return None
+        if not code_verifier:
+            logger.warning("PKCE challenge present but no verifier provided")
+            return None
 
-            # Verify code_verifier matches code_challenge
-            if row["code_challenge_method"] == "S256":
-                # SHA256 hash of verifier, then base64url encode
-                verifier_hash = hashlib.sha256(code_verifier.encode()).digest()
-                verifier_challenge = base64.urlsafe_b64encode(verifier_hash).decode().rstrip("=")
+        # Only S256 is accepted (RFC 7636 §4.2; 'plain' is no longer permitted).
+        if row["code_challenge_method"] != "S256":
+            logger.warning("Unsupported code_challenge_method: %s", row["code_challenge_method"])
+            return None
 
-                if verifier_challenge != row["code_challenge"]:
-                    logger.warning("PKCE verification failed")
-                    return None
-            elif row["code_challenge_method"] == "plain":
-                if code_verifier != row["code_challenge"]:
-                    logger.warning("PKCE verification failed (plain)")
-                    return None
+        verifier_hash = hashlib.sha256(code_verifier.encode()).digest()
+        verifier_challenge = base64.urlsafe_b64encode(verifier_hash).decode().rstrip("=")
+        if not hmac.compare_digest(verifier_challenge, row["code_challenge"]):
+            logger.warning("PKCE verification failed")
+            return None
 
     logger.info(f"Authorization code verified for user {row['user_id']}")
 

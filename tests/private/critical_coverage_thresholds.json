@@ -1,0 +1,9 @@
+{
+  "description": "Minimum line coverage for security-critical modules",
+  "modules": {
+    "src/authmcp_gateway/auth/endpoints.py": 20.0,
+    "src/authmcp_gateway/auth/jwt_handler.py": 80.0,
+    "src/authmcp_gateway/app.py": 55.0,
+    "src/authmcp_gateway/middleware.py": 45.0
+  }
+}

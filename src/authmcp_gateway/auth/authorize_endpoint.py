@@ -42,7 +42,7 @@ async def authorize_page(request: Request) -> Response:
     client_id = request.query_params.get("client_id")
     redirect_uri = request.query_params.get("redirect_uri")
     code_challenge = request.query_params.get("code_challenge")
-    code_challenge_method = request.query_params.get("code_challenge_method", "plain")
+    code_challenge_method = request.query_params.get("code_challenge_method", "S256")
     state = request.query_params.get("state", "")
     scope = request.query_params.get("scope", "openid profile email")
     resource = request.query_params.get("resource", "")
@@ -65,6 +65,20 @@ async def authorize_page(request: Request) -> Response:
             raise ValueError("Invalid redirect_uri")
     except Exception:
         return HTMLResponse("<h1>Error</h1><p>Invalid redirect_uri format.</p>", status_code=400)
+
+    # PKCE is mandatory per OAuth 2.1 §4.1.1 and MCP authorization spec.
+    if not code_challenge:
+        return HTMLResponse(
+            "<h1>Error</h1><p>code_challenge is required (PKCE per OAuth 2.1).</p>",
+            status_code=400,
+        )
+    # RFC 7636 §4.2: 'plain' is permitted only for legacy clients that cannot
+    # implement S256. We require S256 to close the side-channel-resistance gap.
+    if code_challenge_method != "S256":
+        return HTMLResponse(
+            "<h1>Error</h1><p>code_challenge_method must be S256 (plain is not accepted).</p>",
+            status_code=400,
+        )
 
     # Validate client_id — seamless approach:
     # 1. Known DCR client → strict redirect_uri check against registered URIs

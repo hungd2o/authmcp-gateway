@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.58] - 2026-05-09
+
+### Changed
+- mypy cleanup: cleared all 6 errors in `mcp/store.py`. Pure type
+  annotations, no behaviour change.
+- 4× `cast(int, cursor.lastrowid)` / `cast(int, row[0])` for SQLite
+  reads where mypy sees `Any | None` but the call site is right
+  after an `INSERT` (so `lastrowid` is guaranteed populated). Sites:
+  `create_mcp_server`, `create_tool_mapping`, `set_user_mcp_permission`,
+  `get_tool_mapping`.
+- `update_server_health` builds a `fields = {...}` dict whose
+  initial value type is `str | None` (status, ISO timestamp,
+  optional error). It then conditionally adds `tools_count` (int) —
+  mypy rejected the int assignment. Annotated `fields: Dict[str,
+  Any]`.
+- `delete_tool_mapping` returned `cursor.rowcount > 0` which mypy
+  inferred as `Any` (rowcount is exposed as `Any` by some sqlite3
+  stubs). Wrapped in `bool(...)`.
+
+### Notes
+- mypy: 41 -> 35 errors. 184 tests pass.
+
 ## [1.2.57] - 2026-05-09
 
 ### Changed
@@ -710,6 +732,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.58]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.58
 [1.2.57]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.57
 [1.2.56]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.56
 [1.2.55]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.55

@@ -3,7 +3,7 @@
 import logging
 import sqlite3
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from authmcp_gateway.db import get_db
 
@@ -201,7 +201,7 @@ def create_mcp_server(
         conn.commit()
 
     logger.info(f"Created MCP server: {name} (id={server_id})")
-    return server_id
+    return cast(int, server_id)
 
 
 def get_mcp_server(db_path: str, server_id: int) -> Optional[Dict[str, Any]]:
@@ -375,7 +375,7 @@ def update_server_health(
         tools_count: Number of tools available
         error: Error message if any
     """
-    fields = {
+    fields: Dict[str, Any] = {
         "status": status,
         "last_health_check": datetime.now(timezone.utc).isoformat(),
         "last_error": error,
@@ -437,7 +437,7 @@ def create_tool_mapping(db_path: str, tool_name: str, mcp_server_id: int) -> int
         conn.commit()
 
     logger.info(f"Created tool mapping: {tool_name} -> server {mcp_server_id}")
-    return mapping_id
+    return cast(int, mapping_id)
 
 
 def get_tool_mapping(db_path: str, tool_name: str) -> Optional[int]:
@@ -456,7 +456,7 @@ def get_tool_mapping(db_path: str, tool_name: str) -> Optional[int]:
         row = cursor.fetchone()
 
     if row:
-        return row[0]
+        return cast(int, row[0])
     return None
 
 
@@ -502,7 +502,7 @@ def delete_tool_mapping(db_path: str, tool_name: str) -> bool:
         rows_affected = cursor.rowcount
         conn.commit()
 
-    return rows_affected > 0
+    return bool(rows_affected > 0)
 
 
 # User permissions
@@ -540,7 +540,7 @@ def set_user_mcp_permission(
         conn.commit()
 
     logger.info(f"Set MCP permission: user {user_id} -> server {mcp_server_id} = {can_access}")
-    return permission_id
+    return cast(int, permission_id)
 
 
 def get_user_mcp_permissions(db_path: str, user_id: int) -> List[Dict[str, Any]]:

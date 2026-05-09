@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, cast
 
 import httpx
 
@@ -124,11 +124,11 @@ class HealthChecker:
 
         # Log summary
         online_count = sum(
-            1 for r in results if not isinstance(r, Exception) and r["status"] == "online"
+            1 for r in results if not isinstance(r, BaseException) and r["status"] == "online"
         )
         logger.info(f"Health check: {online_count}/{len(servers)} servers online")
 
-        return [r for r in results if not isinstance(r, Exception)]
+        return [r for r in results if not isinstance(r, BaseException)]
 
     async def check_server(self, server: Dict[str, Any]) -> Dict[str, Any]:
         """Check health of a single MCP server.
@@ -243,7 +243,13 @@ class HealthChecker:
 
                         if success:
                             # Reload server with new token and retry
-                            server = get_mcp_server(self.db_path, server_id)
+                            refreshed = get_mcp_server(self.db_path, server_id)
+                            if refreshed is None:
+                                logger.error(
+                                    f"Server {server_name} disappeared during token refresh"
+                                )
+                                raise RuntimeError("server vanished mid-refresh")
+                            server = refreshed
                             headers = self._get_auth_headers(server)
                             session_id = self._session_ids.get(server_id)
                             if session_id:
@@ -409,7 +415,7 @@ class HealthChecker:
                         notify_err,
                     )
 
-            return session_id
+            return cast(str, session_id)
         except PROXY_DISCOVERY_ERRORS as e:
             logger.debug(f"Health check: initialize failed for {server_name}: {e}")
             return ""
@@ -420,7 +426,7 @@ class HealthChecker:
 
 
 # Global health checker instance
-_health_checker: HealthChecker = None
+_health_checker: Optional[HealthChecker] = None
 
 
 def get_health_checker() -> HealthChecker:

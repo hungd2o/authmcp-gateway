@@ -109,7 +109,7 @@ class TokenRefresher:
             # Count successes
             success_count = 0
             for i, result in enumerate(results):
-                if isinstance(result, Exception):
+                if isinstance(result, BaseException):
                     logger.error(f"Exception refreshing server {servers[i]['name']}: {result}")
                 elif result[0]:  # result = (success, error_message)
                     success_count += 1

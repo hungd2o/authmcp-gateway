@@ -7,7 +7,7 @@ derived from the application's JWT secret.
 import base64
 import hashlib
 import logging
-from typing import Optional
+from typing import Optional, cast
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -46,7 +46,7 @@ def encrypt_token(plaintext: str) -> str:
     """
     if _fernet is None:
         raise RuntimeError("Crypto not initialized. Call initialize_crypto() first.")
-    return _fernet.encrypt(plaintext.encode()).decode()
+    return cast(str, _fernet.encrypt(plaintext.encode()).decode())
 
 
 def decrypt_token(ciphertext: str) -> str:
@@ -64,7 +64,7 @@ def decrypt_token(ciphertext: str) -> str:
     """
     if _fernet is None:
         raise RuntimeError("Crypto not initialized. Call initialize_crypto() first.")
-    return _fernet.decrypt(ciphertext.encode()).decode()
+    return cast(str, _fernet.decrypt(ciphertext.encode()).decode())
 
 
 def decrypt_token_safe(ciphertext: str) -> str:
@@ -84,7 +84,7 @@ def decrypt_token_safe(ciphertext: str) -> str:
     if _fernet is None:
         return ciphertext
     try:
-        return _fernet.decrypt(ciphertext.encode()).decode()
+        return cast(str, _fernet.decrypt(ciphertext.encode()).decode())
     except (InvalidToken, Exception):
         # Not a Fernet token — return as-is (legacy plaintext)
         return ciphertext

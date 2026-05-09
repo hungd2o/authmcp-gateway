@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.59] - 2026-05-09
+
+### Changed
+- mypy cleanup (MCP domain): cleared all 10 errors across `mcp/health.py`,
+  `mcp/crypto.py`, and `mcp/token_refresher.py`. One real defensive-coding
+  hardening, the rest are annotation work.
+- Real bug caught: `mcp/health.py` 401-retry path overwrote `server` with
+  the result of `get_mcp_server(self.db_path, server_id)` without a None
+  check — the same pattern already fixed in `mcp/proxy.py` in 1.2.53.
+  Server can be deleted / lose permissions during the refresh window;
+  before this fix, the retry POST would dereference None. Now logs and
+  raises `RuntimeError("server vanished mid-refresh")` so the outer
+  health-check catch handles it cleanly.
+- `mcp/health.py` `asyncio.gather(return_exceptions=True)` filters in
+  `check_all_servers` now use `isinstance(r, BaseException)` (not
+  `Exception`). Same correction as 1.2.53 — `BaseException` is what
+  gather actually returns and what mypy narrows.
+- `mcp/token_refresher.py` proactive refresh loop: same gather fix
+  (`isinstance(result, BaseException)`).
+- `mcp/health.py` `_initialize_session` returned `Any` from
+  `httpx.Headers.get(...)` into a `-> str` slot. Wrapped in
+  `cast(str, ...)`.
+- `mcp/health.py` `_health_checker: HealthChecker = None` →
+  `Optional[HealthChecker] = None` (PEP 484 implicit-Optional).
+- `mcp/crypto.py` 3 sites: `Fernet.encrypt(...).decode()` /
+  `Fernet.decrypt(...).decode()` typed `Any` by the cryptography stubs.
+  Wrapped each in `cast(str, ...)` since the chain always yields a
+  decoded str on success.
+
+### Notes
+- mypy: 35 -> 25 errors. 184 tests pass.
+
 ## [1.2.58] - 2026-05-09
 
 ### Changed
@@ -732,6 +764,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.59]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.59
 [1.2.58]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.58
 [1.2.57]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.57
 [1.2.56]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.56

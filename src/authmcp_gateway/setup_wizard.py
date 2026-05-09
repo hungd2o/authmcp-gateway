@@ -1,6 +1,8 @@
 """Setup wizard for initial configuration."""
 
+import json
 import logging
+import sqlite3
 from dataclasses import replace
 
 from starlette.requests import Request
@@ -22,7 +24,7 @@ def is_setup_required(request: Request) -> bool:
     try:
         users = get_all_users(config.auth.sqlite_path)
         return len(users) == 0
-    except Exception as e:
+    except (sqlite3.Error, OSError) as e:
         logger.error(f"Failed to check setup status: {e}")
         return False
 
@@ -263,7 +265,7 @@ async def create_admin_user(request: Request) -> JSONResponse:
                     "require_special", policy.password_require_special
                 ),
             )
-        except Exception:
+        except (RuntimeError, AttributeError, TypeError, KeyError):
             pass
 
         is_valid, error_msg = validate_password_strength(password, policy)
@@ -295,6 +297,6 @@ async def create_admin_user(request: Request) -> JSONResponse:
             status_code=201,
         )
 
-    except Exception as e:
+    except (sqlite3.Error, ValueError, json.JSONDecodeError, TypeError, KeyError) as e:
         logger.error(f"Failed to create admin user: {e}")
         return JSONResponse({"detail": str(e)}, status_code=500)

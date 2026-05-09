@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.51] - 2026-05-09
+
+### Changed
+- Audit (A1 final batch): narrowed the last 6 broad `except Exception`
+  clauses in the CLI surface and the setup wizard. Concludes the
+  except-narrowing campaign that started in 1.2.35.
+- `cli.py`:
+  - `init-db` subcommand catch -> `(sqlite3.Error, OSError)`. Covers
+    DB connection / schema-creation errors and missing parent dirs.
+  - `create-admin` subcommand catch -> `(sqlite3.Error, ValueError)`.
+    Covers DB errors and bcrypt's "password too long" `ValueError`.
+  - `version` subcommand catch -> `PackageNotFoundError`. Stops
+    masking unrelated import failures as "version: unknown".
+- `setup_wizard.py`:
+  - `is_setup_required` user-count probe -> `(sqlite3.Error, OSError)`.
+    "DB doesn't exist yet" and real DB errors stay handled; a logic
+    bug in `get_all_users` no longer silently triggers the setup flow.
+  - Inline password-policy override (best-effort) ->
+    `(RuntimeError, AttributeError, TypeError, KeyError)`. The block
+    is intentionally permissive — it falls back to env-config policy
+    on any failure — but stops eating MemoryError / SystemExit etc.
+  - Top-level `create_admin_user` handler ->
+    `(sqlite3.Error, ValueError, json.JSONDecodeError, TypeError,
+    KeyError)`. Covers the request body parse + DB write paths.
+
+### Notes
+- No behaviour change on the happy path. 184 tests pass.
+- A1 audit campaign complete: 100+ broad excepts narrowed across 17
+  files / 17 releases (1.2.35–1.2.51). Remaining broad `except
+  Exception` instances in the codebase are intentional boundary
+  handlers (JSON-RPC dispatcher, async watchdog loops, security log
+  fallbacks) where narrowing would harm correctness.
+
 ## [1.2.50] - 2026-05-09
 
 ### Changed
@@ -526,6 +559,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.51]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.51
 [1.2.50]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.50
 [1.2.49]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.49
 [1.2.48]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.48

@@ -3,6 +3,7 @@
 import argparse
 import logging
 import os
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -165,7 +166,7 @@ def init_database(args):
         init_db(db_path)
         create_authorization_code_table(db_path)
         print("✓ Database initialized successfully")
-    except Exception as e:
+    except (sqlite3.Error, OSError) as e:
         print(f"✗ Error initializing database: {e}")
         sys.exit(1)
 
@@ -215,7 +216,7 @@ def create_admin_user(args):
         print(f"✓ Admin user created successfully (ID: {user_id})")
         print(f"  Username: {args.username}")
         print(f"  Email: {args.email}")
-    except Exception as e:
+    except (sqlite3.Error, ValueError) as e:
         print(f"✗ Error creating user: {e}")
         sys.exit(1)
 
@@ -223,10 +224,10 @@ def create_admin_user(args):
 def show_version():
     """Show version information."""
     try:
-        from importlib.metadata import version
+        from importlib.metadata import PackageNotFoundError, version
 
         pkg_version = version("authmcp-gateway")
-    except Exception:
+    except PackageNotFoundError:
         pkg_version = "unknown"
 
     print(f"""

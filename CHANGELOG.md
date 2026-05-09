@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.35] - 2026-05-09
+
+### Security
+- Narrowed broad `except Exception: pass` blocks in `auth/token_service.py`:
+  - `verify_token` failures during reuse are now caught only as
+    `jwt.PyJWTError` and logged at DEBUG.
+  - `is_token_blacklisted` errors are caught only as `sqlite3.Error` and
+    logged at WARNING; the caller still rotates safely.
+  - Failures of `blacklist_token` (single-session enforcement and
+    explicit rotation) are caught only as `sqlite3.Error` and logged at
+    ERROR with `exc_info`. Previously they were silently swallowed,
+    which meant a transient DB error could leave the previous session
+    valid until natural expiry without any operator visibility.
+- `_parse_expires_at` now catches `(ValueError, TypeError)` instead of
+  bare `Exception`, so unexpected runtime errors no longer surface as
+  silent `None`.
+
+### Added
+- `tests/test_token_service.py`: 22 characterization tests covering token
+  reuse, JTI-mismatch rotation, garbage-input handling, single-session
+  enforcement, admin/user store separation, and rotation blacklisting.
+  The module previously had 0% coverage.
+
 ## [1.2.34] - 2026-05-09
 
 ### Security
@@ -126,6 +149,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.35]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.35
 [1.2.34]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.34
 [1.2.33]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.33
 [1.2.32]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.32

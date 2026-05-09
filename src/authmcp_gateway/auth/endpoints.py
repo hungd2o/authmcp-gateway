@@ -2,6 +2,7 @@
 
 import base64
 import binascii
+import json
 import logging
 import sqlite3
 from dataclasses import replace
@@ -220,9 +221,12 @@ async def register(request: Request) -> JSONResponse:
         body = await request.json()
         user_data = UserRegisterRequest(**body)
     except ValueError as e:
+        # Pydantic ValidationError is a subclass of ValueError; bare json
+        # parse errors are JSONDecodeError (also a subclass of ValueError).
         logger.warning("Registration validation error: %s", str(e))
         return _error_response(400, f"Validation error: {str(e)}", "VALIDATION_ERROR")
-    except Exception as e:
+    except (json.JSONDecodeError, TypeError) as e:
+        # Non-JSON body or non-dict payload that breaks **body unpacking.
         logger.error("Failed to parse registration request: %s", str(e))
         return _error_response(400, "Invalid request body", "INVALID_REQUEST")
 
@@ -290,7 +294,7 @@ async def register(request: Request) -> JSONResponse:
         else:
             logger.error("Registration failed with IntegrityError: %s", str(e))
             return _error_response(500, "Failed to create user", "DATABASE_ERROR")
-    except Exception:
+    except (sqlite3.Error, OSError):
         logger.exception("Unexpected error during user creation")
         return _error_response(500, "Internal server error", "INTERNAL_ERROR")
 
@@ -346,7 +350,7 @@ async def login(request: Request) -> JSONResponse:
     except ValueError as e:
         logger.warning("Login validation error: %s", str(e))
         return _error_response(400, f"Validation error: {str(e)}", "VALIDATION_ERROR")
-    except Exception as e:
+    except (json.JSONDecodeError, TypeError) as e:
         logger.error("Failed to parse login request: %s", str(e))
         return _error_response(400, "Invalid request body", "INVALID_REQUEST")
 
@@ -440,14 +444,14 @@ async def login(request: Request) -> JSONResponse:
         refresh_token = create_refresh_token(
             user_id=user["id"], config=config.jwt, expire_days=refresh_ttl
         )
-    except Exception:
+    except (jwt.PyJWTError, sqlite3.Error):
         logger.exception("Failed to create tokens for user '%s'", login_data.username)
         return _error_response(500, "Failed to create tokens", "TOKEN_CREATION_ERROR")
 
     # Store current access token JTI for single-session enforcement
     try:
         _persist_current_access_token(db_path, user["id"], access_token)
-    except Exception:
+    except sqlite3.Error:
         logger.exception("Failed to save access token for user '%s'", login_data.username)
         return _error_response(500, "Failed to save access token", "TOKEN_SAVE_ERROR")
 
@@ -469,7 +473,8 @@ async def login(request: Request) -> JSONResponse:
             token_hash=refresh_token_hash,
             expires_at=expires_at,
         )
-    except Exception:
+    except (jwt.PyJWTError, sqlite3.Error, ValueError):
+        # ValueError covers the explicit raise on missing 'exp' in payload above.
         logger.exception("Failed to save refresh token for user '%s'", login_data.username)
         return _error_response(500, "Failed to save refresh token", "TOKEN_SAVE_ERROR")
 
@@ -522,7 +527,7 @@ async def refresh(request: Request) -> JSONResponse:
     except ValueError as e:
         logger.warning("Refresh validation error: %s", str(e))
         return _error_response(400, f"Validation error: {str(e)}", "VALIDATION_ERROR")
-    except Exception as e:
+    except (json.JSONDecodeError, TypeError) as e:
         logger.error("Failed to parse refresh request: %s", str(e))
         return _error_response(400, "Invalid request body", "INVALID_REQUEST")
 
@@ -575,14 +580,14 @@ async def refresh(request: Request) -> JSONResponse:
             config=config.jwt,
             expire_minutes=access_ttl,
         )
-    except Exception:
+    except jwt.PyJWTError:
         logger.exception("Failed to create access token for user %d", user_id)
         return _error_response(500, "Failed to create token", "TOKEN_CREATION_ERROR")
 
     # Store current access token JTI for single-session enforcement
     try:
         _persist_current_access_token(db_path, user["id"], access_token)
-    except Exception:
+    except sqlite3.Error:
         logger.exception("Failed to save refreshed access token for user %d", user_id)
         return _error_response(500, "Failed to save access token", "TOKEN_SAVE_ERROR")
 
@@ -628,7 +633,7 @@ async def logout(request: Request) -> JSONResponse:
     except ValueError as e:
         logger.warning("Logout validation error: %s", str(e))
         return _error_response(400, f"Validation error: {str(e)}", "VALIDATION_ERROR")
-    except Exception as e:
+    except (json.JSONDecodeError, TypeError) as e:
         logger.error("Failed to parse logout request: %s", str(e))
         return _error_response(400, "Invalid request body", "INVALID_REQUEST")
 
@@ -659,7 +664,10 @@ async def logout(request: Request) -> JSONResponse:
 
         expires_at = datetime.fromtimestamp(access_exp, tz=timezone.utc)
         blacklist_token(db_path, access_jti, expires_at)
-    except Exception:
+    except (sqlite3.Error, ValueError, OSError):
+        # ValueError covers a malformed `exp` from the JWT payload that
+        # makes datetime.fromtimestamp reject it; OSError covers DB-file
+        # I/O issues on the SQLite write.
         logger.exception("Failed to blacklist access token")
         return _error_response(500, "Failed to blacklist token", "BLACKLIST_ERROR")
 
@@ -1331,7 +1339,12 @@ async def oauth_token(request: Request) -> JSONResponse:
                 },
             )
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — outer last-resort for /oauth/token
+        # This wraps the entire grant-type dispatch (~570 lines covering
+        # password, refresh_token, authorization_code grants and DCR client
+        # auth). Narrow catches inside each grant branch already handle the
+        # known failure modes; this is the genuine "log + 500" backstop so
+        # we never leak a Python traceback to OAuth clients.
         logger.exception(f"OAuth token endpoint error: {e}")
         return JSONResponse(
             status_code=500,

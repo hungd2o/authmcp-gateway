@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.37] - 2026-05-09
+
+### Security
+- Narrowed 10 last-resort `except Exception` blocks in
+  `auth/endpoints.py` (audit Category B):
+  - The four request-body parsers (`/auth/register`, `/auth/login`,
+    `/auth/refresh`, `/auth/logout`) now catch only
+    `(json.JSONDecodeError, TypeError)` for the post-Pydantic fallback,
+    so genuinely unexpected exceptions surface instead of being
+    relabelled as "Invalid request body".
+  - User creation (`create_user` block) catches only
+    `(sqlite3.Error, OSError)`.
+  - Login/refresh token issuance and persistence catch only
+    `(jwt.PyJWTError, sqlite3.Error)` (login refresh-token save also
+    catches `ValueError` for the explicit `raise` on a missing `exp`).
+  - Logout blacklist catches only `(sqlite3.Error, ValueError, OSError)`.
+- The single broad catch left in place is the outer last-resort wrap
+  around `/oauth/token`'s ~570-line grant dispatch. It is now annotated
+  with a comment and an explicit `# noqa: BLE001` so reviewers see it
+  is intentional.
+
+### Notes
+- No behaviour change for any documented happy or error path; the
+  existing integration tests for login / refresh / logout / register /
+  oauth_token continue to pass unchanged.
+
 ## [1.2.36] - 2026-05-09
 
 ### Security
@@ -172,6 +198,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.37]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.37
 [1.2.36]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.36
 [1.2.35]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.35
 [1.2.34]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.34

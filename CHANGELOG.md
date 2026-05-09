@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.53] - 2026-05-09
+
+### Changed
+- mypy cleanup: cleared all 19 errors in `mcp/proxy.py`.
+- Real bugs caught and fixed:
+  - 3× `asyncio.gather(return_exceptions=True)` callsites in
+    `get_aggregated_capabilities`, `list_tools`, `list_resources`,
+    `list_prompts` were filtering with `isinstance(result, Exception)`
+    — but `gather` returns `T | BaseException`, so KeyboardInterrupt
+    / SystemExit / CancelledError would have leaked into `.items()`,
+    `.extend()` and the formatter. Switched to
+    `isinstance(result, BaseException)` so the type narrows correctly
+    and these never escape into downstream "iterate / merge" code.
+  - `read_resource` was annotated `-> Dict[str, Any]` but actually
+    returned `Tuple[Dict[str, Any], Dict[str, Any]]` (response, server)
+    — its single caller in `mcp/handler.py` already unpacked the tuple.
+    Fixed annotation.
+  - `_proxy_jsonrpc` 401-retry path overwrote `server` with the result
+    of `get_mcp_server(...)` which can return `None`. Added explicit
+    None check that aborts the retry instead of dereferencing None.
+- `[no-any-return]` pulls cast to declared shapes via `typing.cast`
+  (parse_sse_response, fetch tools / resources / prompts /
+  resource templates, capabilities discovery, idempotency check).
+- `[var-annotated]` locals annotated explicitly:
+  - `caps: Dict[str, Any]`
+  - `all_tools / all_resources / all_prompts: List[Dict[str, Any]]`
+  - `result_keys: Union[List[Any], str]` (the diagnostic log line
+    that holds either dict keys or "N/A").
+
+### Notes
+- No behaviour change. 184 tests pass.
+- mypy: 131 -> 102 errors (proxy.py + downstream caller errors that
+  the corrected `read_resource` signature also resolved).
+
 ## [1.2.52] - 2026-05-09
 
 ### Changed
@@ -582,6 +616,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.53]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.53
 [1.2.52]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.52
 [1.2.51]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.51
 [1.2.50]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.50

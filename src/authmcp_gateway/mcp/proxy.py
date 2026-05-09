@@ -12,7 +12,7 @@ import sqlite3
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 import httpx
 
@@ -72,7 +72,7 @@ def parse_sse_response(response: httpx.Response) -> Dict[str, Any]:
 
     # Normal JSON response — fast path
     if "application/json" in content_type:
-        return response.json()
+        return cast(Dict[str, Any], response.json())
 
     # SSE response — parse data: lines to find JSON-RPC message
     if "text/event-stream" in content_type:
@@ -109,13 +109,13 @@ def parse_sse_response(response: httpx.Response) -> Dict[str, Any]:
 
         # Return last valid JSON message if no explicit result/error found
         if last_json_message:
-            return last_json_message
+            return cast(Dict[str, Any], last_json_message)
 
         raise ValueError(f"No valid JSON-RPC message found in SSE response: {text[:200]}")
 
     # Unknown content type — try JSON anyway
     try:
-        return response.json()
+        return cast(Dict[str, Any], response.json())
     except (json.JSONDecodeError, ValueError):
         raise ValueError(f"Unexpected content-type '{content_type}', body: {response.text[:200]}")
 
@@ -261,16 +261,22 @@ class McpProxy:
                     server_id, triggered_by="reactive_401"
                 )
                 if success:
-                    server = get_mcp_server(self.db_path, server_id)
-                    headers = self._get_auth_headers(server)
-                    if session_id:
-                        headers["mcp-session-id"] = session_id
-                    response = await client.post(
-                        server_url, json=payload, headers=headers, timeout=server_timeout
-                    )
-                    logger.info(
-                        f"Retry after token refresh succeeded for {method} on {server_name}"
-                    )
+                    refreshed = get_mcp_server(self.db_path, server_id)
+                    if refreshed is None:
+                        logger.error(
+                            f"Server {server_name} disappeared from DB during token refresh"
+                        )
+                    else:
+                        server = refreshed
+                        headers = self._get_auth_headers(server)
+                        if session_id:
+                            headers["mcp-session-id"] = session_id
+                        response = await client.post(
+                            server_url, json=payload, headers=headers, timeout=server_timeout
+                        )
+                        logger.info(
+                            f"Retry after token refresh succeeded for {method} on {server_name}"
+                        )
                 else:
                     logger.error(f"Token refresh failed for {server_name}: {error}")
             except PROXY_TOKEN_REFRESH_ERRORS as refresh_error:
@@ -355,7 +361,7 @@ class McpProxy:
                 "reusing conservative default capabilities",
                 server_name,
             )
-            caps = {"tools": {}}
+            caps: Dict[str, Any] = {"tools": {}}
             self._capabilities_cache[server_id] = caps
             return caps
 
@@ -369,7 +375,7 @@ class McpProxy:
                     "clientInfo": {"name": "authmcp-gateway", "version": "2.0.0"},
                 },
             )
-            caps = data.get("result", {}).get("capabilities", {})
+            caps = cast(Dict[str, Any], data.get("result", {}).get("capabilities", {}))
             self._capabilities_cache[server_id] = caps
 
             # Send initialized notification (fire-and-forget)
@@ -429,7 +435,7 @@ class McpProxy:
 
         merged: Dict[str, Any] = {}
         for result in results:
-            if isinstance(result, Exception):
+            if isinstance(result, BaseException):
                 continue
             for cap_name, cap_value in result.items():
                 if cap_name not in merged:
@@ -457,9 +463,9 @@ class McpProxy:
         tasks = [self._fetch_tools_from_server(s) for s in servers]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        all_tools = []
+        all_tools: List[Dict[str, Any]] = []
         for i, result in enumerate(results):
-            if isinstance(result, Exception):
+            if isinstance(result, BaseException):
                 logger.error(f"Failed to fetch tools from server {servers[i]['name']}: {result}")
                 continue
             if result:
@@ -530,7 +536,7 @@ class McpProxy:
             data = await self._proxy_jsonrpc(server, "tools/list")
 
             if "result" in data and "tools" in data["result"]:
-                tools = data["result"]["tools"]
+                tools = cast(List[Dict[str, Any]], data["result"]["tools"])
                 for tool in tools:
                     tool["_server_id"] = server_id
                     tool["_server_name"] = server_name
@@ -653,6 +659,7 @@ class McpProxy:
 
         # Temporary: log full response for tools/call diagnosis
         result_obj = data.get("result", {})
+        result_keys: Union[List[Any], str]
         if isinstance(result_obj, dict):
             result_keys = list(result_obj.keys())
             is_error = result_obj.get("isError")
@@ -749,9 +756,9 @@ class McpProxy:
         tasks = [self._fetch_resources_from_server(s) for s in servers]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        all_resources = []
+        all_resources: List[Dict[str, Any]] = []
         for i, result in enumerate(results):
-            if isinstance(result, Exception):
+            if isinstance(result, BaseException):
                 logger.error(f"Failed to fetch resources from {servers[i]['name']}: {result}")
                 continue
             if result:
@@ -785,7 +792,7 @@ class McpProxy:
             data = await self._proxy_jsonrpc(server, "resources/list")
 
             if "result" in data and "resources" in data["result"]:
-                resources = data["result"]["resources"]
+                resources = cast(List[Dict[str, Any]], data["result"]["resources"])
                 for r in resources:
                     r["_server_id"] = server_id
                     r["_server_name"] = server_name
@@ -808,11 +815,11 @@ class McpProxy:
         uri: str,
         user_id: Optional[int] = None,
         server_name: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Route resources/read to the server that owns the URI.
 
         Returns:
-            JSON-RPC response dict.
+            Tuple of (JSON-RPC response dict, server dict that served the resource).
 
         Raises:
             ResourceNotFoundError: If URI not found in any server.
@@ -870,7 +877,10 @@ class McpProxy:
         async def fetch_one(server: Dict[str, Any]) -> List[Dict[str, Any]]:
             try:
                 data = await self._proxy_jsonrpc(server, "resources/templates/list")
-                templates = data.get("result", {}).get("resourceTemplates", [])
+                templates = cast(
+                    List[Dict[str, Any]],
+                    data.get("result", {}).get("resourceTemplates", []),
+                )
                 for t in templates:
                     t["_server_id"] = server["id"]
                     t["_server_name"] = server["name"]
@@ -906,9 +916,9 @@ class McpProxy:
         tasks = [self._fetch_prompts_from_server(s) for s in servers]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        all_prompts = []
+        all_prompts: List[Dict[str, Any]] = []
         for i, result in enumerate(results):
-            if isinstance(result, Exception):
+            if isinstance(result, BaseException):
                 logger.error(f"Failed to fetch prompts from {servers[i]['name']}: {result}")
                 continue
             if result:
@@ -931,7 +941,7 @@ class McpProxy:
             data = await self._proxy_jsonrpc(server, "prompts/list")
 
             if "result" in data and "prompts" in data["result"]:
-                prompts = data["result"]["prompts"]
+                prompts = cast(List[Dict[str, Any]], data["result"]["prompts"])
                 for p in prompts:
                     p["_server_id"] = server_id
                     p["_server_name"] = server_name
@@ -1153,7 +1163,7 @@ class McpProxy:
             return False
         if execution_policy["idempotency"] not in {"supported", "required"}:
             return False
-        return execution_policy["retry"] == "safe_with_idempotency"
+        return bool(execution_policy["retry"] == "safe_with_idempotency")
 
     async def _get_tool_definition(
         self, server: Dict[str, Any], tool_name: str

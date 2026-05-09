@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.38] - 2026-05-09
+
+### Security
+- Closed four silent-suppression sites in `mcp/proxy.py` that were
+  swallowing exceptions with `pass`, `continue`, or `return []` and
+  no log line:
+  - `notifications/initialized` best-effort send (post-init handshake).
+  - Broadcast lookup of a `resource_uri` across backend servers.
+  - Per-server `resources/templates/list` fetch.
+  - Broadcast lookup of a `prompt_name` across backend servers.
+
+  Each now logs the failure at DEBUG with the affected server and
+  identifier, so operators can correlate degraded backend behaviour
+  with broadcast iteration.
+
+### Changed
+- Narrowed the seven other broad `except Exception` blocks in
+  `mcp/proxy.py` to the types that can actually surface from
+  `httpx.AsyncClient` calls plus our own JSON parsing:
+  `(httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError)`,
+  with `sqlite3.Error` added where the block also writes to SQLite
+  (token-refresh path, tools-fetch fallback). Truly unexpected errors
+  now propagate instead of being relabelled.
+- The single intentional broad catch left in place is the one in
+  `call_tool` that mirrors any exception onto the dedup-inflight
+  Future before re-raising. It now carries `# noqa: BLE001` and a
+  comment explaining why a wide catch is required there.
+- The capabilities-fetch fallback also accepts `RuntimeError` so
+  backends that turn a JSON-RPC "already initialized" response into
+  a Python exception continue to be handled gracefully (caught by
+  `tests/test_mcp_proxy.py::test_fetch_capabilities_handles_already_initialized_as_non_fatal`).
+
+### Notes
+- No behaviour change for any documented happy/error path; the
+  184-test suite still passes.
+
 ## [1.2.37] - 2026-05-09
 
 ### Security
@@ -198,6 +234,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.38]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.38
 [1.2.37]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.37
 [1.2.36]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.36
 [1.2.35]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.35

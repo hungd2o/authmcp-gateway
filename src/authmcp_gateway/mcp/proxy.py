@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import os
+import sqlite3
 import time
 import uuid
 from datetime import datetime, timezone
@@ -110,7 +111,7 @@ def parse_sse_response(response: httpx.Response) -> Dict[str, Any]:
     # Unknown content type — try JSON anyway
     try:
         return response.json()
-    except Exception:
+    except (json.JSONDecodeError, ValueError):
         raise ValueError(f"Unexpected content-type '{content_type}', body: {response.text[:200]}")
 
 
@@ -267,7 +268,7 @@ class McpProxy:
                     )
                 else:
                     logger.error(f"Token refresh failed for {server_name}: {error}")
-            except Exception as refresh_error:
+            except (httpx.HTTPError, sqlite3.Error, ValueError, KeyError) as refresh_error:
                 logger.error(f"Exception during token refresh: {refresh_error}")
 
         # Handle 400 "no valid session" — need to initialize first
@@ -381,11 +382,21 @@ class McpProxy:
                     },
                     headers=notify_headers,
                 )
-            except Exception:
-                pass  # Best-effort notification
+            except httpx.HTTPError as notify_err:
+                # Best-effort: backends that ignore the notification still
+                # work; only transport-layer issues are interesting here.
+                logger.debug(
+                    "notifications/initialized to %s failed (best-effort): %s",
+                    server.get("name"),
+                    notify_err,
+                )
 
             return caps
-        except Exception as e:
+        except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError, RuntimeError) as e:
+            # RuntimeError covers backends that turn a JSON-RPC error
+            # ("Server already initialized" etc.) into a Python exception via
+            # an awaiter / session-recovery path; we degrade to conservative
+            # capabilities rather than treating it as fatal.
             message = str(e).lower()
             if "already initialized" in message:
                 logger.info(
@@ -538,7 +549,7 @@ class McpProxy:
             logger.error(f"HTTP error fetching tools from {server_name}: {e}")
             update_server_health(self.db_path, server_id, status="error", error=str(e))
             return []
-        except Exception as e:
+        except (json.JSONDecodeError, ValueError, KeyError, sqlite3.Error) as e:
             logger.error(f"Error fetching tools from {server_name}: {e}")
             update_server_health(self.db_path, server_id, status="error", error=str(e))
             return []
@@ -627,7 +638,12 @@ class McpProxy:
                 allow_retry=allow_retry,
                 timeout_override_ms=timeout_override_ms,
             )
-        except Exception as exc:
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 — propagate exception to dedup waiters then re-raise
+            # Any failure (transport, JSON, server-side) must be mirrored on
+            # the inflight Future so other coroutines awaiting the same
+            # idempotency key see the same exception, then we re-raise.
             if dedup_key:
                 inflight = self._dedup_inflight.pop(dedup_key, None)
                 if inflight is not None and not inflight.done():
@@ -711,7 +727,7 @@ class McpProxy:
                 if any(t["name"] == tool_name for t in tools):
                     logger.info(f"Found '{tool_name}' in {server['name']} via broadcast")
                     return server
-            except Exception as e:
+            except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError) as e:
                 logger.error(f"Error broadcasting to {server['name']}: {e}")
 
         logger.warning(f"Tool '{tool_name}' not found in any server")
@@ -780,7 +796,9 @@ class McpProxy:
             else:
                 return []
 
-        except Exception as e:
+        except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError) as e:
+            # MCP servers without a resources capability return method-not-found
+            # here; treat any of these as "not supported" rather than failing.
             logger.debug(f"resources/list not supported by {server_name}: {e}")
             return []
 
@@ -829,7 +847,13 @@ class McpProxy:
                 resources = await self._fetch_resources_from_server(server)
                 if any(r["uri"] == uri for r in resources):
                     return server
-            except Exception:
+            except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError) as exc:
+                logger.debug(
+                    "resources/list broadcast skipped %s while looking for %s: %s",
+                    server.get("name"),
+                    uri,
+                    exc,
+                )
                 continue
 
         return None
@@ -850,7 +874,12 @@ class McpProxy:
                     t["_server_id"] = server["id"]
                     t["_server_name"] = server["name"]
                 return templates
-            except Exception:
+            except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError) as exc:
+                logger.debug(
+                    "resources/templates/list not available on %s: %s",
+                    server.get("name"),
+                    exc,
+                )
                 return []
 
         results = await asyncio.gather(*[fetch_one(s) for s in servers], return_exceptions=True)
@@ -913,7 +942,9 @@ class McpProxy:
             else:
                 return []
 
-        except Exception as e:
+        except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError) as e:
+            # Same rationale as resources/list — backends without a prompts
+            # capability simply return method-not-found here.
             logger.debug(f"prompts/list not supported by {server_name}: {e}")
             return []
 
@@ -967,7 +998,13 @@ class McpProxy:
                 prompts = await self._fetch_prompts_from_server(server)
                 if any(p["name"] == name for p in prompts):
                     return server
-            except Exception:
+            except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError) as exc:
+                logger.debug(
+                    "prompts/list broadcast skipped %s while looking for %s: %s",
+                    server.get("name"),
+                    name,
+                    exc,
+                )
                 continue
 
         return None

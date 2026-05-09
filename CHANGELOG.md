@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.41] - 2026-05-09
+
+### Changed
+- Closed `auth/authorize_endpoint.py` for the audit's A1 finding by
+  narrowing all six `except Exception` blocks. No broad catch remains
+  in this file:
+  - redirect_uri parser → `ValueError` (matches the explicit raise).
+  - DCR client lookup outer wrap → `sqlite3.Error` (CIMD failures are
+    already caught with a focused 400 inside the URL-client branch).
+  - `update_oauth_client_last_seen` post-login → `sqlite3.Error`.
+  - Rate-limit-check defensive guard → `(AttributeError, KeyError)`
+    so genuine runtime errors propagate but a malformed
+    `AppConfig.rate_limit` shape doesn't block /authorize.
+  - Password-hash upgrade on /authorize POST → `sqlite3.Error`.
+  - Authorization-code generation + audit log outer → `(sqlite3.Error,
+    OSError)`.
+
+### Notes
+- No behaviour change. 184 tests pass.
+
 ## [1.2.40] - 2026-05-09
 
 ### Changed
@@ -285,6 +305,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.41]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.41
 [1.2.40]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.40
 [1.2.39]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.39
 [1.2.38]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.38

@@ -2,6 +2,7 @@
 
 import html
 import logging
+import sqlite3
 from urllib.parse import urlencode, urlparse
 
 from starlette.requests import Request
@@ -64,7 +65,7 @@ async def authorize_page(request: Request) -> Response:
         parsed = urlparse(redirect_uri)
         if not parsed.scheme or not parsed.netloc:
             raise ValueError("Invalid redirect_uri")
-    except Exception:
+    except ValueError:
         return HTMLResponse("<h1>Error</h1><p>Invalid redirect_uri format.</p>", status_code=400)
 
     # PKCE is mandatory per OAuth 2.1 §4.1.1 and MCP authorization spec.
@@ -138,7 +139,9 @@ async def authorize_page(request: Request) -> Response:
                     "<h1>Error</h1><p>Unknown client_id. Use DCR to register or provide a URL-based client_id.</p>",
                     status_code=400,
                 )
-    except Exception as e:
+    except sqlite3.Error as e:
+        # DCR lookup is the only DB hit here; CIMD failures are caught inside
+        # the URL-client branch above and produce a focused 400 already.
         logger.error(f"Client validation failed: {e}")
         return HTMLResponse("<h1>Error</h1><p>Client validation failed.</p>", status_code=400)
 
@@ -161,7 +164,7 @@ async def authorize_page(request: Request) -> Response:
                 get_request_ip(request),
                 request.headers.get("user-agent"),
             )
-        except Exception as e:
+        except sqlite3.Error as e:
             logger.debug(f"Failed to update client last_seen: {e}")
         return response
 
@@ -371,7 +374,10 @@ async def _process_login(
                     status_code=429,
                     headers={"Retry-After": str(retry_after)},
                 )
-    except Exception as e:
+    except (AttributeError, KeyError) as e:
+        # Defensive: malformed AppConfig.rate_limit shape would surface as
+        # AttributeError/KeyError. Don't block /authorize on that — the
+        # global middleware enforces other limits.
         logger.debug(f"Rate limit check failed for /authorize: {e}")
 
     # Parse form data
@@ -421,7 +427,7 @@ async def _process_login(
     if upgraded_hash:
         try:
             update_user_password_hash(db_path, user["id"], upgraded_hash)
-        except Exception:
+        except sqlite3.Error:
             logger.exception("Failed to upgrade password hash for user '%s'", username)
 
     # Check if user is active
@@ -483,7 +489,9 @@ async def _process_login(
         redirect_url = f"{redirect_uri}?{urlencode(params)}"
         return RedirectResponse(url=redirect_url, status_code=302)
 
-    except Exception as e:
+    except (sqlite3.Error, OSError) as e:
+        # generate_authorization_code writes to SQLite; log_auth_event also
+        # touches the rotating file logger (OSError on disk full / readonly).
         logger.exception(f"Error generating authorization code: {e}")
         from .user_store import log_auth_event
 

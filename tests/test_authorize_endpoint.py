@@ -46,6 +46,23 @@ def _base_params() -> dict:
     }
 
 
+def _patch_cimd_pass(monkeypatch):
+    """Stub CIMD fetch so happy-path tests don't hit the network.
+
+    The stub returns metadata that lists the request's redirect_uri.
+    """
+    from authmcp_gateway.auth import authorize_endpoint as ae
+
+    def _stub(url):
+        return {
+            "client_id": url,
+            "client_name": "Test",
+            "redirect_uris": ["https://example.com/cb"],
+        }
+
+    monkeypatch.setattr(ae, "fetch_client_metadata", _stub)
+
+
 def test_authorize_rejects_missing_code_challenge(db_path):
     """OAuth 2.1: /authorize must reject requests without code_challenge."""
     with _create_test_client(db_path) as client:
@@ -67,8 +84,9 @@ def test_authorize_rejects_plain_method(db_path):
         assert "s256" in response.text.lower() or "plain" in response.text.lower()
 
 
-def test_authorize_accepts_s256_challenge(db_path):
+def test_authorize_accepts_s256_challenge(db_path, monkeypatch):
     """Happy path: /authorize with valid S256 challenge proceeds to login form."""
+    _patch_cimd_pass(monkeypatch)
     with _create_test_client(db_path) as client:
         params = _base_params()
         params["code_challenge"] = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
@@ -108,8 +126,9 @@ def test_authorize_rejects_partially_unknown_scope(db_path):
         assert "scope" in response.text.lower()
 
 
-def test_authorize_accepts_subset_of_default_scopes(db_path):
+def test_authorize_accepts_subset_of_default_scopes(db_path, monkeypatch):
     """Single allowlisted scope passes validation."""
+    _patch_cimd_pass(monkeypatch)
     with _create_test_client(db_path) as client:
         params = _params_with_pkce()
         params["scope"] = "openid"
@@ -117,10 +136,80 @@ def test_authorize_accepts_subset_of_default_scopes(db_path):
         assert response.status_code in (200, 302)
 
 
-def test_authorize_accepts_all_default_scopes(db_path):
+def test_authorize_accepts_all_default_scopes(db_path, monkeypatch):
     """All advertised default scopes pass validation."""
+    _patch_cimd_pass(monkeypatch)
     with _create_test_client(db_path) as client:
         params = _params_with_pkce()
         params["scope"] = "openid profile email offline_access"
         response = client.get("/authorize", params=params)
         assert response.status_code in (200, 302)
+
+
+# --- URL-based client_id via CIMD (S7 / MCP authorization spec) ---
+
+
+def test_authorize_url_client_id_without_path_rejected(db_path):
+    """A URL client_id without a path component is not a valid CIMD identifier."""
+    with _create_test_client(db_path) as client:
+        params = _params_with_pkce()
+        params["client_id"] = "https://example.com"
+        params["redirect_uri"] = "https://example.com/cb"
+        response = client.get("/authorize", params=params)
+        assert response.status_code == 400
+
+
+def test_authorize_url_client_id_with_valid_cimd_accepts(db_path, monkeypatch):
+    """When CIMD fetch returns valid metadata listing the redirect_uri, accept."""
+    from authmcp_gateway.auth import authorize_endpoint as ae
+
+    valid_metadata = {
+        "client_id": "https://example.com/oauth/client.json",
+        "client_name": "Test",
+        "redirect_uris": ["https://example.com/oauth/cb"],
+    }
+    monkeypatch.setattr(ae, "fetch_client_metadata", lambda url: valid_metadata)
+
+    with _create_test_client(db_path) as client:
+        params = _params_with_pkce()
+        params["client_id"] = "https://example.com/oauth/client.json"
+        params["redirect_uri"] = "https://example.com/oauth/cb"
+        response = client.get("/authorize", params=params)
+        assert response.status_code in (200, 302)
+
+
+def test_authorize_url_client_id_redirect_uri_not_in_metadata_rejected(db_path, monkeypatch):
+    """If redirect_uri is not in CIMD metadata.redirect_uris, reject."""
+    from authmcp_gateway.auth import authorize_endpoint as ae
+
+    valid_metadata = {
+        "client_id": "https://example.com/oauth/client.json",
+        "client_name": "Test",
+        "redirect_uris": ["https://example.com/oauth/cb"],
+    }
+    monkeypatch.setattr(ae, "fetch_client_metadata", lambda url: valid_metadata)
+
+    with _create_test_client(db_path) as client:
+        params = _params_with_pkce()
+        params["client_id"] = "https://example.com/oauth/client.json"
+        params["redirect_uri"] = "https://example.com/EVIL"
+        response = client.get("/authorize", params=params)
+        assert response.status_code == 400
+
+
+def test_authorize_url_client_id_failed_cimd_fetch_rejected(db_path, monkeypatch):
+    """If CIMD fetch fails (CIMDError), authorize must reject — no fallback to looser checks."""
+    from authmcp_gateway.auth import authorize_endpoint as ae
+    from authmcp_gateway.auth.cimd import CIMDError
+
+    def _raise(_url):
+        raise CIMDError("metadata document is not valid JSON")
+
+    monkeypatch.setattr(ae, "fetch_client_metadata", _raise)
+
+    with _create_test_client(db_path) as client:
+        params = _params_with_pkce()
+        params["client_id"] = "https://example.com/oauth/client.json"
+        params["redirect_uri"] = "https://example.com/oauth/cb"
+        response = client.get("/authorize", params=params)
+        assert response.status_code == 400

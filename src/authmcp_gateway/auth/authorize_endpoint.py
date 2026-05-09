@@ -10,6 +10,7 @@ from starlette.responses import HTMLResponse, RedirectResponse, Response
 from authmcp_gateway.utils import get_request_ip, validate_scopes
 
 from ..rate_limiter import get_rate_limiter
+from .cimd import CIMDError, fetch_client_metadata, is_redirect_uri_in_metadata
 from .client_store import (
     get_oauth_client_by_client_id,
     is_redirect_uri_allowed,
@@ -91,10 +92,12 @@ async def authorize_page(request: Request) -> Response:
             status_code=400,
         )
 
-    # Validate client_id — seamless approach:
-    # 1. Known DCR client → strict redirect_uri check against registered URIs
-    # 2. URL-based client_id (e.g. https://claude.ai) → accept if redirect_uri same-origin
-    # 3. Unknown non-URL client → reject
+    # Validate client_id:
+    # 1. Known DCR client → strict redirect_uri check against registered URIs.
+    # 2. URL-based client_id → fetch the Client ID Metadata Document (CIMD)
+    #    per the MCP authorization spec / draft-ietf-oauth-client-id-metadata-document-00,
+    #    then exact-match redirect_uri against metadata.redirect_uris.
+    # 3. Unknown non-URL client → reject.
     try:
         # Check DCR-registered clients first
         registered_client = get_oauth_client_by_client_id(config.auth.sqlite_path, client_id)
@@ -106,22 +109,29 @@ async def authorize_page(request: Request) -> Response:
                 )
             logger.info(f"DCR client accepted: {client_id}")
         else:
-            # Not registered — accept URL-based client_id with same-origin redirect
             parsed_client_id = urlparse(client_id)
-            is_url_client = parsed_client_id.scheme in ("http", "https") and parsed_client_id.netloc
+            is_url_client = parsed_client_id.scheme == "https" and bool(parsed_client_id.netloc)
 
             if is_url_client:
-                parsed_redirect = urlparse(redirect_uri)
-                if parsed_redirect.netloc != parsed_client_id.netloc:
-                    logger.warning(
-                        f"URL-based client_id origin mismatch: "
-                        f"client={parsed_client_id.netloc} redirect={parsed_redirect.netloc}"
-                    )
+                try:
+                    metadata = fetch_client_metadata(client_id)
+                except CIMDError as cimd_err:
+                    logger.warning(f"CIMD validation failed for {client_id}: {cimd_err}")
                     return HTMLResponse(
-                        "<h1>Error</h1><p>redirect_uri must be on the same origin as client_id.</p>",
+                        "<h1>Error</h1><p>Invalid Client ID Metadata Document: "
+                        f"{html.escape(str(cimd_err))}</p>",
                         status_code=400,
                     )
-                logger.info(f"URL-based client_id accepted: {client_id}")
+                if not is_redirect_uri_in_metadata(metadata, redirect_uri):
+                    logger.warning(
+                        f"redirect_uri not registered in CIMD for {client_id}: " f"{redirect_uri}"
+                    )
+                    return HTMLResponse(
+                        "<h1>Error</h1><p>redirect_uri is not registered in the "
+                        "client metadata document.</p>",
+                        status_code=400,
+                    )
+                logger.info(f"CIMD client accepted: {client_id}")
             else:
                 logger.warning(f"Unknown non-URL client_id rejected: {client_id}")
                 return HTMLResponse(

@@ -3,18 +3,17 @@
 Supports full MCP protocol: tools, resources, prompts, completions, ping.
 """
 
-import json
 import logging
 import sqlite3
 import time
 from typing import Any, Dict, Optional
 
-import httpx
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from authmcp_gateway.utils import get_request_ip
 
+from ._exceptions import PROXY_DISCOVERY_DB_ERRORS
 from .proxy import McpProxy, PromptNotFoundError, ResourceNotFoundError, ToolNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -150,14 +149,7 @@ class McpHandler:
             capabilities = await self.proxy.get_aggregated_capabilities(
                 user_id=user_id, server_name=server_name
             )
-        except (
-            httpx.HTTPError,
-            json.JSONDecodeError,
-            ValueError,
-            KeyError,
-            RuntimeError,
-            sqlite3.Error,
-        ) as e:
+        except PROXY_DISCOVERY_DB_ERRORS as e:
             # Same exception domain as proxy._fetch_capabilities_from_server:
             # transport, parsing, and backend-state errors. We degrade to an
             # empty tools capability so the client can still initialise.

@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.48] - 2026-05-09
+
+### Changed
+- Refactor: extracted four named exception-class tuples to a new
+  module `mcp/_exceptions.py` so the recurring backend-failure catch
+  sets are no longer duplicated across `mcp/proxy.py`, `mcp/health.py`,
+  and `mcp/handler.py`:
+  - `PROXY_TRANSPORT_ERRORS` — `(httpx.HTTPError, json.JSONDecodeError,
+    ValueError, KeyError)` — used at 6 per-server fetch / broadcast
+    sites in `mcp/proxy.py`.
+  - `PROXY_DISCOVERY_ERRORS` — adds `RuntimeError` for backends that
+    turn JSON-RPC errors into Python exceptions during initialize.
+    2 sites (`proxy._fetch_capabilities_from_server`, health-check
+    `_initialize_session`).
+  - `PROXY_DISCOVERY_DB_ERRORS` — adds `sqlite3.Error` for paths that
+    also cache to SQLite. 2 sites (handler `_handle_initialize`,
+    health-check per-server fallback).
+  - `PROXY_TOKEN_REFRESH_ERRORS` — `(httpx.HTTPError, sqlite3.Error,
+    ValueError, KeyError)` for the OAuth2 refresh-retry block.
+    2 sites (`proxy._proxy_jsonrpc`, health-check 401 retry).
+- Total: 12 long literal tuples replaced with a single named constant
+  per call site. Adding/removing a backend error class now needs one
+  edit instead of 12.
+- Cleanup: removed now-unused `import httpx` / `import json` /
+  `import sqlite3` from `mcp/handler.py` and `mcp/health.py` (they
+  were only referenced inside the literal except tuples).
+
+### Notes
+- No behaviour change. 184 tests pass. Final of three planned
+  helper-extraction releases.
+
 ## [1.2.47] - 2026-05-09
 
 ### Changed
@@ -436,6 +467,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.48]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.48
 [1.2.47]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.47
 [1.2.46]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.46
 [1.2.45]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.45

@@ -1,14 +1,17 @@
 """Health check mechanism for backend MCP servers."""
 
 import asyncio
-import json
 import logging
-import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 import httpx
 
+from ._exceptions import (
+    PROXY_DISCOVERY_DB_ERRORS,
+    PROXY_DISCOVERY_ERRORS,
+    PROXY_TOKEN_REFRESH_ERRORS,
+)
 from .proxy import get_auth_headers, parse_sse_response
 from .store import list_mcp_servers, update_server_health
 
@@ -262,12 +265,7 @@ class HealthChecker:
                             logger.error(
                                 f"Token refresh failed during health check for {server_name}: {error}"
                             )
-                    except (
-                        httpx.HTTPError,
-                        sqlite3.Error,
-                        ValueError,
-                        KeyError,
-                    ) as refresh_error:
+                    except PROXY_TOKEN_REFRESH_ERRORS as refresh_error:
                         logger.error(
                             f"Exception during token refresh in health check: {refresh_error}"
                         )
@@ -337,14 +335,7 @@ class HealthChecker:
                 "checked_at": datetime.now(timezone.utc),
             }
 
-        except (
-            httpx.HTTPError,
-            json.JSONDecodeError,
-            ValueError,
-            KeyError,
-            sqlite3.Error,
-            RuntimeError,
-        ) as e:
+        except PROXY_DISCOVERY_DB_ERRORS as e:
             # Catches everything the inner try block can realistically raise
             # that wasn't handled by the specific httpx.TimeoutException /
             # HTTPStatusError above. RuntimeError covers backends that turn
@@ -419,13 +410,7 @@ class HealthChecker:
                     )
 
             return session_id
-        except (
-            httpx.HTTPError,
-            json.JSONDecodeError,
-            ValueError,
-            KeyError,
-            RuntimeError,
-        ) as e:
+        except PROXY_DISCOVERY_ERRORS as e:
             logger.debug(f"Health check: initialize failed for {server_name}: {e}")
             return ""
 

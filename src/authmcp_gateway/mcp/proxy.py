@@ -16,6 +16,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
+from ._exceptions import (
+    PROXY_DISCOVERY_ERRORS,
+    PROXY_TOKEN_REFRESH_ERRORS,
+    PROXY_TRANSPORT_ERRORS,
+)
 from .store import (
     check_user_mcp_access,
     get_mcp_server,
@@ -268,7 +273,7 @@ class McpProxy:
                     )
                 else:
                     logger.error(f"Token refresh failed for {server_name}: {error}")
-            except (httpx.HTTPError, sqlite3.Error, ValueError, KeyError) as refresh_error:
+            except PROXY_TOKEN_REFRESH_ERRORS as refresh_error:
                 logger.error(f"Exception during token refresh: {refresh_error}")
 
         # Handle 400 "no valid session" — need to initialize first
@@ -392,11 +397,7 @@ class McpProxy:
                 )
 
             return caps
-        except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError, RuntimeError) as e:
-            # RuntimeError covers backends that turn a JSON-RPC error
-            # ("Server already initialized" etc.) into a Python exception via
-            # an awaiter / session-recovery path; we degrade to conservative
-            # capabilities rather than treating it as fatal.
+        except PROXY_DISCOVERY_ERRORS as e:
             message = str(e).lower()
             if "already initialized" in message:
                 logger.info(
@@ -727,7 +728,7 @@ class McpProxy:
                 if any(t["name"] == tool_name for t in tools):
                     logger.info(f"Found '{tool_name}' in {server['name']} via broadcast")
                     return server
-            except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError) as e:
+            except PROXY_TRANSPORT_ERRORS as e:
                 logger.error(f"Error broadcasting to {server['name']}: {e}")
 
         logger.warning(f"Tool '{tool_name}' not found in any server")
@@ -796,7 +797,7 @@ class McpProxy:
             else:
                 return []
 
-        except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError) as e:
+        except PROXY_TRANSPORT_ERRORS as e:
             # MCP servers without a resources capability return method-not-found
             # here; treat any of these as "not supported" rather than failing.
             logger.debug(f"resources/list not supported by {server_name}: {e}")
@@ -847,7 +848,7 @@ class McpProxy:
                 resources = await self._fetch_resources_from_server(server)
                 if any(r["uri"] == uri for r in resources):
                     return server
-            except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError) as exc:
+            except PROXY_TRANSPORT_ERRORS as exc:
                 logger.debug(
                     "resources/list broadcast skipped %s while looking for %s: %s",
                     server.get("name"),
@@ -874,7 +875,7 @@ class McpProxy:
                     t["_server_id"] = server["id"]
                     t["_server_name"] = server["name"]
                 return templates
-            except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError) as exc:
+            except PROXY_TRANSPORT_ERRORS as exc:
                 logger.debug(
                     "resources/templates/list not available on %s: %s",
                     server.get("name"),
@@ -942,7 +943,7 @@ class McpProxy:
             else:
                 return []
 
-        except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError) as e:
+        except PROXY_TRANSPORT_ERRORS as e:
             # Same rationale as resources/list — backends without a prompts
             # capability simply return method-not-found here.
             logger.debug(f"prompts/list not supported by {server_name}: {e}")
@@ -998,7 +999,7 @@ class McpProxy:
                 prompts = await self._fetch_prompts_from_server(server)
                 if any(p["name"] == name for p in prompts):
                     return server
-            except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError) as exc:
+            except PROXY_TRANSPORT_ERRORS as exc:
                 logger.debug(
                     "prompts/list broadcast skipped %s while looking for %s: %s",
                     server.get("name"),

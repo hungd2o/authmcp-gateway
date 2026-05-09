@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.66] - 2026-05-09
+
+### Added
+- 9 more tests for `auth/endpoints.py`. Covers the rate-limit branches
+  and the OAuth `authorization_code` grant flow that 1.2.65 left
+  uncovered. `auth/endpoints.py`: 52% → 67% coverage.
+- Rate-limit tests (3): each enables `rate_limit.enabled=True` with a
+  per-window limit of 1 and asserts the second request returns 429
+  with `RATE_LIMIT_EXCEEDED` / `too_many_requests` and a `Retry-After`
+  header. Covers `/auth/register`, `/auth/login`, and `/oauth/token`
+  password grant. New `fresh_rate_limiter` fixture resets the global
+  rate limiter before/after each test so prior requests don't leak.
+- `/oauth/token` `authorization_code` grant tests (5):
+  - 400 `invalid_request` on missing `code`.
+  - 400 `invalid_request` on missing `client_id` or `redirect_uri`.
+  - 401 `invalid_client` on a non-DCR + non-URL `client_id` (the
+    "unknown client" rejection path).
+  - 400 `invalid_grant` when the auth code isn't in the DB
+    (URL-based public client, validation passes but verification
+    fails).
+  - End-to-end happy path with PKCE: register a user, mint an auth
+    code via `generate_authorization_code` with an S256 challenge,
+    exchange it for an `access_token` + `refresh_token`. New
+    `authcode_db` fixture adds `authorization_codes` table.
+- `/auth/me` (1): expired-token branch — encode a JWT with `exp` in
+  the past via PyJWT, assert the response is 401 `TOKEN_EXPIRED`.
+
+### Notes
+- 235 + 9 = 244 tests pass. mypy still 0.
+- `auth/endpoints.py` 0% (1.2.64) → 52% (1.2.65) → 67% (this release).
+
 ## [1.2.65] - 2026-05-09
 
 ### Added
@@ -1001,6 +1032,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.66]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.66
 [1.2.65]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.65
 [1.2.64]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.64
 [1.2.63]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.63

@@ -520,5 +520,291 @@ async def test_oauth_token_refresh_grant_returns_new_access_token(reset_settings
     assert body["access_token"]
 
 
+# ---------------------------------------------------------------------------
+# Rate limit branches
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fresh_rate_limiter():
+    """Reset the global rate limiter before and after each test so prior
+    requests in earlier tests don't leak into the bucket."""
+    from authmcp_gateway.rate_limiter import reset_rate_limiter
+
+    reset_rate_limiter()
+    yield
+    reset_rate_limiter()
+
+
+@pytest.mark.asyncio
+async def test_register_429_when_rate_limited(reset_settings, config, fresh_rate_limiter):
+    """First register OK, second is over the limit and gets 429 + Retry-After."""
+    config.rate_limit.enabled = True
+    config.rate_limit.register_limit = 1
+    config.rate_limit.register_window = 60
+
+    body1 = {
+        "username": "alice",
+        "email": "alice@example.com",
+        "password": PASSWORD,
+        "full_name": "Alice",
+    }
+    first = await ep.register(_make_request(config=config, body=body1, ip="9.9.9.9"))
+    assert first.status_code == 201, first.body
+
+    body2 = {
+        "username": "bob",
+        "email": "bob@example.com",
+        "password": PASSWORD,
+        "full_name": "Bob",
+    }
+    response = await ep.register(_make_request(config=config, body=body2, ip="9.9.9.9"))
+    assert response.status_code == 429
+    payload = json.loads(response.body)
+    assert payload["error_code"] == "RATE_LIMIT_EXCEEDED"
+    assert payload["retry_after"] >= 0
+    assert response.headers.get("retry-after") is not None
+
+
+@pytest.mark.asyncio
+async def test_login_429_when_rate_limited(reset_settings, config, fresh_rate_limiter):
+    config.rate_limit.enabled = True
+    config.rate_limit.login_limit = 1
+    config.rate_limit.login_window = 60
+
+    # First request consumes the budget — credentials don't matter for the
+    # rate-limit check (it runs before the user lookup).
+    await ep.login(
+        _make_request(config=config, body={"username": "x", "password": "x"}, ip="9.9.9.9")
+    )
+    response = await ep.login(
+        _make_request(config=config, body={"username": "y", "password": "y"}, ip="9.9.9.9")
+    )
+    assert response.status_code == 429
+    payload = json.loads(response.body)
+    assert payload["error_code"] == "RATE_LIMIT_EXCEEDED"
+
+
+@pytest.mark.asyncio
+async def test_oauth_token_password_grant_429_when_rate_limited(
+    reset_settings, config, fresh_rate_limiter
+):
+    config.rate_limit.enabled = True
+    config.rate_limit.login_limit = 1
+    config.rate_limit.login_window = 60
+
+    await ep.oauth_token(
+        _make_request(
+            config=config,
+            form={"grant_type": "password", "username": "x", "password": "x"},
+            headers={"content-type": "application/x-www-form-urlencoded"},
+            ip="9.9.9.9",
+        )
+    )
+    response = await ep.oauth_token(
+        _make_request(
+            config=config,
+            form={"grant_type": "password", "username": "x", "password": "x"},
+            headers={"content-type": "application/x-www-form-urlencoded"},
+            ip="9.9.9.9",
+        )
+    )
+    assert response.status_code == 429
+    payload = json.loads(response.body)
+    assert payload["error"] == "too_many_requests"
+    assert response.headers.get("retry-after") is not None
+
+
+# ---------------------------------------------------------------------------
+# /oauth/token — authorization_code grant
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def authcode_db(initialized_db):
+    """initialized_db plus the authorization_codes table that
+    `create_authorization_code_table` adds (cli init-db calls both)."""
+    from authmcp_gateway.auth.oauth_code_flow import create_authorization_code_table
+
+    create_authorization_code_table(initialized_db)
+    return initialized_db
+
+
+def _pkce_pair():
+    """Return (verifier, S256 challenge) per RFC 7636."""
+    import base64
+    import hashlib
+    import secrets
+
+    verifier = secrets.token_urlsafe(64)
+    challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
+        .rstrip(b"=")
+        .decode("ascii")
+    )
+    return verifier, challenge
+
+
+@pytest.mark.asyncio
+async def test_oauth_authcode_400_on_missing_code(reset_settings, config):
+    response = await ep.oauth_token(
+        _make_request(
+            config=config,
+            form={
+                "grant_type": "authorization_code",
+                "client_id": "https://client.example.com",
+                "redirect_uri": "https://client.example.com/cb",
+            },
+            headers={"content-type": "application/x-www-form-urlencoded"},
+        )
+    )
+    assert response.status_code == 400
+    body = json.loads(response.body)
+    assert body["error"] == "invalid_request"
+    assert "code" in body["error_description"].lower()
+
+
+@pytest.mark.asyncio
+async def test_oauth_authcode_400_on_missing_client_id_or_redirect(reset_settings, config):
+    response = await ep.oauth_token(
+        _make_request(
+            config=config,
+            form={"grant_type": "authorization_code", "code": "fake-code"},
+            headers={"content-type": "application/x-www-form-urlencoded"},
+        )
+    )
+    assert response.status_code == 400
+    body = json.loads(response.body)
+    assert body["error"] == "invalid_request"
+
+
+@pytest.mark.asyncio
+async def test_oauth_authcode_401_on_unknown_non_url_client(reset_settings, config):
+    """Non-DCR + non-URL client_id is rejected as `invalid_client`."""
+    response = await ep.oauth_token(
+        _make_request(
+            config=config,
+            form={
+                "grant_type": "authorization_code",
+                "code": "fake-code",
+                "client_id": "not-a-url",
+                "redirect_uri": "http://x/cb",
+            },
+            headers={"content-type": "application/x-www-form-urlencoded"},
+        )
+    )
+    assert response.status_code == 401
+    body = json.loads(response.body)
+    assert body["error"] == "invalid_client"
+
+
+@pytest.mark.asyncio
+async def test_oauth_authcode_400_on_invalid_authorization_code(
+    reset_settings, config, authcode_db
+):
+    """URL-based client_id passes the client-validation gate, but a code
+    that doesn't exist returns 400 invalid_grant."""
+    config.auth.sqlite_path = authcode_db
+    response = await ep.oauth_token(
+        _make_request(
+            config=config,
+            form={
+                "grant_type": "authorization_code",
+                "code": "definitely-not-stored",
+                "client_id": "https://client.example.com",
+                "redirect_uri": "https://client.example.com/cb",
+                "code_verifier": "any",
+            },
+            headers={"content-type": "application/x-www-form-urlencoded"},
+        )
+    )
+    assert response.status_code == 400
+    body = json.loads(response.body)
+    assert body["error"] == "invalid_grant"
+
+
+@pytest.mark.asyncio
+async def test_oauth_authcode_happy_path_url_client_with_pkce(reset_settings, config, authcode_db):
+    """End-to-end: register a user, mint an authorization_code in the DB
+    via generate_authorization_code, then exchange it for tokens."""
+    config.auth.sqlite_path = authcode_db
+
+    # Register a user so the user_id in the auth code resolves.
+    await ep.register(
+        _make_request(
+            config=config,
+            body={
+                "username": "alice",
+                "email": "alice@example.com",
+                "password": PASSWORD,
+                "full_name": "Alice",
+            },
+        )
+    )
+    from authmcp_gateway.auth.oauth_code_flow import generate_authorization_code
+    from authmcp_gateway.auth.user_store import get_user_by_username
+
+    user = get_user_by_username(authcode_db, "alice")
+    verifier, challenge = _pkce_pair()
+    code = generate_authorization_code(
+        db_path=authcode_db,
+        user_id=user["id"],
+        client_id="https://client.example.com",
+        redirect_uri="https://client.example.com/cb",
+        code_challenge=challenge,
+        code_challenge_method="S256",
+        scope="openid profile email",
+    )
+
+    response = await ep.oauth_token(
+        _make_request(
+            config=config,
+            form={
+                "grant_type": "authorization_code",
+                "code": code,
+                "client_id": "https://client.example.com",
+                "redirect_uri": "https://client.example.com/cb",
+                "code_verifier": verifier,
+            },
+            headers={"content-type": "application/x-www-form-urlencoded"},
+        )
+    )
+    assert response.status_code == 200, response.body
+    body = json.loads(response.body)
+    assert body["token_type"].lower() == "bearer"
+    assert body["access_token"]
+    assert body["refresh_token"]
+
+
+# ---------------------------------------------------------------------------
+# /auth/me — additional token-failure paths
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_me_401_on_expired_token(reset_settings, config):
+    """An access token whose `exp` is in the past surfaces as 401 TOKEN_EXPIRED."""
+    from datetime import datetime, timedelta, timezone
+
+    expired_payload = {
+        "sub": "1",
+        "username": "alice",
+        "type": "access",
+        "iat": datetime.now(timezone.utc) - timedelta(hours=2),
+        "exp": datetime.now(timezone.utc) - timedelta(hours=1),
+        "jti": "expired-jti",
+    }
+    expired_token = pyjwt.encode(expired_payload, config.jwt.secret_key, algorithm="HS256")
+
+    request = _make_request(
+        config=config,
+        method="GET",
+        headers={"Authorization": f"Bearer {expired_token}"},
+    )
+    response = await ep.me(request)
+    assert response.status_code == 401
+    assert b"TOKEN_EXPIRED" in response.body
+
+
 # Suppress unused-import warning on urlencode (kept for future expansion).
 _ = urlencode

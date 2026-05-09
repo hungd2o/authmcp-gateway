@@ -402,7 +402,9 @@ class MCPSecurityAuditor:
             "metadata": {
                 "tool": "AuthMCP Gateway - MCP Security Audit",
                 "version": "1.0.9",
-                "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.datetime.now(datetime.timezone.utc)
+                .isoformat()
+                .replace("+00:00", "Z"),
                 "tested_url": self.url,
                 "has_token": bool(self.bearer_token),
             },

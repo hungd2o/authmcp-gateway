@@ -142,7 +142,7 @@ async def api_cleanup_auth_logs_file(request: Request) -> JSONResponse:
     if not log_file.exists():
         return JSONResponse({"success": True, "deleted": 0})
 
-    cutoff_date = datetime.utcnow() - timedelta(days=30)
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=30)
     kept_logs = []
     deleted_count = 0
 

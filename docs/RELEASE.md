@@ -86,7 +86,15 @@ Expected:
 - App version equals released version
 - `GIT_COMMIT` equals current short git hash
 
-## Optional Shortcut Script
+## Optional Shortcut: Makefile
 
-There is a helper script at `scripts/publish.sh` for build/upload/tag steps.
-It does **not** handle container rebuild/restart with explicit `GIT_COMMIT`, so still run Step 7.
+The repo ships a `Makefile` with the build/upload/tag flow:
+
+```bash
+make build           # rebuild CSS + build sdist/wheel
+make publish         # build + upload to PyPI
+make tag             # create and push git tag v$(VERSION)
+make docker-release  # rebuild & restart container with current GIT_COMMIT (Step 7)
+```
+
+Run `make help` to see all targets (format, lint, test, docker-up, etc.).

@@ -77,6 +77,7 @@ class MCPSecurityAuditor:
 
         status, data = self.mcp_request("tools/list")
 
+        result: Dict[str, Any]
         if status == 0:
             result = {
                 "status": "error",
@@ -129,6 +130,7 @@ class MCPSecurityAuditor:
 
         status, data = self.mcp_request("tools/list", headers=headers)
 
+        result: Dict[str, Any]
         if status == 401 or status == 403:
             result = {
                 "status": "pass",
@@ -165,6 +167,7 @@ class MCPSecurityAuditor:
         """Test 3: Test with provided bearer token (if any)"""
         test_name = "Provided Token Access"
 
+        result: Dict[str, Any]
         if not self.bearer_token:
             result = {
                 "status": "skip",
@@ -221,6 +224,7 @@ class MCPSecurityAuditor:
 
         status, data = self.mcp_request("tools/call", params={"name": "test_tool", "arguments": {}})
 
+        result: Dict[str, Any]
         if status == 401 or status == 403:
             result = {
                 "status": "pass",
@@ -272,6 +276,7 @@ class MCPSecurityAuditor:
             },
         )
 
+        result: Dict[str, Any]
         if status == 401 or status == 403:
             result = {
                 "status": "pass",
@@ -310,6 +315,7 @@ class MCPSecurityAuditor:
 
         status, data = self.mcp_request("invalid_method_xyz")
 
+        result: Dict[str, Any]
         if self._jsonrpc_error_message(data):
             result = {
                 "status": "warn",

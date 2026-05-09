@@ -1,7 +1,9 @@
 """Authentication middleware for admin panel."""
 
 import logging
+import sqlite3
 
+import jwt
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
@@ -104,7 +106,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
 
             return await call_next(request)
 
-        except Exception as e:
+        except (jwt.PyJWTError, sqlite3.Error, ValueError, KeyError, TypeError) as e:
             logger.warning(f"Admin auth failed: {e}")
             return self._unauthorized(request, "Invalid or expired token")
 

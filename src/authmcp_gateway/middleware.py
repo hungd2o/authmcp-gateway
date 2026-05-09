@@ -2,8 +2,10 @@
 
 import json
 import logging
+import sqlite3
 from typing import Optional, Set
 
+import jwt
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, Response
 
@@ -310,7 +312,7 @@ class McpAuthMiddleware:
                         scope.setdefault("state", {})["client_id"] = token_payload.get("client_id")
 
                     logger.info("JWT token verified successfully")
-                except Exception:
+                except (jwt.PyJWTError, sqlite3.Error, ValueError, KeyError):
                     logger.exception("JWT verification failed.")
                     token_payload = None
 

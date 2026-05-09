@@ -156,7 +156,7 @@ def create_app(config=None):
     try:
         _apply_dynamic_settings(config, settings_manager)
         logger.info("✓ Dynamic settings applied from auth_settings.json")
-    except Exception as e:
+    except (AttributeError, TypeError, ValueError, KeyError) as e:
         logger.warning(f"Failed to apply dynamic settings: {e}")
 
     # Initialize token encryption
@@ -289,6 +289,7 @@ def create_app(config=None):
             import base64
             import hashlib
 
+            from cryptography.exceptions import UnsupportedAlgorithm
             from cryptography.hazmat.primitives import serialization
             from cryptography.hazmat.primitives.asymmetric import rsa
 
@@ -314,7 +315,7 @@ def create_app(config=None):
                 "e": _b64url_uint(numbers.e),
             }
             return JSONResponse({"keys": [jwk]})
-        except Exception as e:
+        except (ValueError, TypeError, UnsupportedAlgorithm) as e:
             logger.warning("Failed to build JWKS for RS256: %s", e)
             return JSONResponse({"keys": []})
 

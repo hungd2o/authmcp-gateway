@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.50] - 2026-05-09
+
+### Changed
+- Audit (A1 continued): narrowed broad `except Exception` clauses on
+  the application boot / request middleware path so unexpected errors
+  no longer hide as "JWKS empty" / "JWT verification failed" with no
+  signal of what actually went wrong.
+- `app.py` (2 sites narrowed, 1 left intentionally broad):
+  - `_apply_dynamic_settings` boot wrapper narrowed to
+    `(AttributeError, TypeError, ValueError, KeyError)` — these are the
+    only ways a settings JSON can fail to mount onto the dataclass.
+  - `/jwks.json` RS256 build narrowed to `(ValueError, TypeError,
+    cryptography.exceptions.UnsupportedAlgorithm)` — covers malformed
+    PEM, non-bytes encode and unsupported key algorithms; nothing else
+    in the block can raise.
+  - `rate_limit_cleanup()` async watchdog loop kept as broad
+    `Exception` on purpose. Its job is to keep the loop alive on any
+    cleanup failure; narrowing risks killing the long-lived task on
+    an unforeseen error type.
+- `middleware.py:313` JWT verification narrowed to
+  `(jwt.PyJWTError, sqlite3.Error, ValueError, KeyError)` — covers
+  every failure verifying / blacklist-checking a token.
+- `admin_auth.py:107` admin-route auth narrowed to
+  `(jwt.PyJWTError, sqlite3.Error, ValueError, KeyError, TypeError)`
+  — `TypeError` covers `int(payload.get("sub"))` when `sub` is `None`.
+
+### Notes
+- No behaviour change on the happy path. 184 tests pass.
+- 8 of the originally-flagged 14 audit-worthy catches have now been
+  narrowed across 1.2.49 + 1.2.50; the remaining 6 in `cli.py` and
+  `setup_wizard.py` are next.
+
 ## [1.2.49] - 2026-05-09
 
 ### Changed
@@ -494,6 +526,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.50]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.50
 [1.2.49]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.49
 [1.2.48]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.48
 [1.2.47]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.47

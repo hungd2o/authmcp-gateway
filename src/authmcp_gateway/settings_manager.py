@@ -39,9 +39,9 @@ class SettingsManager:
                 self._settings = self._get_defaults()
                 try:
                     self.save()
-                except Exception as e:
+                except OSError as e:
                     logger.warning(f"Could not save initial settings file: {e}")
-        except Exception as e:
+        except (OSError, json.JSONDecodeError, ValueError) as e:
             logger.error(f"Failed to load settings: {e}, using defaults")
             self._settings = self._get_defaults()
 
@@ -64,7 +64,7 @@ class SettingsManager:
             try:
                 self.save()
                 logger.info("Settings file updated with new defaults")
-            except Exception as e:
+            except OSError as e:
                 logger.warning(f"Could not save backfilled settings: {e}")
 
     def _get_defaults(self) -> Dict[str, Any]:
@@ -183,7 +183,7 @@ class SettingsManager:
                     json.dump(self._settings, f, indent=2)
 
                 logger.info(f"Settings saved to {self.settings_path}")
-            except Exception as e:
+            except OSError as e:
                 logger.error(f"Failed to save settings: {e}")
                 raise
 

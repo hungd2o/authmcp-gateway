@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.49] - 2026-05-09
+
+### Changed
+- Audit (A1 continued): narrowed 7 broad `except Exception` clauses on
+  the configuration / persistence path so unexpected error types are no
+  longer silently swallowed.
+- `config.py` (3 sites):
+  - `JWTConfig.__post_init__` auto-create of `.env` — now `OSError`
+    only.
+  - `_load_jwt_keys` private/public RSA key file reads — now `OSError`
+    only (`FileNotFoundError` was already handled separately above).
+- `settings_manager.py` (4 sites):
+  - `_load_settings` JSON file read narrowed to `(OSError,
+    json.JSONDecodeError, ValueError)`. A corrupt or schema-broken
+    `auth_settings.json` still falls back to defaults, but unknown
+    runtime errors are no longer masked.
+  - `_load_settings` initial-save, `_backfill_defaults` save, and
+    public `save()` write paths narrowed to `OSError` only.
+- `db.py` `get_db` context manager left as `except Exception`
+  intentionally — that catch is a generic safety-net that must rollback
+  the transaction for any error raised inside the `with` block (not
+  just `sqlite3.Error`), so narrowing would break correctness.
+
+### Notes
+- No behaviour change on the happy path. 184 tests pass.
+- Continues the broad-except narrowing campaign started in 1.2.35.
+
 ## [1.2.48] - 2026-05-09
 
 ### Changed
@@ -467,6 +494,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.49]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.49
 [1.2.48]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.48
 [1.2.47]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.47
 [1.2.46]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.46

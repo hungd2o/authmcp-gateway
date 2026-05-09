@@ -80,7 +80,7 @@ class JWTConfig:
                         print("\n" + "=" * 60, file=sys.stderr)
                         print("✓ Created .env file with generated JWT_SECRET_KEY", file=sys.stderr)
                         print("=" * 60 + "\n", file=sys.stderr)
-                    except Exception as e:
+                    except OSError as e:
                         print(f"\n⚠️  Warning: Could not create .env file: {e}", file=sys.stderr)
                         print(
                             "Please manually create .env with a JWT_SECRET_KEY.",
@@ -241,7 +241,7 @@ def _load_jwt_keys(
                 private_key = f.read()
         except FileNotFoundError:
             raise ValueError(f"Private key file not found: {private_key_path}")
-        except Exception as e:
+        except OSError as e:
             raise ValueError(f"Failed to read private key from {private_key_path}: {e}")
 
     if public_key_path:
@@ -250,7 +250,7 @@ def _load_jwt_keys(
                 public_key = f.read()
         except FileNotFoundError:
             raise ValueError(f"Public key file not found: {public_key_path}")
-        except Exception as e:
+        except OSError as e:
             raise ValueError(f"Failed to read public key from {public_key_path}: {e}")
 
     return private_key, public_key

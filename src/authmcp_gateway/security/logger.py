@@ -5,7 +5,7 @@ import logging
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from authmcp_gateway.db import get_db
 
@@ -235,7 +235,7 @@ def log_mcp_request(
         logger.error(f"Failed to log MCP request: {e}")
 
 
-def cleanup_old_logs(db_path: str, days_to_keep: int = 30) -> Dict[str, int]:
+def cleanup_old_logs(db_path: str, days_to_keep: int = 30) -> Dict[str, Any]:
     """Delete logs older than specified number of days.
 
     Args:
@@ -347,7 +347,7 @@ def get_security_events(
             cursor = conn.cursor()
 
             query = "SELECT * FROM security_events WHERE 1=1"
-            params = []
+            params: List[Any] = []
 
             if severity:
                 query += " AND severity = ?"
@@ -477,10 +477,10 @@ def get_mcp_requests(
     db_path: str,
     limit: int = 50,
     last_seconds: int = 60,
-    method: str = None,
-    success: bool = None,
-    event_kind: str = None,
-) -> list:
+    method: Optional[str] = None,
+    success: Optional[bool] = None,
+    event_kind: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     """Get recent MCP requests from DB (fallback to log files).
 
     Args:
@@ -532,7 +532,7 @@ def get_mcp_requests(
                     LEFT JOIN mcp_servers s ON s.id = r.mcp_server_id
                     WHERE r.timestamp >= ?
                 """
-                params = [threshold_sql]
+                params: List[Any] = [threshold_sql]
 
                 if method:
                     query += " AND r.method = ?"
@@ -599,7 +599,7 @@ def get_mcp_requests(
         if not log_file.exists():
             return []
 
-        requests = []
+        requests: List[Dict[str, Any]] = []
         with open(log_file, "r") as f:
             for line in f:
                 try:

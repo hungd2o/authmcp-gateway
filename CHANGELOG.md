@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.56] - 2026-05-09
+
+### Changed
+- mypy cleanup: cleared all 14 errors in `security/logger.py`. Pure
+  bookkeeping fixes — no behaviour change.
+- `cleanup_old_logs(...) -> Dict[str, int]` widened to
+  `Dict[str, Any]` because the result mixes `int` (per-table counts)
+  with a nested `Dict[str, int]` ("archived") and a `str` ("error").
+- `get_security_events` and `get_mcp_requests` SQLite parameter
+  lists annotated `params: List[Any]`. mypy was inferring
+  `List[str]` from the first `params.append(severity)` and rejecting
+  later integer/limit appends.
+- `get_mcp_requests` parameter signatures fixed (PEP 484): three
+  `: str = None` / `: bool = None` defaults made explicit Optional.
+- Return annotation tightened from `-> list` to
+  `-> List[Dict[str, Any]]`.
+- File-fallback `requests = []` annotated `requests: List[Dict[str,
+  Any]]`.
+
+### Notes
+- mypy: 66 -> 49 errors. 184 tests pass.
+
 ## [1.2.55] - 2026-05-09
 
 ### Changed
@@ -666,6 +688,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.56]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.56
 [1.2.55]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.55
 [1.2.54]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.54
 [1.2.53]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.53

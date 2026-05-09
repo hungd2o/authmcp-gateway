@@ -9,8 +9,8 @@ from authmcp_gateway.auth.password import verify_password_with_rehash
 from authmcp_gateway.auth.user_store import (
     get_user_by_username,
     log_auth_event,
+    try_upgrade_password_hash,
     update_last_login,
-    update_user_password_hash,
 )
 from authmcp_gateway.rate_limiter import get_rate_limiter
 from authmcp_gateway.utils import get_request_ip
@@ -238,11 +238,7 @@ async def admin_login_api(request: Request) -> Response:
                 details="Invalid credentials",
             )
             return JSONResponse({"detail": "Invalid credentials"}, status_code=401)
-        if upgraded_hash:
-            try:
-                update_user_password_hash(config.auth.sqlite_path, user["id"], upgraded_hash)
-            except Exception:
-                logger.exception("Failed to upgrade password hash for admin user '%s'", username)
+        try_upgrade_password_hash(config.auth.sqlite_path, user["id"], upgraded_hash, username)
 
         # Check if active
         if not user.get("is_active"):

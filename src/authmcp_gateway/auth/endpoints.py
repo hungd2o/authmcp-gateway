@@ -55,8 +55,8 @@ from .user_store import (
     log_auth_event,
     revoke_refresh_token,
     save_refresh_token,
+    try_upgrade_password_hash,
     update_last_login,
-    update_user_password_hash,
     upsert_user_access_token,
     verify_refresh_token,
 )
@@ -410,11 +410,7 @@ async def login(request: Request) -> JSONResponse:
             details="Invalid credentials",
         )
         return _error_response(401, "Invalid username or password", "INVALID_CREDENTIALS")
-    if upgraded_hash:
-        try:
-            update_user_password_hash(db_path, user["id"], upgraded_hash)
-        except sqlite3.Error:
-            logger.exception("Failed to upgrade password hash for user '%s'", login_data.username)
+    try_upgrade_password_hash(db_path, user["id"], upgraded_hash, login_data.username)
 
     # Check if user is active
     if not user["is_active"]:
@@ -911,11 +907,7 @@ async def oauth_token(request: Request) -> JSONResponse:
                         "error_description": "Invalid username or password",
                     },
                 )
-            if upgraded_hash:
-                try:
-                    update_user_password_hash(config.auth.sqlite_path, user["id"], upgraded_hash)
-                except sqlite3.Error:
-                    logger.exception("Failed to upgrade password hash for user '%s'", username)
+            try_upgrade_password_hash(config.auth.sqlite_path, user["id"], upgraded_hash, username)
 
             # Check if user is active
             if not user["is_active"]:

@@ -1,6 +1,8 @@
 """SQLite database operations for user authentication."""
 
 import hashlib
+import logging
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -13,6 +15,10 @@ from authmcp_gateway.logging_config import (
     log_auth_event_to_file,
     setup_file_logger,
 )
+
+# Module logger for application-level error reporting (separate from the
+# file-based auth-event audit log).
+logger = logging.getLogger(__name__)
 
 # Global loggers (initialized on first use)
 _auth_logger = None
@@ -342,6 +348,34 @@ def update_user_password_hash(db_path: str, user_id: int, password_hash: str) ->
             """,
             (password_hash, now, user_id),
         )
+
+
+def try_upgrade_password_hash(
+    db_path: str,
+    user_id: int,
+    upgraded_hash: Optional[str],
+    username: str,
+) -> None:
+    """Best-effort password-hash upgrade after a successful login.
+
+    `verify_password_with_rehash` returns a non-None ``upgraded_hash`` when
+    the stored bcrypt cost is below the current target. Persist it if so;
+    silently log on DB failure since the user is already authenticated and
+    the next login will retry the upgrade.
+
+    Args:
+        db_path: SQLite database path.
+        user_id: ID of the authenticated user.
+        upgraded_hash: New hash from ``verify_password_with_rehash`` (may be
+            ``None`` — in which case this function does nothing).
+        username: For the log line; not used in the SQL.
+    """
+    if not upgraded_hash:
+        return
+    try:
+        update_user_password_hash(db_path, user_id, upgraded_hash)
+    except sqlite3.Error:
+        logger.exception("Failed to upgrade password hash for user '%s'", username)
 
 
 def save_refresh_token(db_path: str, user_id: int, token_hash: str, expires_at: datetime):

@@ -19,7 +19,7 @@ from .client_store import (
 )
 from .oauth_code_flow import generate_authorization_code
 from .password import verify_password_with_rehash
-from .user_store import get_user_by_username, update_user_password_hash
+from .user_store import get_user_by_username, try_upgrade_password_hash
 
 logger = logging.getLogger(__name__)
 
@@ -424,11 +424,7 @@ async def _process_login(
             state,
             scope,
         )
-    if upgraded_hash:
-        try:
-            update_user_password_hash(db_path, user["id"], upgraded_hash)
-        except sqlite3.Error:
-            logger.exception("Failed to upgrade password hash for user '%s'", username)
+    try_upgrade_password_hash(db_path, user["id"], upgraded_hash, username)
 
     # Check if user is active
     if not user["is_active"]:

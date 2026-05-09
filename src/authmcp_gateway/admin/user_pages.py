@@ -112,8 +112,8 @@ async def user_login_api(request: Request) -> JSONResponse:
     from authmcp_gateway.auth.user_store import (
         get_user_by_username,
         log_auth_event,
+        try_upgrade_password_hash,
         update_last_login,
-        update_user_password_hash,
     )
 
     _config = get_config(request)
@@ -140,11 +140,7 @@ async def user_login_api(request: Request) -> JSONResponse:
             details="Invalid credentials",
         )
         return JSONResponse({"detail": "Invalid username or password"}, status_code=401)
-    if upgraded_hash:
-        try:
-            update_user_password_hash(_config.auth.sqlite_path, user["id"], upgraded_hash)
-        except sqlite3.Error:
-            logger.exception("Failed to upgrade password hash for user '%s'", username)
+    try_upgrade_password_hash(_config.auth.sqlite_path, user["id"], upgraded_hash, username)
 
     if user.get("is_superuser"):
         return JSONResponse({"detail": "Admin accounts must use the admin panel."}, status_code=403)

@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.47] - 2026-05-09
+
+### Changed
+- Refactor: extracted `try_upgrade_password_hash()` helper in
+  `auth/user_store.py`. Five identical try/except blocks across
+  `auth/endpoints.py` (login + /oauth/token password grant),
+  `auth/authorize_endpoint.py`, `admin/login.py`, and
+  `admin/user_pages.py` are now a single call:
+  ```python
+  try_upgrade_password_hash(db_path, user["id"], upgraded_hash, username)
+  ```
+  Each call site shrinks from 5 lines to 1.
+- Added module-level `logger` to `auth/user_store.py` (separate from
+  the file-based audit logger) so the helper can surface DB-write
+  failures via the standard logging stack.
+
+### Security (incidental)
+- `admin/login.py` admin-portal password-hash upgrade now narrows
+  `except Exception:` to `sqlite3.Error` — the last broad catch I
+  missed during the A1 pass on this file.
+
+### Notes
+- No behaviour change for documented paths. 184 tests pass. Second
+  of three planned helper-extraction releases.
+
 ## [1.2.46] - 2026-05-09
 
 ### Changed
@@ -411,6 +436,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.47]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.47
 [1.2.46]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.46
 [1.2.45]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.45
 [1.2.44]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.44

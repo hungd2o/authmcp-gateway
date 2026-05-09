@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.64] - 2026-05-09
+
+### Added
+- 14 new tests for `setup_wizard.py`, the first-run admin-creation flow.
+  Brings the file from 0% → 100% coverage. Coverage:
+  - `is_setup_required`: empty DB, populated DB, missing config, and
+    `sqlite3.OperationalError` (returns False — wizard does not open
+    on transient DB failure, which is the safer default).
+  - `setup_page`: redirects to `/admin` when setup is done; serves the
+    HTML form when an admin still needs to be created.
+  - `create_admin_user`:
+    - 403 when users already exist.
+    - 400 on missing username/email/password.
+    - 400 with policy error when password is too weak.
+    - 201 happy path: user is persisted with `is_superuser=1`,
+      `full_name` carried through, response carries `user_id`.
+    - 500 on `sqlite3.Error` from `create_user`, surfaces the error
+      message in the body.
+    - Password-policy overlay from `SettingsManager` actually tightens
+      validation (test forces `min_length=100` and rejects an
+      otherwise-strong password).
+    - When `SettingsManager` is uninitialized (`RuntimeError`), the
+      endpoint falls back to `AppConfig` defaults rather than 500ing.
+
+### Notes
+- 203 + 14 = 217 tests pass. mypy still 0.
+- Request mocks are hand-rolled `SimpleNamespace` objects rather than
+  Starlette `TestClient` — none of the tests need real ASGI routing,
+  middleware, or a live event loop, just the `request.app.state.config`
+  / `await request.json()` surface.
+- File-level coverage:
+  - `cli.py` 96% (1.2.63).
+  - `setup_wizard.py` 100% (this release).
+
 ## [1.2.63] - 2026-05-09
 
 ### Added
@@ -934,6 +968,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.64]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.64
 [1.2.63]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.63
 [1.2.62]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.62
 [1.2.61]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.61

@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.67] - 2026-05-09
+
+### Added
+- 18 new pure-ASGI tests for `middleware.py` (`McpAuthMiddleware` +
+  `ContentTypeFixMiddleware`). Brings the file from 0% → 83%
+  coverage. The middleware is the auth gate every MCP request hits,
+  so this is the highest-leverage 244-line file in the codebase.
+- Test layout: tests don't spin up Starlette or uvicorn — they invoke
+  the middleware's `__call__(scope, receive, send)` directly with
+  hand-built ASGI scopes and a `_RecordingApp` inner app that records
+  whether it was called. A `_drive` helper collects every `send`
+  message so tests can assert on status / headers / body without a
+  live event loop.
+- `McpAuthMiddleware` coverage:
+  - websocket scope passes through (non-HTTP)
+  - `/.well-known/...` bypasses auth (OAuth discovery)
+  - `/health` bypasses auth
+  - `/admin/...` bypasses (its own `AdminAuthMiddleware` handles it)
+  - disallowed `Origin` → 403 with no inner-app call
+  - global `auth_required=False` toggle bypasses every gate
+  - `/mcp` without bearer token → 401 with proper
+    `WWW-Authenticate: Bearer resource_metadata="..."` header
+  - `/mcp` + valid HS256 JWT → forwards to inner app
+  - static bearer token (`STATIC_BEARER_TOKENS`) accepted without
+    JWT verification
+  - blacklisted JTI in DB → 401
+  - garbage JWT → 401
+  - server-specific endpoint `/mcp/<server>` `tools/call` without
+    token → 401 (but `initialize` passes through pre-auth for
+    handshake)
+  - `trusted_ips` bypasses `tools/call` token requirement
+  - `tools/list` response is buffered and gets `securitySchemes`
+    with `oauth2` + parsed scopes injected into every tool
+- `ContentTypeFixMiddleware` coverage:
+  - POST `/mcp` with `application/octet-stream` is rewritten to
+    `application/json` before passthrough
+  - non-`/mcp` paths pass through unchanged
+  - websocket scopes pass through
+
+### Notes
+- 244 + 18 = 262 tests pass. mypy still 0.
+
 ## [1.2.66] - 2026-05-09
 
 ### Added
@@ -1032,6 +1074,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.67]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.67
 [1.2.66]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.66
 [1.2.65]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.65
 [1.2.64]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.64

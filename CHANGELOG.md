@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.63] - 2026-05-09
+
+### Added
+- P1.4: 17 new tests for `cli.py` (entry point for the
+  `authmcp-gateway` command), bringing the file from 0% → 96%
+  coverage. The CLI is the only user-facing surface that wasn't
+  covered, and a regression there breaks installation silently.
+  Tests cover:
+  - `main()` argparse dispatch — no-command help/exit-1, plus
+    dispatch to `start` / `init-db` / `create-admin` / `version`.
+  - `start_server` — `uvicorn.run` arg passthrough (host, port,
+    log-level lowercased, reload), `dotenv.load_dotenv` only called
+    when `--env-file` exists, `LOG_LEVEL` env propagation, the
+    `0.0.0.0 → localhost` cosmetic display.
+  - `init_database` — real SQLite schema creation in a temp dir
+    plus `sqlite3.OperationalError` → exit 1 with friendly message.
+  - `create_admin_user` — DB-missing abort, duplicate-username
+    abort, interactive password mismatch, interactive password
+    match, non-interactive `--password` happy path producing a
+    user with `is_superuser=1`.
+  - `show_version` — installed version path and the
+    `PackageNotFoundError` → "Version: unknown" fallback.
+- External side effects (`uvicorn`, `dotenv`, `getpass.getpass`) are
+  mocked via `monkeypatch.setitem(sys.modules, ...)` and
+  `monkeypatch.setattr`. DB-touching tests use the real
+  `initialized_db` fixture so the SQLite schema and user-creation
+  paths are exercised end-to-end.
+
+### Notes
+- 186 + 17 new tests = 203 total. mypy still 0.
+- Coverage: 44% → ~45% (cli.py was 101 statements / 6053 total).
+
 ## [1.2.62] - 2026-05-09
 
 ### Security
@@ -902,6 +934,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.63]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.63
 [1.2.62]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.62
 [1.2.61]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.61
 [1.2.60]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.60

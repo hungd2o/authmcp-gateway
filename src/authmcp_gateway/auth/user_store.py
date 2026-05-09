@@ -251,6 +251,31 @@ def init_database(db_path: str):
             logger = get_auth_logger()
             logger.error(f"Failed to initialize oauth_clients table: {e}")
 
+        # A2 migration: scrub any plaintext JWTs that older builds persisted
+        # to the access_token column. Single-session enforcement only needs
+        # (token_jti, expires_at), so we never want the full token at rest.
+        # New writes already store "" via upsert_user_access_token /
+        # upsert_admin_access_token; this clears legacy rows in-place.
+        try:
+            cursor.execute(
+                "UPDATE user_access_tokens SET access_token = '' "
+                "WHERE access_token IS NOT NULL AND access_token != ''"
+            )
+            user_cleared = cursor.rowcount
+            cursor.execute(
+                "UPDATE admin_access_tokens SET access_token = '' "
+                "WHERE access_token IS NOT NULL AND access_token != ''"
+            )
+            admin_cleared = cursor.rowcount
+            if user_cleared or admin_cleared:
+                get_auth_logger().info(
+                    "Scrubbed plaintext JWTs from access_token columns " "(user=%d, admin=%d)",
+                    user_cleared,
+                    admin_cleared,
+                )
+        except sqlite3.Error as e:
+            get_auth_logger().error(f"Failed to scrub plaintext access_token columns: {e}")
+
 
 def create_user(
     db_path: str,

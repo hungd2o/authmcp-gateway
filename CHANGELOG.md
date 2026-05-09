@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.62] - 2026-05-09
+
+### Security
+- **Audit A2 — stop storing plaintext JWTs at rest.** The
+  `user_access_tokens.access_token` and
+  `admin_access_tokens.access_token` columns held the raw JWT for
+  every issued session. The columns were dead storage:
+  `get_user_access_token` / `get_admin_access_token` only ever
+  selected `(token_jti, expires_at)`, and `_try_reuse_current_token`
+  only compared on `token_jti`. The full bearer token in those
+  columns was never used by the application — but anyone who got
+  read access to the SQLite file would have walked away with valid
+  bearer tokens for every active session.
+- `upsert_user_access_token` / `upsert_admin_access_token` already
+  inserted an empty string for the column (the function still
+  accepted the `access_token` parameter for signature stability,
+  but discarded it before the `INSERT`). This release adds a one-time
+  migration in `init_database` that scrubs any plaintext rows
+  written by older builds:
+  ```sql
+  UPDATE user_access_tokens  SET access_token = ''
+   WHERE access_token IS NOT NULL AND access_token != '';
+  UPDATE admin_access_tokens SET access_token = ''
+   WHERE access_token IS NOT NULL AND access_token != '';
+  ```
+  Cleared row counts are logged at INFO so operators can tell
+  whether legacy plaintext was in their DB. The migration is
+  idempotent — subsequent inits do nothing.
+
+### Notes
+- 184 + 2 new TDD tests pass (186 total). Tests in
+  `tests/test_user_store.py`:
+  - `test_upsert_user_access_token_does_not_store_plaintext` —
+    asserts the function strips the plaintext even when callers
+    pass it.
+  - `test_init_database_clears_existing_plaintext_access_tokens` —
+    inserts a legacy plaintext row by hand, re-runs init, and
+    verifies it was scrubbed.
+- mypy: still 0 errors.
+- Other token columns reviewed and confirmed safe:
+  - `mcp_servers.auth_token` — Fernet-encrypted ✓
+  - `mcp_servers.refresh_token_encrypted` — Fernet-encrypted ✓
+  - `users.password_hash`, `refresh_tokens.token_hash`,
+    `client_secret_hash`, `mcp_servers.refresh_token_hash` — hashes,
+    not plaintext ✓
+
 ## [1.2.61] - 2026-05-09
 
 ### Changed
@@ -856,6 +902,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.62]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.62
 [1.2.61]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.61
 [1.2.60]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.60
 [1.2.59]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.59

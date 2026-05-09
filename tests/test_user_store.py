@@ -202,3 +202,56 @@ def test_upsert_user_access_token(initialized_db):
     upsert_user_access_token(initialized_db, uid, "", "jti-2", expires)
     tok = get_user_access_token(initialized_db, uid)
     assert tok["token_jti"] == "jti-2"
+
+
+def test_upsert_user_access_token_does_not_store_plaintext(initialized_db):
+    """Audit A2: even if a caller passes the plaintext JWT, it must not
+    be persisted to the access_token column. Single-session enforcement
+    only needs (jti, expires_at), so we strip the dead plaintext."""
+    uid = create_user(initialized_db, "alice", "alice@test.com", "hash1")
+    expires = datetime.now(timezone.utc) + timedelta(hours=1)
+
+    plaintext_jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.fake.signature"
+    upsert_user_access_token(initialized_db, uid, plaintext_jwt, "jti-A2", expires)
+
+    from authmcp_gateway.db import get_db
+
+    with get_db(initialized_db) as conn:
+        row = conn.execute(
+            "SELECT access_token FROM user_access_tokens WHERE user_id = ?", (uid,)
+        ).fetchone()
+    assert row is not None
+    assert (
+        row["access_token"] == ""
+    ), f"plaintext JWT must not be persisted; got: {row['access_token']!r}"
+
+
+def test_init_database_clears_existing_plaintext_access_tokens(db_path):
+    """Audit A2: init_database must clear plaintext from any pre-existing rows."""
+    # Bootstrap a DB on the OLD schema (plaintext access_token written).
+    init_database(db_path)
+    uid = create_user(db_path, "alice", "alice@test.com", "hash1")
+    expires = datetime.now(timezone.utc) + timedelta(hours=1)
+
+    plaintext_jwt = "leaked.jwt.value"
+    from authmcp_gateway.db import get_db
+
+    with get_db(db_path) as conn:
+        conn.execute(
+            "INSERT INTO user_access_tokens (user_id, access_token, token_jti, expires_at) "
+            "VALUES (?, ?, ?, ?)",
+            (uid, plaintext_jwt, "legacy-jti", expires.isoformat()),
+        )
+
+    # Re-running init must scrub the plaintext from the existing row.
+    init_database(db_path)
+
+    with get_db(db_path) as conn:
+        row = conn.execute(
+            "SELECT access_token FROM user_access_tokens WHERE token_jti = ?",
+            ("legacy-jti",),
+        ).fetchone()
+    assert row is not None
+    assert (
+        row["access_token"] == ""
+    ), f"existing plaintext JWT must be cleared on init; got: {row['access_token']!r}"

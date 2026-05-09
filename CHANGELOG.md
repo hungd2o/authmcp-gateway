@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.44] - 2026-05-09
+
+### Changed
+- Closed `mcp/token_manager.py` for the audit's A1 finding by narrowing
+  all three `except Exception` blocks. No broad catch remains:
+  - Encrypt + persist refresh token: `(sqlite3.Error, ValueError)`.
+    `encrypt_token` raises `ValueError` on missing/malformed key; the
+    DB write surfaces `sqlite3.Error`. Both are non-fatal — the
+    in-memory cache keeps refresh working until process restart.
+  - Decrypt + cache load on startup: `(sqlite3.Error, ValueError)`.
+  - OAuth2 refresh-flow outer wrap: `(httpx.HTTPError,
+    json.JSONDecodeError, ValueError, KeyError, sqlite3.Error)` —
+    HTTP POST + JSON parse + audit/store DB writes.
+
+### Notes
+- No behaviour change. 184 tests pass.
+
 ## [1.2.43] - 2026-05-09
 
 ### Security
@@ -351,6 +368,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.44]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.44
 [1.2.43]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.43
 [1.2.42]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.42
 [1.2.41]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.41

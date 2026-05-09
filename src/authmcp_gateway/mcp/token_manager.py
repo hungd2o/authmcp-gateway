@@ -4,7 +4,9 @@ Handles OAuth2 refresh token flow for automatic token renewal.
 """
 
 import asyncio
+import json
 import logging
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import Any, Dict, Optional, Tuple
@@ -63,7 +65,11 @@ class TokenManager:
             encrypted = encrypt_token(refresh_token)
             update_mcp_server(self.db_path, server_id, refresh_token_encrypted=encrypted)
             logger.debug(f"Cached and persisted encrypted refresh token for server {server_id}")
-        except Exception as e:
+        except (sqlite3.Error, ValueError) as e:
+            # encrypt_token raises ValueError if the encryption key is missing
+            # or malformed; the DB write surfaces sqlite3.Error. Both are
+            # non-fatal — the in-memory cache populated above keeps refresh
+            # working until process restart.
             logger.warning(f"Failed to persist encrypted refresh token for server {server_id}: {e}")
             logger.debug(f"Cached refresh token for server {server_id} (memory only)")
 
@@ -91,7 +97,7 @@ class TokenManager:
                     self._refresh_tokens_cache[server_id] = decrypted
                     logger.info(f"Loaded encrypted refresh token from DB for server {server_id}")
                     return decrypted
-        except Exception as e:
+        except (sqlite3.Error, ValueError) as e:
             logger.warning(f"Failed to load encrypted refresh token for server {server_id}: {e}")
 
         return None
@@ -250,7 +256,16 @@ class TokenManager:
 
             return True, None
 
-        except Exception as e:
+        except (
+            httpx.HTTPError,
+            json.JSONDecodeError,
+            ValueError,
+            KeyError,
+            sqlite3.Error,
+        ) as e:
+            # _call_token_endpoint does an HTTP POST + JSON parse + KeyError
+            # if the OAuth response shape is wrong. update_mcp_server_token
+            # surfaces sqlite3.Error.
             error_msg = str(e)
             logger.error(f"Failed to refresh token for {server_name}: {error_msg}")
 

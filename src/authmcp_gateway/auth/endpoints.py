@@ -1,6 +1,7 @@
 """Authentication API endpoints."""
 
 import base64
+import binascii
 import logging
 import sqlite3
 from dataclasses import replace
@@ -70,35 +71,38 @@ def _get_token_ttl(config) -> Tuple[int, int]:
     """
     try:
         settings = get_settings_manager()
-        access_ttl = settings.get("jwt", "access_token_expire_minutes", default=1440)
-        refresh_ttl = settings.get("jwt", "refresh_token_expire_days", default=7)
-        return access_ttl, refresh_ttl
-    except Exception:
-        # Fallback to config if settings manager not available
+    except RuntimeError as exc:
+        # SettingsManager hasn't been initialised yet — typical during tests
+        # or very early startup. Fall back to baked-in AppConfig values.
+        logger.debug("Settings manager unavailable, using AppConfig TTLs: %s", exc)
         return config.jwt.access_token_expire_minutes, config.jwt.refresh_token_expire_days
+    access_ttl = settings.get("jwt", "access_token_expire_minutes", default=1440)
+    refresh_ttl = settings.get("jwt", "refresh_token_expire_days", default=7)
+    return access_ttl, refresh_ttl
 
 
 def _get_password_policy(config: AppConfig):
     """Get effective password policy from settings manager if available."""
     try:
         settings = get_settings_manager()
-        policy = settings.get("password_policy", default={}) or {}
-        return replace(
-            config.auth,
-            password_min_length=policy.get("min_length", config.auth.password_min_length),
-            password_require_uppercase=policy.get(
-                "require_uppercase", config.auth.password_require_uppercase
-            ),
-            password_require_lowercase=policy.get(
-                "require_lowercase", config.auth.password_require_lowercase
-            ),
-            password_require_digit=policy.get("require_digit", config.auth.password_require_digit),
-            password_require_special=policy.get(
-                "require_special", config.auth.password_require_special
-            ),
-        )
-    except Exception:
+    except RuntimeError as exc:
+        logger.debug("Settings manager unavailable, using AppConfig password policy: %s", exc)
         return config.auth
+    policy = settings.get("password_policy", default={}) or {}
+    return replace(
+        config.auth,
+        password_min_length=policy.get("min_length", config.auth.password_min_length),
+        password_require_uppercase=policy.get(
+            "require_uppercase", config.auth.password_require_uppercase
+        ),
+        password_require_lowercase=policy.get(
+            "require_lowercase", config.auth.password_require_lowercase
+        ),
+        password_require_digit=policy.get("require_digit", config.auth.password_require_digit),
+        password_require_special=policy.get(
+            "require_special", config.auth.password_require_special
+        ),
+    )
 
 
 def _get_client_ip(request: Request) -> Optional[str]:
@@ -123,11 +127,15 @@ def _parse_basic_auth(request: Request) -> Tuple[Optional[str], Optional[str]]:
     if len(parts) != 2 or parts[0].lower() != "basic":
         return None, None
     try:
-        decoded = base64.b64decode(parts[1]).decode("utf-8")
-        client_id, client_secret = decoded.split(":", 1)
-        return client_id, client_secret
-    except Exception:
+        decoded = base64.b64decode(parts[1], validate=False).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
+        # Malformed base64 or non-UTF-8 payload — treat as missing credentials.
+        logger.debug("Basic auth header could not be decoded: %s", exc)
         return None, None
+    if ":" not in decoded:
+        return None, None
+    client_id, _, client_secret = decoded.partition(":")
+    return client_id, client_secret
 
 
 def _get_user_agent(request: Request) -> Optional[str]:

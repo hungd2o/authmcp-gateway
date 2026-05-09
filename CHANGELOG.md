@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.36] - 2026-05-09
+
+### Security
+- Narrowed silent-fallback helpers in `auth/endpoints.py`. The three
+  affected helpers were swallowing every exception class and returning
+  defaults with no log line, which masked configuration / parser bugs:
+  - `_get_token_ttl` and `_get_password_policy` now catch only
+    `RuntimeError` from `get_settings_manager()` and log at DEBUG. Any
+    other failure surfaces normally.
+  - `_parse_basic_auth` now catches only
+    `(binascii.Error, UnicodeDecodeError, ValueError)` and logs at
+    DEBUG. Headers without a `:` separator are detected explicitly
+    instead of by exception, fixing the previous reliance on
+    `str.split(":", 1)` raising on missing separator (which it does
+    not — the prior fallback path was effectively dead code).
+
+### Added
+- `tests/test_endpoints_helpers.py` with 11 characterization tests
+  covering happy/fallback paths for the three helpers, including
+  `Basic` auth parsing edge cases (missing/non-Basic scheme,
+  malformed base64, invalid UTF-8, no colon, password with embedded
+  colons).
+
 ## [1.2.35] - 2026-05-09
 
 ### Security
@@ -149,6 +172,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.36]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.36
 [1.2.35]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.35
 [1.2.34]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.34
 [1.2.33]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.33

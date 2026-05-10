@@ -123,6 +123,7 @@ async def register_client(request: Request) -> JSONResponse:
             identifier=identifier,
             limit=config.rate_limit.dcr_limit,
             window=config.rate_limit.dcr_window,
+            ip_address=client_ip,
         )
         if not allowed:
             return JSONResponse(

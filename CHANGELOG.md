@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.70] - 2026-05-10
+
+### Fixed
+- `rate_limiter.RateLimiter.check_limit()` now accepts an `ip_address`
+  keyword argument and writes that as `security_events.ip_address` when
+  it logs a `rate_limited` event. Previously the *bucket identifier* —
+  callers compose `f"<endpoint>:{client_ip}"` to keep per-endpoint
+  counters isolated — was logged verbatim, so the admin Security Logs
+  table showed `register:9.9.9.9` / `oauth_login:9.9.9.9` instead of
+  the real IP. All seven call sites (auth/endpoints, auth/dcr_endpoints,
+  auth/authorize_endpoint, admin/login, app.py) pass `ip_address=client_ip`
+  now. Identifier-only callers keep the old behavior (fallback to
+  identifier) for backwards compatibility.
+
+### Changed (test infrastructure)
+- `tests/conftest.py` gained an autouse `_isolate_global_config` fixture
+  that wipes the `config._config_instance` singleton and points
+  `AUTH_SQLITE_PATH` at a per-test tmp file. Without this fixture, code
+  under test that reaches the AppConfig via `get_config()` (rate limiter,
+  security logger) lazy-loaded `.env` from cwd — when pytest ran from
+  the project root, that resolved to the same `data/auth.db` mounted
+  into the live container, and the test suite silently wrote
+  `rate_limited` events with `ip_address=ip1` / `9.9.9.9` and OAuth
+  audit-log entries with `username=alice/dave/x` into prod.
+- Verified: with the fixture, `pytest tests/unit/test_rate_limiter.py`
+  produces zero new rows in `data/auth.db.security_events` (before the
+  fix, every limit-exceeded test path added one).
+
+### Operational (one-shot)
+- Cleaned existing test pollution from prod state:
+  - `data/logs/auth.log`: 283 of 389 entries removed (alice/dave/x users,
+    `client.example.com` redirects, `chatgpt.com/callback` test redirect).
+  - `data/logs/auth.log.2026-05-09` (rotated): 283 of 533 entries removed.
+  - `security_events`: 99 rows deleted (`ip_address` in `{ip1, 9.9.9.9}`
+    or `:ip1` / `:9.9.9.9` suffix).
+  - `auth_audit_log`: 1 row deleted.
+  - Backups stashed under `/tmp/authmcp-cleanup-backup/` on the host.
+
+### Added
+- Two regression tests in `tests/unit/test_rate_limiter.py`:
+  - `test_security_event_logs_clean_ip_not_composite_identifier`
+  - `test_security_event_falls_back_to_identifier_when_ip_not_passed`
+
 ## [1.2.69] - 2026-05-10
 
 ### Fixed
@@ -1134,6 +1177,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.70]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.70
 [1.2.69]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.69
 [1.2.68]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.68
 [1.2.67]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.67

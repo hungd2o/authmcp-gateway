@@ -336,6 +336,7 @@ def create_app(config=None):
             identifier=identifier,
             limit=config.rate_limit.mcp_limit,
             window=config.rate_limit.mcp_window,
+            ip_address=client_ip,
         )
         if not allowed:
             return JSONResponse(

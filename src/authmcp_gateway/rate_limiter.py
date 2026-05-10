@@ -34,13 +34,27 @@ class RateLimiter:
         self._limits: Dict[str, Dict] = defaultdict(dict)
         self._lock = Lock()
 
-    def check_limit(self, identifier: str, limit: int = 5, window: int = 60) -> Tuple[bool, int]:
+    def check_limit(
+        self,
+        identifier: str,
+        limit: int = 5,
+        window: int = 60,
+        *,
+        ip_address: Optional[str] = None,
+    ) -> Tuple[bool, int]:
         """Check if request is allowed within rate limit.
 
         Args:
-            identifier: Unique identifier (IP address, username, etc.)
+            identifier: Unique identifier (IP address, username, etc.) — used
+                as the bucket key. Callers commonly pass `f"<endpoint>:{ip}"`
+                so per-endpoint counters don't collide.
             limit: Maximum number of requests allowed in window
             window: Time window in seconds
+            ip_address: Clean IP address for `security_events.ip_address`.
+                Optional — when omitted we fall back to ``identifier``,
+                preserving the pre-1.2.70 behavior. Pass this whenever
+                ``identifier`` is composite so admin logs show the real IP
+                instead of `bucket:ip`.
 
         Returns:
             Tuple of (allowed: bool, retry_after: int seconds)
@@ -88,7 +102,7 @@ class RateLimiter:
                             db_path=config.auth.sqlite_path,
                             event_type="rate_limited",
                             severity="low",
-                            ip_address=identifier,
+                            ip_address=ip_address or identifier,
                             details={
                                 "limit": limit,
                                 "window_seconds": window,

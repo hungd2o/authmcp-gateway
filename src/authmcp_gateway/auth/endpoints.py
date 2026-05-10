@@ -240,6 +240,7 @@ async def register(request: Request) -> JSONResponse:
             identifier=identifier,
             limit=config.rate_limit.register_limit,
             window=config.rate_limit.register_window,
+            ip_address=client_ip,
         )
 
         if not allowed:
@@ -364,6 +365,7 @@ async def login(request: Request) -> JSONResponse:
             identifier=identifier,
             limit=config.rate_limit.login_limit,
             window=config.rate_limit.login_window,
+            ip_address=client_ip,
         )
 
         if not allowed:
@@ -854,6 +856,7 @@ async def oauth_token(request: Request) -> JSONResponse:
                     identifier=identifier,
                     limit=config.rate_limit.login_limit,
                     window=config.rate_limit.login_window,
+                    ip_address=client_ip,
                 )
 
                 if not allowed:

@@ -177,6 +177,7 @@ async def admin_login_api(request: Request) -> Response:
                 identifier=identifier,
                 limit=config.rate_limit.login_limit,
                 window=config.rate_limit.login_window,
+                ip_address=client_ip,
             )
 
             if not allowed:

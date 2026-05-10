@@ -103,3 +103,70 @@ def test_thread_safety():
     assert len(errors) == 0
     stats = limiter.get_stats()
     assert stats["total_identifiers"] == 1
+
+
+def test_security_event_logs_clean_ip_not_composite_identifier(monkeypatch, tmp_path):
+    """When the rate limit fires, security_events.ip_address must contain the
+    actual IP, not the composite `bucket:ip` identifier callers use to keep
+    per-endpoint counters isolated. Regression for production-DB pollution
+    where rows showed `register:9.9.9.9`, `oauth_login:9.9.9.9` instead of
+    just `9.9.9.9`."""
+    import sqlite3
+
+    from authmcp_gateway.auth.user_store import init_database
+    from authmcp_gateway.config import AppConfig, AuthConfig, JWTConfig, RateLimitConfig
+
+    db = str(tmp_path / "rate.db")
+    init_database(db)
+    config = AppConfig(
+        auth=AuthConfig(sqlite_path=db),
+        jwt=JWTConfig(algorithm="HS256", secret_key="x" * 32),
+        rate_limit=RateLimitConfig(),
+        mcp_public_url="https://test.local",
+    )
+    monkeypatch.setattr("authmcp_gateway.config.get_config", lambda: config)
+
+    limiter = RateLimiter()
+    for _ in range(3):
+        limiter.check_limit("login:1.2.3.4", limit=2, window=60, ip_address="1.2.3.4")
+
+    with sqlite3.connect(db) as conn:
+        rows = conn.execute(
+            "SELECT ip_address, details FROM security_events WHERE event_type='rate_limited'"
+        ).fetchall()
+
+    assert rows, "rate_limited event was not logged"
+    for ip, _details in rows:
+        assert ip == "1.2.3.4", f"expected clean IP, got {ip!r}"
+
+
+def test_security_event_falls_back_to_identifier_when_ip_not_passed(monkeypatch, tmp_path):
+    """Backward-compat: callers that don't pass ip_address still get *something*
+    in the log. We log the identifier verbatim — same behavior as before the
+    fix, just no longer the only option."""
+    import sqlite3
+
+    from authmcp_gateway.auth.user_store import init_database
+    from authmcp_gateway.config import AppConfig, AuthConfig, JWTConfig, RateLimitConfig
+
+    db = str(tmp_path / "rate.db")
+    init_database(db)
+    config = AppConfig(
+        auth=AuthConfig(sqlite_path=db),
+        jwt=JWTConfig(algorithm="HS256", secret_key="x" * 32),
+        rate_limit=RateLimitConfig(),
+        mcp_public_url="https://test.local",
+    )
+    monkeypatch.setattr("authmcp_gateway.config.get_config", lambda: config)
+
+    limiter = RateLimiter()
+    for _ in range(3):
+        limiter.check_limit("plain-id", limit=2, window=60)
+
+    with sqlite3.connect(db) as conn:
+        rows = conn.execute(
+            "SELECT ip_address FROM security_events WHERE event_type='rate_limited'"
+        ).fetchall()
+
+    assert rows
+    assert all(r[0] == "plain-id" for r in rows)

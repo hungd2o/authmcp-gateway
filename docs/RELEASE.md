@@ -7,7 +7,10 @@ This project uses a repeatable release flow to keep PyPI, git tags, containers, 
 - Working tree is clean: `git status -sb`
 - On `main` (or release branch that will be merged to `main`)
 - Tests pass:
-  - `./venv/bin/pytest -q`
+  - `make test` — fast unit suite (`tests/unit/`, ~3 min). Sufficient for
+    most releases.
+  - `make test-all` — full suite including `tests/integration/` (~18 min)
+    when changes touch DB, OAuth flows, or MCP proxy paths covered there.
 
 ## 2. Bump Version
 

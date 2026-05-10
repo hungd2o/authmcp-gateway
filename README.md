@@ -448,8 +448,14 @@ authmcp-gateway
 
 ### Running Tests
 
+The suite is split into fast unit tests and slower integration tests
+(the latter use real SQLite fixtures, ~4.5 s setup per test):
+
 ```bash
-pytest tests/
+make test        # tests/unit only — ~3 min, run before every release
+make test-slow   # tests/integration only
+make test-all    # both (full suite)
+make test-cov    # full suite + HTML coverage report
 ```
 
 ### Project Structure

@@ -90,6 +90,34 @@ def init_mcp_database(db_path: str) -> None:
             )
         """)
 
+        # Token-refresh audit log. Historically created only by
+        # scripts/migrate_add_refresh_tokens.py — fresh installs that never
+        # ran the migration would silently swallow log_token_audit() errors
+        # via its broad except. Owning the schema here makes init idempotent
+        # for fresh and migrated DBs alike.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS backend_mcp_token_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                mcp_server_id INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                success BOOLEAN DEFAULT 1,
+                error_message TEXT,
+                old_expires_at TIMESTAMP,
+                new_expires_at TIMESTAMP,
+                triggered_by TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (mcp_server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
+            )
+        """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_backend_token_audit_server "
+            "ON backend_mcp_token_audit(mcp_server_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_backend_token_audit_timestamp "
+            "ON backend_mcp_token_audit(timestamp)"
+        )
+
         # Add refresh_token_encrypted column if missing (migration for existing DBs)
         try:
             cursor.execute("ALTER TABLE mcp_servers ADD COLUMN refresh_token_encrypted TEXT")

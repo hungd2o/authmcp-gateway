@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.68] - 2026-05-10
+
+### Fixed
+- `init_mcp_database` now creates the `backend_mcp_token_audit` table.
+  Previously the table was created **only** by the one-shot migration
+  script `scripts/migrate_add_refresh_tokens.py`, so a fresh deployment
+  that never ran the migration would silently swallow every
+  `log_token_audit()` call (the function has a broad `except` that
+  logs at ERROR and rolls back). Existing installs already have the
+  table — `CREATE TABLE IF NOT EXISTS` is a no-op for them.
+- The two indexes from the migration (`idx_backend_token_audit_server`,
+  `idx_backend_token_audit_timestamp`) are also created in init now.
+
+### Added
+- 26 new tests for `mcp/store.py` covering server CRUD, tool mappings,
+  user permissions, the token-audit log, and the proactive-refresh
+  query. `mcp/store.py`: 0% → 90% coverage.
+- Notable assertions:
+  - `auth_token` round-trips through Fernet (test reads the raw column
+    value back and checks the plaintext is **not** in the ciphertext).
+  - `update_mcp_server(...)` rejects column names outside its
+    whitelist with `ValueError` (SQL-injection guard).
+  - `list_mcp_servers(user_id=...)` respects explicit-deny rows but
+    defaults to allowed when no permission row exists.
+  - `get_servers_needing_refresh(threshold_minutes=10)` returns only
+    servers with both `token_expires_at` within the window AND a
+    `refresh_token_hash` (no point waking up a server that can't refresh).
+- Bug-discovery story: writing the audit-table tests is what surfaced
+  the `init_mcp_database` gap. Tests caught a real defect.
+
+### Notes
+- 262 + 26 = 288 tests pass. mypy still 0.
+
 ## [1.2.67] - 2026-05-09
 
 ### Added
@@ -1074,6 +1107,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.68]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.68
 [1.2.67]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.67
 [1.2.66]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.66
 [1.2.65]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.65

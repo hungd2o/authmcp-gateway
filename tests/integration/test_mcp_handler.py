@@ -147,6 +147,19 @@ async def test_dispatch_notifications_initialized_without_id_returns_204(handler
 
 
 @pytest.mark.asyncio
+async def test_dispatch_other_notification_without_id_returns_204_no_body(handler):
+    """Any non-`initialized` notification (no id) takes the catch-all branch.
+    HTTP 204 must not carry a body — uvicorn/h11 raises LocalProtocolError if
+    we declare Content-Length and then send bytes. Regression for a real
+    incident triggered by a client sending `notifications/cancelled`."""
+    response = await handler.handle_request(
+        _make_request(body={"jsonrpc": "2.0", "method": "notifications/cancelled"})
+    )
+    assert response.status_code == 204
+    assert response.body == b""
+
+
+@pytest.mark.asyncio
 async def test_dispatch_logging_setlevel_returns_empty_result(handler):
     response = await handler.handle_request(
         _make_request(

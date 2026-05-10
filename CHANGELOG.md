@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.69] - 2026-05-10
+
+### Fixed
+- `mcp/handler.py`: catch-all branch for unknown `notifications/*` methods
+  (any notification other than `notifications/initialized`, sent without
+  an `id`) returned `JSONResponse(status_code=204, content={})`. That
+  emits an `{}` body with `Content-Length: 2`, but RFC 7230 §3.3.2 forbids
+  a body on `204 No Content`. uvicorn/h11 enforces this and raised
+  `LocalProtocolError: Too much data for declared Content-Length` on send,
+  surfacing as `Exception in ASGI application` in the logs after the
+  client had already received its 204. Replaced with `Response(status_code=204)`
+  (matches the existing happy-path on line 61 for `notifications/initialized`).
+- Reproduced live against the running container with
+  `curl POST /mcp -d '{"jsonrpc":"2.0","method":"notifications/cancelled"}'`;
+  fix verified by re-running the same request and confirming no exception.
+
+### Added
+- Regression test `test_dispatch_other_notification_without_id_returns_204_no_body`
+  in `tests/integration/test_mcp_handler.py` — asserts both
+  `status_code == 204` and `body == b""` for the catch-all path.
+
+### Notes
+- TDD: failing test written first, fix applied, test passes.
+- One-line source change; CHANGELOG kept verbose because the failure
+  mode (success status to client + ASGI exception in logs) is the kind
+  of bug that's easy to misdiagnose later.
+
 ## [1.2.68] - 2026-05-10
 
 ### Fixed
@@ -1107,6 +1134,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved ChatGPT connector compatibility for OAuth, DCR, and authorization code
   flows.
 
+[1.2.69]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.69
 [1.2.68]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.68
 [1.2.67]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.67
 [1.2.66]: https://github.com/loglux/authmcp-gateway/releases/tag/v1.2.66

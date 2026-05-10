@@ -105,7 +105,10 @@ class McpHandler:
                 # Gracefully ignore any other notifications
                 if jsonrpc_id is not None:
                     return JSONResponse({"jsonrpc": "2.0", "id": jsonrpc_id, "result": {}})
-                return JSONResponse(status_code=204, content={})
+                # 204 must not include a response body (RFC 7230 §3.3.2);
+                # JSONResponse({}) emits "{}" with Content-Length: 2 which
+                # makes uvicorn/h11 raise LocalProtocolError on send.
+                return Response(status_code=204)
 
             else:
                 # Codex-style direct JSON-RPC: tool name as method, params as arguments

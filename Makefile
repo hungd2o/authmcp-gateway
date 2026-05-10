@@ -1,10 +1,12 @@
-.PHONY: help install install-dev format lint typecheck test test-cov \
+.PHONY: help install install-dev format lint typecheck test test-slow test-all test-cov \
         css build publish tag clean docker-up docker-down docker-logs \
         docker-release run version
 
 # Project paths
 SRC := src/authmcp_gateway
 TESTS := tests
+TESTS_UNIT := tests/unit
+TESTS_INTEGRATION := tests/integration
 CSS_IN := $(SRC)/static/input.css
 CSS_OUT := $(SRC)/static/tailwind.css
 
@@ -37,11 +39,21 @@ typecheck: ## Run mypy
 	mypy $(SRC) --ignore-missing-imports
 
 ## ----- Tests -----
+# Tests are split into:
+#   - tests/unit/        — fast, no real SQLite init (run by `make test`)
+#   - tests/integration/ — uses initialized_db / mcp_db fixtures (~4.5s setup
+#                          per test on this NAS volume); run by `make test-slow`
 
-test: ## Run tests
+test: ## Run unit tests only (fast, default for releases)
+	pytest $(TESTS_UNIT) -v
+
+test-slow: ## Run integration tests only (heavy fixtures, slow on NAS)
+	pytest $(TESTS_INTEGRATION) -v
+
+test-all: ## Run unit + integration (full suite)
 	pytest $(TESTS) -v
 
-test-cov: ## Run tests with coverage report
+test-cov: ## Run full suite with coverage report
 	pytest $(TESTS) --cov=$(SRC) --cov-report=term-missing --cov-report=html
 
 ## ----- Build -----

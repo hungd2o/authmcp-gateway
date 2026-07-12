@@ -17,10 +17,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy source code and entrypoint
 COPY tailwind.config.js ./
-COPY docker-entrypoint.sh ./
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 COPY src ./src
 COPY scripts ./scripts
 COPY pyproject.toml ./
+
+# Ensure entrypoint works across CRLF/LF checkouts and has execute bit
+RUN sed -i 's/\r$//' /app/docker-entrypoint.sh && chmod +x /app/docker-entrypoint.sh
 
 # Build production CSS (scans templates, outputs minified CSS)
 RUN tailwindcss -i src/authmcp_gateway/static/input.css \
@@ -41,5 +44,5 @@ ENV PYTHONUNBUFFERED=1
 ENV GIT_COMMIT=$GIT_COMMIT
 
 # Entrypoint rebuilds CSS at startup (handles volume-mounted src)
-ENTRYPOINT ["./docker-entrypoint.sh"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["authmcp-gateway", "start", "--host", "0.0.0.0", "--port", "8000"]

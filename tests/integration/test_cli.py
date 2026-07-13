@@ -297,6 +297,20 @@ def test_background_log_only_mode_starts_new_session_on_non_windows(tmp_path, mo
     )
 
 
+def test_windows_background_creationflags_include_breakaway_from_job(monkeypatch):
+    """Windows detached launch includes breakaway flag to survive parent job/process exit."""
+    monkeypatch.setattr(cli.os, "name", "nt")
+    monkeypatch.setattr(cli.subprocess, "DETACHED_PROCESS", 0x00000008, raising=False)
+    monkeypatch.setattr(cli.subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200, raising=False)
+    monkeypatch.setattr(cli.subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000, raising=False)
+
+    flags = cli._windows_background_creationflags()
+
+    assert flags & cli.subprocess.DETACHED_PROCESS
+    assert flags & cli.subprocess.CREATE_NEW_PROCESS_GROUP
+    assert flags & cli.subprocess.CREATE_BREAKAWAY_FROM_JOB
+
+
 # ---------------------------------------------------------------------------
 # init_database
 # ---------------------------------------------------------------------------

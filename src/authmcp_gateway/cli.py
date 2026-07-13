@@ -369,7 +369,8 @@ def _windows_background_creationflags() -> int:
 
     detached_process = getattr(subprocess, "DETACHED_PROCESS", 0)
     new_process_group = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    return detached_process | new_process_group
+    breakaway_from_job = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
+    return detached_process | new_process_group | breakaway_from_job
 
 
 def _start_server_with_tray(app, args, whitelist_token: str | None = None) -> None:

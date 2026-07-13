@@ -92,6 +92,82 @@
                 </div>
             </template>
 
+            <div class="mt-8 border-t border-gray-200 pt-6">
+                <div class="flex items-center justify-between mb-3">
+                    <div class="text-sm font-medium text-gray-700">Personal Access Tokens</div>
+                    <button type="button" @click="loadPersonalTokens"
+                            class="px-3 py-1.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm">
+                        Refresh
+                    </button>
+                </div>
+                <div class="text-xs text-gray-500 mb-4">
+                    Create named long-lived tokens for services that cannot auto-refresh.
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <input type="text" x-model="newPatName" placeholder="Token name (e.g., CI Service)"
+                           class="md:col-span-2 border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                    <select x-model="newPatLifetime"
+                            class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                        <option value="standard">Standard (1 day)</option>
+                        <option value="long">Long (90 days)</option>
+                        <option value="very_long">Very Long (1 year)</option>
+                        <option value="lifetime">Lifetime-like (10 years)</option>
+                    </select>
+                </div>
+                <div class="mt-3">
+                    <button type="button" @click="createPersonalToken"
+                            class="px-4 py-2 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white rounded-lg transition-colors text-sm">
+                        Create Token
+                    </button>
+                </div>
+
+                <template x-if="createdPatToken">
+                    <div class="mt-4 space-y-2">
+                        <div class="text-sm text-gray-700 font-medium">New token (copy now)</div>
+                        <textarea readonly rows="3"
+                                  class="w-full text-xs font-mono bg-gray-50 border border-gray-200 rounded-lg p-3"
+                                  x-text="createdPatToken"></textarea>
+                        <button type="button" @click="copyCreatedPatToken"
+                                class="px-3 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm">
+                            Copy New Token
+                        </button>
+                    </div>
+                </template>
+
+                <div class="mt-4 space-y-2">
+                    <template x-if="personalTokens.length === 0">
+                        <div class="text-sm text-gray-500">No personal tokens yet.</div>
+                    </template>
+                    <template x-for="pt in personalTokens" :key="pt.id">
+                        <div class="border border-gray-200 rounded-lg p-3 text-sm">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <div class="font-medium text-gray-900" x-text="pt.name"></div>
+                                    <div class="text-xs text-gray-500">
+                                        <span x-show="pt.is_active" class="text-green-600">Active</span>
+                                        <span x-show="!pt.is_active" class="text-red-600">Inactive</span>
+                                        · Expires: <span x-text="formatPatExpires(pt)"></span>
+                                    </div>
+                                </div>
+                                <div class="flex gap-2">
+                                    <button type="button" @click="rotatePersonalToken(pt)"
+                                            class="px-2.5 py-1.5 border border-gray-300 text-gray-700 rounded hover:bg-gray-50 text-xs"
+                                            :disabled="!pt.is_active">
+                                        Rotate
+                                    </button>
+                                    <button type="button" @click="revokePersonalToken(pt)"
+                                            class="px-2.5 py-1.5 border border-red-300 text-red-700 rounded hover:bg-red-50 text-xs"
+                                            :disabled="!pt.is_active">
+                                        Revoke
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
             <div class="mt-8">
                 <div class="text-sm font-medium text-gray-700 mb-2">Available MCP Servers</div>
                 <template x-if="servers.length === 0">
@@ -143,6 +219,10 @@
             token: '',
             error: '',
             loading: false,
+            personalTokens: [],
+            newPatName: '',
+            newPatLifetime: 'long',
+            createdPatToken: '',
             servers: [],
             gatewayEndpoint: '',
             gatewayEndpointDisplay: '',
@@ -175,8 +255,21 @@
                         else label = `(${mins}m left)`;
                         this.expiresIn = label;
                     }
+                    await this.loadPersonalTokens();
                 } catch (err) {
                     this.error = err.message || 'Failed to load account info';
+                }
+            },
+            async loadPersonalTokens() {
+                try {
+                    const response = await fetch('/account/pats');
+                    const data = await response.json();
+                    if (!response.ok) {
+                        throw new Error(data.detail || 'Failed to load personal tokens');
+                    }
+                    this.personalTokens = data.tokens || [];
+                } catch (err) {
+                    this.error = err.message || 'Failed to load personal tokens';
                 }
             },
             async loadToken() {
@@ -218,6 +311,71 @@
                     this.error = err.message || 'Failed to rotate token';
                 } finally {
                     this.loading = false;
+                }
+            },
+            formatPatExpires(pt) {
+                if (!pt || !pt.expires_at) return 'N/A';
+                const d = new Date(pt.expires_at);
+                if (Number.isNaN(d.getTime())) return pt.expires_at;
+                return d.toLocaleString();
+            },
+            async createPersonalToken() {
+                this.error = '';
+                this.createdPatToken = '';
+                const name = (this.newPatName || '').trim();
+                if (name.length < 3) {
+                    this.error = 'Token name must be at least 3 characters';
+                    return;
+                }
+                try {
+                    const response = await fetch('/account/pats', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name, lifetime: this.newPatLifetime })
+                    });
+                    const data = await response.json();
+                    if (!response.ok) {
+                        throw new Error(data.detail || 'Failed to create token');
+                    }
+                    this.createdPatToken = data.access_token || '';
+                    this.newPatName = '';
+                    await this.loadPersonalTokens();
+                } catch (err) {
+                    this.error = err.message || 'Failed to create token';
+                }
+            },
+            async copyCreatedPatToken() {
+                if (!this.createdPatToken) return;
+                await navigator.clipboard.writeText(this.createdPatToken);
+            },
+            async revokePersonalToken(pt) {
+                if (!pt || !pt.id) return;
+                this.error = '';
+                try {
+                    const response = await fetch(`/account/pats/${pt.id}/revoke`, { method: 'POST' });
+                    const data = await response.json();
+                    if (!response.ok) {
+                        throw new Error(data.detail || 'Failed to revoke token');
+                    }
+                    await this.loadPersonalTokens();
+                } catch (err) {
+                    this.error = err.message || 'Failed to revoke token';
+                }
+            },
+            async rotatePersonalToken(pt) {
+                if (!pt || !pt.id) return;
+                this.error = '';
+                this.createdPatToken = '';
+                try {
+                    const response = await fetch(`/account/pats/${pt.id}/rotate`, { method: 'POST' });
+                    const data = await response.json();
+                    if (!response.ok) {
+                        throw new Error(data.detail || 'Failed to rotate token');
+                    }
+                    this.createdPatToken = data.access_token || '';
+                    await this.loadPersonalTokens();
+                } catch (err) {
+                    this.error = err.message || 'Failed to rotate token';
                 }
             },
             async copyEndpoint(value) {

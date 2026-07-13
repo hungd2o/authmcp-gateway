@@ -527,6 +527,18 @@ def create_app(config=None):
             Route("/account/token", admin_routes.user_account_token, methods=["GET"]),
             Route("/account/rotate", admin_routes.user_account_rotate_token, methods=["POST"]),
             Route("/account/info", admin_routes.user_account_info, methods=["GET"]),
+            Route("/account/pats", admin_routes.user_account_pat_list, methods=["GET"]),
+            Route("/account/pats", admin_routes.user_account_pat_create, methods=["POST"]),
+            Route(
+                "/account/pats/{token_id:int}/revoke",
+                admin_routes.user_account_pat_revoke,
+                methods=["POST"],
+            ),
+            Route(
+                "/account/pats/{token_id:int}/rotate",
+                admin_routes.user_account_pat_rotate,
+                methods=["POST"],
+            ),
             Route("/account/logout", admin_routes.user_logout, methods=["GET"]),
             Route("/login", admin_routes.user_login_page, methods=["GET"]),
             Route("/api/login", admin_routes.user_login_api, methods=["POST"]),

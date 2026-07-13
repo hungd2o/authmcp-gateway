@@ -29,27 +29,52 @@
         <span x-text="errorMessage"></span>
     </div>
 
-    <!-- User API Key Manager -->
+    <!-- API Access Token Section -->
     <div class="bg-white rounded-xl shadow-sm overflow-hidden mb-6">
-        <div class="bg-gradient-to-r from-indigo-600 to-blue-600 px-6 py-4 flex items-center gap-2 text-white">
-            <i data-lucide="key-round" class="w-5 h-5"></i>
-            <h2 class="text-lg font-semibold">User API Key Manager</h2>
+        <div class="bg-gradient-to-r from-purple-600 to-pink-600 px-6 py-4 flex items-center gap-2 text-white">
+            <i data-lucide="shield-check" class="w-5 h-5"></i>
+            <h2 class="text-lg font-semibold">API Access Token</h2>
         </div>
         <div class="p-6 space-y-4">
-            <p class="text-sm text-gray-600">
-                API keys are now managed in the user portal. The admin settings page no longer exposes a direct API access token.
-            </p>
-            <div class="pt-2 border-t border-gray-200 flex flex-wrap gap-3">
-                <a href="/account"
-                   class="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-blue-600 text-white rounded-lg hover:from-indigo-700 hover:to-blue-700 transition-colors">
-                    <i data-lucide="external-link" class="w-4 h-4"></i>
-                    Open User API Key Manager
-                </a>
-                <a href="/login"
-                   class="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors">
-                    <i data-lucide="log-in" class="w-4 h-4"></i>
-                    User Login
-                </a>
+            <p class="text-sm text-gray-600">Use this token to authenticate API requests and GitHub Copilot CLI MCP connections.</p>
+            
+            <!-- Access Token -->
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Your Access Token</label>
+                <div class="flex gap-2">
+                    <input type="text" readonly id="accessToken" value="{{ access_token }}" 
+                           class="flex-1 px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 font-mono text-sm">
+                    <button onclick="copyAccessToken()" 
+                            class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2">
+                        <i data-lucide="copy" class="w-4 h-4"></i>
+                        Copy
+                    </button>
+                </div>
+                <p class="text-xs text-gray-500 mt-1">Expires in: <span class="font-medium" id="tokenExpiresIn">{{ token_expires_in }}</span></p>
+            </div>
+
+            <!-- MCP Client Format -->
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">For GitHub Copilot CLI</label>
+                <div class="flex gap-2">
+                    <input type="text" readonly id="mcpHeaderJson" value='{"Authorization": "Bearer {{ access_token }}"}'
+                           class="flex-1 px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 font-mono text-sm">
+                    <button onclick="copyMcpHeader()" 
+                            class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center gap-2">
+                        <i data-lucide="copy" class="w-4 h-4"></i>
+                        Copy JSON
+                    </button>
+                </div>
+                <p class="text-xs text-gray-500 mt-1">Paste this in "HTTP Headers" field when adding HTTP MCP server</p>
+            </div>
+
+            <!-- Refresh Token Button -->
+            <div class="pt-2 border-t border-gray-200">
+                <button onclick="rotateAccessToken()" 
+                        class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center gap-2">
+                    <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                    Rotate Token
+                </button>
             </div>
         </div>
     </div>
@@ -382,6 +407,63 @@
                 window.scrollTo({ top: 0, behavior: 'smooth' });
                 setTimeout(() => lucide.createIcons(), 100);
             }
+        }
+    }
+
+    function copyToClipboard(text, message = 'Copied!') {
+        const canUseClipboard = navigator.clipboard && window.isSecureContext;
+        if (canUseClipboard) {
+            navigator.clipboard.writeText(text).then(() => {
+                showToast(message);
+            }).catch(() => {
+                showToast('Failed to copy', 'error');
+            });
+            return;
+        }
+        try {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.setAttribute('readonly', '');
+            textarea.style.position = 'absolute';
+            textarea.style.left = '-9999px';
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+            showToast(message);
+        } catch (err) {
+            showToast('Failed to copy', 'error');
+        }
+    }
+
+    function copyAccessToken() {
+        const input = document.getElementById('accessToken');
+        copyToClipboard(input.value, 'Token copied!');
+    }
+
+    function copyMcpHeader() {
+        const input = document.getElementById('mcpHeaderJson');
+        copyToClipboard(input.value, 'MCP header copied!');
+    }
+
+    async function rotateAccessToken() {
+        try {
+            const response = await fetch('/admin/api/access-token/rotate', { method: 'POST' });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.detail || 'Failed to rotate token');
+            }
+            const tokenInput = document.getElementById('accessToken');
+            const headerInput = document.getElementById('mcpHeaderJson');
+            const expiresEl = document.getElementById('tokenExpiresIn');
+            tokenInput.value = data.access_token || '';
+            headerInput.value = `{\"Authorization\": \"Bearer ${data.access_token || ''}\"}`;
+            if (expiresEl) {
+                expiresEl.textContent = data.token_expires_in || '';
+            }
+            showToast('Token rotated!');
+        } catch (err) {
+            showToast(err.message || 'Failed to rotate token', 'error');
         }
     }
 

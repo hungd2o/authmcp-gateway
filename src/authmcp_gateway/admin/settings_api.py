@@ -1,6 +1,7 @@
 """Admin API: Settings and OAuth clients management."""
 
 import logging
+from datetime import datetime, timedelta, timezone
 
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
@@ -22,8 +23,37 @@ __all__ = [
 
 
 async def admin_settings(request: Request) -> HTMLResponse:
-    """Admin settings page."""
-    return render_template("admin/settings.html", active_page="settings")
+    """Admin settings page with current user's access token."""
+    _config = get_config(request)
+    # Get current user from request state (set by AdminAuthMiddleware)
+    user_id = request.state.user_id
+    username = request.state.username
+    is_superuser = request.state.is_superuser
+
+    # Reuse stored token or rotate if needed
+    from authmcp_gateway.auth.token_service import format_expires_in, get_or_create_admin_token
+
+    access_token, exp_dt = get_or_create_admin_token(
+        _config.auth.sqlite_path,
+        user_id,
+        username,
+        is_superuser,
+        _config.jwt,
+        _config.jwt.admin_token_expire_minutes,
+        current_token=request.cookies.get("admin_token"),
+    )
+    token_expires_in = format_expires_in(exp_dt)
+    if not token_expires_in:
+        token_expires_in = format_expires_in(
+            datetime.now(timezone.utc) + timedelta(minutes=_config.jwt.admin_token_expire_minutes)
+        )
+
+    return render_template(
+        "admin/settings.html",
+        active_page="settings",
+        access_token=access_token,
+        token_expires_in=token_expires_in,
+    )
 
 
 @api_error_handler

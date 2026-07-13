@@ -306,7 +306,9 @@ def _launch_background_server(args, tray_available: bool, server_url: str) -> No
             print(f"✗ Failed to start AuthMCP Gateway in the background: {exc}")
             sys.exit(1)
 
-    background_mode = "system tray" if tray_available and not getattr(args, "no_tray", False) else "log file"
+    background_mode = (
+        "system tray" if tray_available and not getattr(args, "no_tray", False) else "log file"
+    )
     print(
         "✓ AuthMCP Gateway is running in the background.\n"
         f"  URL: {server_url}\n"

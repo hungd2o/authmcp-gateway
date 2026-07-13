@@ -184,11 +184,16 @@ def test_start_server_interactive_foreground_disables_tray(tmp_path, monkeypatch
     fake_app_module = MagicMock()
     fake_app_module.app = "APP"
     monkeypatch.setitem(sys.modules, "authmcp_gateway.app", fake_app_module)
+    monkeypatch.delenv("HOST", raising=False)
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
     monkeypatch.setattr(cli, "_supports_interactive_start_prompt", lambda: True)
     monkeypatch.setattr(cli, "_prompt_start_mode", lambda _args, _tray_available: "foreground")
     monkeypatch.setattr("authmcp_gateway.tray.is_tray_available", lambda: True)
     tray_started = {"value": False}
-    monkeypatch.setattr(cli, "_start_server_with_tray", lambda *_args: tray_started.__setitem__("value", True))
+    monkeypatch.setattr(
+        cli, "_start_server_with_tray", lambda *_args: tray_started.__setitem__("value", True)
+    )
 
     cli.start_server(_start_args(tmp_path, no_tray=False))
 
@@ -204,13 +209,20 @@ def test_start_server_background_mode_relaunches_and_returns(tmp_path, monkeypat
     fake_app_module = MagicMock()
     fake_app_module.app = "APP"
     monkeypatch.setitem(sys.modules, "authmcp_gateway.app", fake_app_module)
+    monkeypatch.delenv("HOST", raising=False)
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
     monkeypatch.setattr("authmcp_gateway.tray.is_tray_available", lambda: False)
     launched = {}
     monkeypatch.setattr(
         cli,
         "_launch_background_server",
         lambda args, tray_available, server_url: launched.update(
-            {"background": args.background, "tray_available": tray_available, "server_url": server_url}
+            {
+                "background": args.background,
+                "tray_available": tray_available,
+                "server_url": server_url,
+            }
         ),
     )
 

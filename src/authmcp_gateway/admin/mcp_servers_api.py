@@ -532,16 +532,35 @@ def _whitelist_token_error() -> JSONResponse:
 
 @api_error_handler
 async def api_whitelist_pending(request: Request) -> JSONResponse:
-    from authmcp_gateway.mcp.store import list_pending_mcp_servers, list_pending_virtual_tools
+    from authmcp_gateway.mcp.store import list_mcp_servers_by_state, list_virtual_tools_by_state
+    from authmcp_gateway.mcp.trust import (
+        APPROVAL_APPROVED,
+        APPROVAL_PENDING,
+        APPROVAL_REJECTED,
+        APPROVAL_REVOKED,
+    )
 
     if not _has_valid_whitelist_token(request):
         return _whitelist_token_error()
 
     db_path = get_config(request).auth.sqlite_path
+    state_param = (request.query_params.get("state") or "").strip().lower() or None
+
+    valid_states = {APPROVAL_PENDING, APPROVAL_APPROVED, APPROVAL_REJECTED, APPROVAL_REVOKED}
+    if state_param and state_param not in valid_states:
+        return JSONResponse(
+            {"error": f"Invalid state. Must be one of: {', '.join(sorted(valid_states))}"},
+            status_code=400,
+        )
+
+    servers = list_mcp_servers_by_state(db_path, state_param)
+    virtual_tools = list_virtual_tools_by_state(db_path, state_param)
+
     return JSONResponse(
         {
-            "servers": list_pending_mcp_servers(db_path),
-            "virtual_tools": list_pending_virtual_tools(db_path),
+            "servers": servers,
+            "virtual_tools": virtual_tools,
+            "state_filter": state_param,
         }
     )
 

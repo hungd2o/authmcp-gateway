@@ -12,6 +12,8 @@ from .crypto import decrypt_token_safe, encrypt_token
 from .trust import (
     APPROVAL_APPROVED,
     APPROVAL_PENDING,
+    APPROVAL_REJECTED,
+    APPROVAL_REVOKED,
     RISK_LOW,
     build_server_fingerprint,
     build_virtual_tool_fingerprint,
@@ -27,6 +29,8 @@ def _decrypt_server_dict(server: Dict[str, Any]) -> Dict[str, Any]:
     """Decrypt encrypted fields in a server dict (auth_token).
 
     Handles backward compatibility with legacy plaintext tokens.
+    Also corrects risk_level and fills missing allowlist_policy for rows
+    created before those columns were added.
     """
     if server.get("auth_token"):
         server["auth_token"] = decrypt_token_safe(server["auth_token"])
@@ -51,6 +55,13 @@ def _decrypt_server_dict(server: Dict[str, Any]) -> Dict[str, Any]:
             server["approval_metadata"] = json.loads(server["approval_metadata"])
         except json.JSONDecodeError:
             server["approval_metadata"] = {}
+    # Recompute risk_level from transport_type — corrects rows created before the
+    # column existed whose DEFAULT 'low' is wrong for stdio/pipe transports.
+    server["risk_level"] = default_risk_level(server.get("transport_type"))
+    # Populate allowlist_policy from live config if missing or empty — corrects rows
+    # created before the column existed so that the approval flow can proceed.
+    if not server.get("allowlist_policy"):
+        server["allowlist_policy"] = derive_server_allowlist_policy(server)
     return server
 
 
@@ -254,6 +265,41 @@ def init_mcp_database(db_path: str) -> None:
 
         conn.commit()
     logger.info("✓ MCP database tables initialized")
+
+    # Backfill data for rows created before risk_level / allowlist_policy columns
+    # existed. This is idempotent — safe to run on every startup.
+    with _db_conn(db_path, row_factory=sqlite3.Row) as conn:
+        cursor = conn.cursor()
+        # Correct risk_level for stdio/pipe servers that received DEFAULT 'low'
+        cursor.execute(
+            "UPDATE mcp_servers SET risk_level = 'high'"
+            " WHERE transport_type IN ('stdio', 'pipe') AND risk_level = 'low'"
+        )
+        # Populate allowlist_policy where it is NULL or an empty JSON object
+        rows = cursor.execute(
+            "SELECT * FROM mcp_servers"
+            " WHERE allowlist_policy IS NULL OR TRIM(allowlist_policy) IN ('', '{}')"
+        ).fetchall()
+        for row in rows:
+            server = dict(row)
+            if isinstance(server.get("command_args"), str):
+                try:
+                    server["command_args"] = json.loads(server["command_args"])
+                except (json.JSONDecodeError, TypeError):
+                    server["command_args"] = []
+            if isinstance(server.get("env_vars"), str):
+                try:
+                    parsed = json.loads(server["env_vars"])
+                    server["env_vars"] = parsed if isinstance(parsed, dict) else {}
+                except (json.JSONDecodeError, TypeError):
+                    server["env_vars"] = {}
+            policy = derive_server_allowlist_policy(server)
+            cursor.execute(
+                "UPDATE mcp_servers SET allowlist_policy = ? WHERE id = ?",
+                (json.dumps(policy), server["id"]),
+            )
+        if rows:
+            logger.info(f"Backfilled allowlist_policy for {len(rows)} MCP server(s)")
 
 
 def create_mcp_server(
@@ -1258,3 +1304,41 @@ def list_pending_virtual_tools(db_path: str) -> List[Dict[str, Any]]:
         for tool in list_virtual_tools(db_path)
         if tool.get("approval_state") == APPROVAL_PENDING
     ]
+
+
+def list_mcp_servers_by_state(
+    db_path: str, approval_state: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """List MCP servers optionally filtered by approval state.
+
+    Args:
+        db_path: Path to SQLite database
+        approval_state: One of 'pending', 'approved', 'rejected', 'revoked',
+                        or None to return servers in every state.
+
+    Returns:
+        List of server dicts
+    """
+    servers = list_mcp_servers(db_path)
+    if approval_state is None:
+        return servers
+    return [s for s in servers if s.get("approval_state") == approval_state]
+
+
+def list_virtual_tools_by_state(
+    db_path: str, approval_state: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """List virtual tools optionally filtered by approval state.
+
+    Args:
+        db_path: Path to SQLite database
+        approval_state: One of 'pending', 'approved', 'rejected', 'revoked',
+                        or None to return tools in every state.
+
+    Returns:
+        List of virtual tool dicts
+    """
+    tools = list_virtual_tools(db_path)
+    if approval_state is None:
+        return tools
+    return [t for t in tools if t.get("approval_state") == approval_state]

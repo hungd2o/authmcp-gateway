@@ -179,7 +179,7 @@ def test_start_server_sets_log_level_env(tmp_path, monkeypatch):
 
 
 def test_start_server_interactive_foreground_disables_tray(tmp_path, monkeypatch):
-    """Choosing foreground keeps logs attached even when tray support exists."""
+    """Choosing foreground keeps logs attached without disabling tray mode."""
     monkeypatch.setitem(sys.modules, "uvicorn", MagicMock())
     fake_app_module = MagicMock()
     fake_app_module.app = "APP"
@@ -190,17 +190,19 @@ def test_start_server_interactive_foreground_disables_tray(tmp_path, monkeypatch
     monkeypatch.setattr(cli, "_supports_interactive_start_prompt", lambda: True)
     monkeypatch.setattr(cli, "_prompt_start_mode", lambda _args, _tray_available: "foreground")
     monkeypatch.setattr("authmcp_gateway.tray.is_tray_available", lambda: True)
-    tray_started = {"value": False}
+    tray_started = {"value": False, "whitelist_token": None}
     monkeypatch.setattr(
-        cli, "_start_server_with_tray", lambda *_args: tray_started.__setitem__("value", True)
+        cli,
+        "_start_server_with_tray",
+        lambda _app, _args, whitelist_token=None: tray_started.update(
+            {"value": True, "whitelist_token": whitelist_token}
+        ),
     )
 
     cli.start_server(_start_args(tmp_path, no_tray=False))
 
-    sys.modules["uvicorn"].run.assert_called_once_with(
-        "APP", host="0.0.0.0", port=8000, log_level="info", reload=False
-    )
-    assert tray_started["value"] is False
+    sys.modules["uvicorn"].run.assert_not_called()
+    assert tray_started == {"value": True, "whitelist_token": None}
 
 
 def test_start_server_background_mode_relaunches_and_returns(tmp_path, monkeypatch):

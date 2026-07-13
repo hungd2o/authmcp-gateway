@@ -243,8 +243,6 @@ def _maybe_start_server_in_background(args, tray_available: bool, server_url: st
     if choice == "background":
         _launch_background_server(args, tray_available, server_url)
         return True
-    if choice == "foreground":
-        args.no_tray = True
 
     return False
 

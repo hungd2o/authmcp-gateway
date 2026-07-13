@@ -1,10 +1,13 @@
-"""Windows System Tray support for AuthMCP Gateway.
+"""Cross-platform System Tray support for AuthMCP Gateway.
 
-Requires the optional [windows] extras:
-    pip install authmcp-gateway[windows]
+Requires the optional [tray] extras:
+    pip install authmcp-gateway[tray]
 which installs ``pystray`` and ``Pillow``.
 
-Usage (called internally by the CLI when --tray is passed):
+pystray supports Windows (win32), macOS (AppKit), and Linux (GTK /
+AppIndicator / Xorg) out of the box.
+
+Usage (called internally by the CLI):
     from authmcp_gateway.tray import run_tray
     run_tray(port=8000, host="0.0.0.0", server=uvicorn_server)
 """
@@ -18,6 +21,21 @@ if TYPE_CHECKING:
     import uvicorn
 
 
+def is_tray_available() -> bool:
+    """Return *True* if pystray and Pillow are both importable.
+
+    Used by the CLI to decide whether to start in tray mode without
+    requiring the caller to catch ImportError.
+    """
+    try:
+        import pystray  # noqa: F401
+        from PIL import Image  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
 def _create_icon_image():
     """Generate a simple coloured circle icon with 'M' text using Pillow."""
     try:
@@ -25,7 +43,7 @@ def _create_icon_image():
     except ImportError as exc:
         raise ImportError(
             "Pillow is required for the system tray icon. "
-            "Install it with: pip install authmcp-gateway[windows]"
+            "Install it with: pip install authmcp-gateway[tray]"
         ) from exc
 
     size = 64
@@ -71,7 +89,7 @@ def run_tray(
     """Start the system tray icon and block until the user clicks Exit.
 
     This function is **blocking** and must be called from the **main thread**
-    (required on Windows by pystray / win32api).
+    (required on all platforms by pystray).
 
     Parameters
     ----------
@@ -91,14 +109,13 @@ def run_tray(
     except ImportError as exc:
         raise ImportError(
             "pystray is required for the system tray. "
-            "Install it with: pip install authmcp-gateway[windows]"
+            "Install it with: pip install authmcp-gateway[tray]"
         ) from exc
 
     display_host = "localhost" if host in ("0.0.0.0", "") else host
     dashboard_url = f"http://{display_host}:{port}"
 
     icon_image = _load_icon_image(icon_path)
-    tray_icon: pystray.Icon | None = None
 
     def open_dashboard(_icon: pystray.Icon, _item: pystray.MenuItem) -> None:
         webbrowser.open(dashboard_url)
@@ -127,3 +144,4 @@ def run_tray(
     )
 
     tray_icon.run()
+

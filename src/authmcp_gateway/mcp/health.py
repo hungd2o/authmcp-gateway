@@ -69,6 +69,7 @@ class HealthChecker:
         transport_type = (server.get("transport_type") or "http").lower()
         start_time = datetime.now(timezone.utc)
         tools_count = 0
+        request_timeout = float(server.get("timeout") or self.timeout)
 
         try:
             data: Dict[str, Any]
@@ -80,7 +81,7 @@ class HealthChecker:
                     raise RuntimeError("STDIO transport unavailable")
                 data = await transport.send_request(
                     {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
-                    timeout=float(server.get("timeout") or self.timeout),
+                    timeout=request_timeout,
                 )
             elif transport_type == "pipe":
                 pipe_path = server.get("pipe_path")
@@ -90,7 +91,7 @@ class HealthChecker:
                 try:
                     data = await transport.send_request(
                         {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
-                        timeout=float(server.get("timeout") or self.timeout),
+                        timeout=request_timeout,
                     )
                 finally:
                     await transport.close()
@@ -111,8 +112,20 @@ class HealthChecker:
                 "error": None,
                 "checked_at": datetime.now(timezone.utc),
             }
+        except asyncio.TimeoutError:
+            error_msg = f"Timeout after {request_timeout:g}s"
+            update_server_health(self.db_path, server_id, status="offline", error=error_msg)
+            return {
+                "server_id": server_id,
+                "server_name": server_name,
+                "status": "offline",
+                "response_time_ms": None,
+                "tools_count": None,
+                "error": error_msg,
+                "checked_at": datetime.now(timezone.utc),
+            }
         except Exception as e:
-            error_msg = str(e)
+            error_msg = str(e).strip() or type(e).__name__
             update_server_health(self.db_path, server_id, status="error", error=error_msg)
             return {
                 "server_id": server_id,

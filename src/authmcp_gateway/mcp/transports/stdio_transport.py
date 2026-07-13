@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 class StdioTransport(McpTransport):
     """STDIO transport that manages a backend subprocess."""
 
+    STREAM_READER_LIMIT = 4 * 1024 * 1024
+
     def __init__(
         self,
         command: str,
@@ -48,6 +50,7 @@ class StdioTransport(McpTransport):
             stderr=asyncio.subprocess.PIPE,
             cwd=self.working_dir,
             env=env,
+            limit=self.STREAM_READER_LIMIT,
         )
         self._stderr_task = asyncio.create_task(self._read_stderr())
 

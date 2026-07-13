@@ -52,9 +52,9 @@
     <div x-show="showAddModal" x-cloak
          role="dialog" aria-modal="true" aria-labelledby="addServerTitle"
          x-effect="if (showAddModal) { $nextTick(() => { window._addTrap = trapFocus($el); }) } else if (window._addTrap) { window._addTrap.release(); }"
-         class="fixed inset-0 z-50 overflow-y-auto" @keydown.escape.window="showAddModal = false">
+         class="fixed inset-0 z-50 overflow-y-auto" @keydown.escape.window="if (!savingAdd) showAddModal = false">
         <div class="flex items-end sm:items-center justify-center min-h-screen">
-            <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" @click="showAddModal = false"></div>
+            <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" @click="if (!savingAdd) showAddModal = false"></div>
 
             <div class="bg-white sm:rounded-xl rounded-t-2xl shadow-2xl z-10 w-full sm:max-w-lg relative sm:my-8 max-h-[95vh] sm:max-h-[90vh] overflow-hidden border-t-2 sm:border-2 border-blue-100 animate-slide-up">
                 <!-- Modal Header with Gradient -->
@@ -63,7 +63,7 @@
                         <i data-lucide="server" class="w-5 sm:w-6 h-5 sm:h-6"></i>
                         Add MCP Server
                     </h3>
-                    <button @click="showAddModal = false" class="text-white/80 hover:text-white hover:bg-white/10 rounded-lg p-2 transition-all touch-manipulation">
+                    <button @click="showAddModal = false" :disabled="savingAdd" class="text-white/80 hover:text-white hover:bg-white/10 rounded-lg p-2 transition-all touch-manipulation disabled:opacity-60 disabled:cursor-not-allowed">
                         <i data-lucide="x" class="w-5 h-5"></i>
                     </button>
                 </div>
@@ -180,15 +180,19 @@
                         </div>
 
                         <div class="flex gap-3 mt-6 pt-4 border-t border-gray-200 sticky bottom-0 bg-white -mx-4 sm:-mx-0 px-4 sm:px-0 pb-4 sm:pb-0">
-                            <button type="button" @click="showAddModal = false"
-                                    class="flex-1 px-4 py-3 sm:py-2.5 border-2 border-gray-400 text-gray-700 font-bold rounded-lg hover:bg-gray-100 hover:border-gray-600 transition-all touch-manipulation">
+                            <button type="button" @click="showAddModal = false" :disabled="savingAdd"
+                                    class="flex-1 px-4 py-3 sm:py-2.5 border-2 border-gray-400 text-gray-700 font-bold rounded-lg hover:bg-gray-100 hover:border-gray-600 transition-all touch-manipulation disabled:opacity-60 disabled:cursor-not-allowed">
                                 Cancel
                             </button>
-                            <button type="submit"
-                                    class="flex-1 px-4 py-3 sm:py-2.5 bg-gradient-to-r from-blue-600 via-cyan-600 to-cyan-700 hover:from-blue-700 hover:via-cyan-700 hover:to-cyan-800 text-white font-bold rounded-lg shadow-lg hover:shadow-xl transition-all touch-manipulation">
-                                <span class="flex items-center justify-center gap-2">
+                            <button type="submit" :disabled="savingAdd"
+                                    class="flex-1 px-4 py-3 sm:py-2.5 bg-gradient-to-r from-blue-600 via-cyan-600 to-cyan-700 hover:from-blue-700 hover:via-cyan-700 hover:to-cyan-800 text-white font-bold rounded-lg shadow-lg hover:shadow-xl transition-all touch-manipulation disabled:opacity-70 disabled:cursor-not-allowed">
+                                <span x-show="!savingAdd" class="flex items-center justify-center gap-2">
                                     <i data-lucide="plus-circle" class="w-4 h-4"></i>
                                     Add Server
+                                </span>
+                                <span x-show="savingAdd" class="flex items-center justify-center gap-2">
+                                    <i data-lucide="refresh-cw" class="w-4 h-4 animate-spin"></i>
+                                    Saving...
                                 </span>
                             </button>
                         </div>
@@ -202,9 +206,9 @@
     <div x-show="showEditModal" x-cloak
          role="dialog" aria-modal="true" aria-labelledby="editServerTitle"
          x-effect="if (showEditModal) { $nextTick(() => { window._editTrap = trapFocus($el); }) } else if (window._editTrap) { window._editTrap.release(); }"
-         class="fixed inset-0 z-50 overflow-y-auto" @keydown.escape.window="showEditModal = false">
+         class="fixed inset-0 z-50 overflow-y-auto" @keydown.escape.window="if (!savingEdit) showEditModal = false">
         <div class="flex items-end sm:items-center justify-center min-h-screen">
-            <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" @click="showEditModal = false"></div>
+            <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" @click="if (!savingEdit) showEditModal = false"></div>
 
             <div class="bg-white sm:rounded-xl rounded-t-2xl shadow-2xl z-10 w-full sm:max-w-lg relative sm:my-8 max-h-[95vh] sm:max-h-[90vh] overflow-hidden border-t-2 sm:border-2 border-orange-100 animate-slide-up">
                 <!-- Modal Header with Gradient -->
@@ -213,7 +217,7 @@
                         <i data-lucide="edit" class="w-5 sm:w-6 h-5 sm:h-6"></i>
                         Edit MCP Server
                     </h3>
-                    <button @click="showEditModal = false" class="text-white/80 hover:text-white hover:bg-white/10 rounded-lg p-2 transition-all touch-manipulation">
+                    <button @click="showEditModal = false" :disabled="savingEdit" class="text-white/80 hover:text-white hover:bg-white/10 rounded-lg p-2 transition-all touch-manipulation disabled:opacity-60 disabled:cursor-not-allowed">
                         <i data-lucide="x" class="w-5 h-5"></i>
                     </button>
                 </div>
@@ -328,15 +332,19 @@
                         </div>
 
                         <div class="flex gap-3 mt-6 pt-4 border-t border-gray-200 sticky bottom-0 bg-white -mx-4 sm:-mx-0 px-4 sm:px-0 pb-4 sm:pb-0">
-                            <button type="button" @click="showEditModal = false"
-                                    class="flex-1 px-4 py-3 sm:py-2.5 border-2 border-gray-400 text-gray-700 font-bold rounded-lg hover:bg-gray-100 hover:border-gray-600 transition-all touch-manipulation">
+                            <button type="button" @click="showEditModal = false" :disabled="savingEdit"
+                                    class="flex-1 px-4 py-3 sm:py-2.5 border-2 border-gray-400 text-gray-700 font-bold rounded-lg hover:bg-gray-100 hover:border-gray-600 transition-all touch-manipulation disabled:opacity-60 disabled:cursor-not-allowed">
                                 Cancel
                             </button>
-                            <button type="submit"
-                                    class="flex-1 px-4 py-3 sm:py-2.5 bg-gradient-to-r from-orange-600 via-red-600 to-red-700 hover:from-orange-700 hover:via-red-700 hover:to-red-800 text-white font-bold rounded-lg shadow-lg hover:shadow-xl transition-all touch-manipulation">
-                                <span class="flex items-center justify-center gap-2">
+                            <button type="submit" :disabled="savingEdit"
+                                    class="flex-1 px-4 py-3 sm:py-2.5 bg-gradient-to-r from-orange-600 via-red-600 to-red-700 hover:from-orange-700 hover:via-red-700 hover:to-red-800 text-white font-bold rounded-lg shadow-lg hover:shadow-xl transition-all touch-manipulation disabled:opacity-70 disabled:cursor-not-allowed">
+                                <span x-show="!savingEdit" class="flex items-center justify-center gap-2">
                                     <i data-lucide="save" class="w-4 h-4"></i>
                                     Update Server
+                                </span>
+                                <span x-show="savingEdit" class="flex items-center justify-center gap-2">
+                                    <i data-lucide="refresh-cw" class="w-4 h-4 animate-spin"></i>
+                                    Saving...
                                 </span>
                             </button>
                         </div>
@@ -363,10 +371,55 @@
             commandArgsMode: 'lines',
             editCommandArgsMode: 'lines',
             currentServers: [],
+            savingAdd: false,
+            savingEdit: false,
+            pendingServerActions: {},
 
             init() {
                 document.getElementById('aggregatedEndpoint').textContent = window.location.origin + '/mcp';
                 this.loadServers();
+            },
+
+            _scheduleServersReload(delayMs = 1500) {
+                window.setTimeout(() => this.loadServers(), delayMs);
+            },
+
+            _actionKey(serverId, action) {
+                return `${action}:${serverId}`;
+            },
+
+            _isServerActionPending(serverId, action) {
+                return Boolean(this.pendingServerActions[this._actionKey(serverId, action)]);
+            },
+
+            _setServerActionPending(serverId, action, isPending) {
+                const key = this._actionKey(serverId, action);
+                if (isPending) {
+                    this.pendingServerActions = { ...this.pendingServerActions, [key]: true };
+                    return;
+                }
+                const next = { ...this.pendingServerActions };
+                delete next[key];
+                this.pendingServerActions = next;
+            },
+
+            _setIconButtonLoading(button, isLoading, options = {}) {
+                if (!button) return;
+                const {
+                    defaultIcon = button.dataset.defaultIcon || 'activity',
+                    loadingIcon = 'refresh-cw',
+                    defaultTitle = button.dataset.defaultTitle || button.title || '',
+                    loadingTitle = button.dataset.loadingTitle || options.loadingTitle || 'Working...'
+                } = options;
+
+                button.dataset.defaultIcon = defaultIcon;
+                button.dataset.defaultTitle = defaultTitle;
+                button.disabled = isLoading;
+                button.title = isLoading ? loadingTitle : defaultTitle;
+                button.classList.toggle('opacity-60', isLoading);
+                button.classList.toggle('cursor-not-allowed', isLoading);
+                button.innerHTML = `<i data-lucide="${isLoading ? loadingIcon : defaultIcon}" class="w-5 h-5 lg:w-4 lg:h-4 ${isLoading ? 'animate-spin' : ''}"></i>`;
+                lucide.createIcons();
             },
 
             handleAction(event) {
@@ -685,7 +738,7 @@
                                             class="p-2.5 lg:p-2 text-blue-700 hover:bg-blue-100 rounded-lg transition-colors border border-blue-300 hover:border-blue-500 touch-manipulation" title="Edit">
                                         <i data-lucide="edit" class="w-5 h-5 lg:w-4 lg:h-4"></i>
                                     </button>
-                                    <button data-action="test" data-id="${server.id}"
+                                    <button data-action="test" data-id="${server.id}" id="testBtn${server.id}" data-default-icon="activity" data-loading-title="Testing server..."
                                             class="p-2.5 lg:p-2 text-cyan-700 hover:bg-cyan-100 rounded-lg transition-colors border border-cyan-300 hover:border-cyan-500 touch-manipulation" title="Test">
                                         <i data-lucide="activity" class="w-5 h-5 lg:w-4 lg:h-4"></i>
                                     </button>
@@ -727,6 +780,7 @@
             },
 
             async addServer() {
+                if (this.savingAdd) return;
                 const timeoutVal = document.getElementById('serverTimeout').value;
                 const commandArgs = this.parseCommandArgsOrToast(false);
                 if (commandArgs === null) return;
@@ -748,6 +802,7 @@
                     env_vars: document.getElementById('serverEnvVars')?.value || null
                 };
 
+                this.savingAdd = true;
                 try {
                     const response = await fetch('/admin/api/mcp-servers', {
                         method: 'POST',
@@ -764,16 +819,24 @@
                         document.getElementById('serverCommandArgsJson').value = '';
                         this.showAddModal = false;
                         await this.loadServers();
+                        this._scheduleServersReload();
+                        showToast('Server saved. Health check is running in the background.');
                     } else {
                         const error = await response.json();
                         showToast('Failed to add server: ' + (error.detail || 'Unknown error'), 'error');
                     }
                 } catch (error) {
                     showToast(error.message, 'error');
+                } finally {
+                    this.savingAdd = false;
                 }
             },
 
             async testServer(serverId) {
+                if (this._isServerActionPending(serverId, 'test')) return;
+                const button = document.getElementById(`testBtn${serverId}`);
+                this._setServerActionPending(serverId, 'test', true);
+                this._setIconButtonLoading(button, true, { defaultIcon: 'activity', loadingTitle: 'Testing server...' });
                 try {
                     const response = await fetch(`/admin/api/mcp-servers/${serverId}/test`, {
                         method: 'POST'
@@ -789,6 +852,9 @@
                     await this.loadServers();
                 } catch (error) {
                     showToast(error.message, 'error');
+                } finally {
+                    this._setServerActionPending(serverId, 'test', false);
+                    this._setIconButtonLoading(document.getElementById(`testBtn${serverId}`), false, { defaultIcon: 'activity' });
                 }
             },
 
@@ -848,6 +914,7 @@
             },
 
             async updateServer() {
+                if (this.savingEdit) return;
                 const serverId = document.getElementById('editServerId').value;
                 const editTimeoutVal = document.getElementById('editServerTimeout').value;
                 const commandArgs = this.parseCommandArgsOrToast(true);
@@ -874,6 +941,7 @@
                     data.auth_token = authToken;
                 }
 
+                this.savingEdit = true;
                 try {
                     const response = await fetch(`/admin/api/mcp-servers/${serverId}`, {
                         method: 'PATCH',
@@ -884,12 +952,16 @@
                     if (response.ok) {
                         this.showEditModal = false;
                         await this.loadServers();
+                        this._scheduleServersReload();
+                        showToast('Server updated. Health check is running in the background.');
                     } else {
                         const error = await response.json();
                         showToast('Failed to update server: ' + (error.detail || error.error || 'Unknown error'), 'error');
                     }
                 } catch (error) {
                     showToast(error.message, 'error');
+                } finally {
+                    this.savingEdit = false;
                 }
             },
 

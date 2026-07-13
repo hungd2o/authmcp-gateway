@@ -1,5 +1,6 @@
 """Admin API: MCP server management."""
 
+import asyncio
 import json
 import logging
 import shlex
@@ -87,6 +88,24 @@ def parse_jwt_expiration(token: str) -> dict:
         logger.debug(f"Failed to parse JWT token: {e}")
 
     return {"status": "unknown", "has_expiration": False, "message": "Not a JWT token"}
+
+
+def _schedule_health_check(db_path: str, server_id: int) -> None:
+    """Queue a background health check without blocking the admin request."""
+
+    async def _run() -> None:
+        from authmcp_gateway.mcp.health import get_health_checker
+        from authmcp_gateway.mcp.store import get_mcp_server
+
+        try:
+            health_checker = get_health_checker()
+            server = get_mcp_server(db_path, server_id)
+            if server:
+                await health_checker.check_server(server)
+        except Exception as e:
+            logger.debug(f"Health check skipped for server {server_id}: {e}")
+
+    asyncio.create_task(_run())
 
 
 async def api_list_mcp_servers(request: Request) -> JSONResponse:
@@ -279,19 +298,7 @@ async def api_create_mcp_server(request: Request) -> JSONResponse:
         env_vars=data.get("env_vars"),
     )
 
-    # Trigger health check for new server
-    from authmcp_gateway.mcp.health import get_health_checker
-
-    try:
-        health_checker = get_health_checker()
-        from authmcp_gateway.mcp.store import get_mcp_server
-
-        server = get_mcp_server(_config.auth.sqlite_path, server_id)
-        if server:
-            await health_checker.check_server(server)
-    except Exception as e:
-        # Health checker might not be initialized yet; log for visibility.
-        logger.debug(f"Health check skipped for new server {server_id}: {e}")
+    _schedule_health_check(_config.auth.sqlite_path, server_id)
 
     return JSONResponse({"id": server_id, "message": "Server created successfully"})
 
@@ -352,17 +359,7 @@ async def api_update_mcp_server(request: Request) -> JSONResponse:
         proxy = McpProxy(_config.auth.sqlite_path)
         proxy.invalidate_cache(server_id)
 
-        # Trigger health check for updated server
-        from authmcp_gateway.mcp.health import get_health_checker
-
-        try:
-            health_checker = get_health_checker()
-            server = get_mcp_server(_config.auth.sqlite_path, server_id)
-            if server:
-                await health_checker.check_server(server)
-        except Exception as e:
-            # Health checker might not be initialized yet; log for visibility.
-            logger.debug(f"Health check skipped for updated server {server_id}: {e}")
+        _schedule_health_check(_config.auth.sqlite_path, server_id)
 
         return JSONResponse({"message": "Server updated successfully"})
     else:

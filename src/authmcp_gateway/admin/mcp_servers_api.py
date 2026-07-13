@@ -33,6 +33,8 @@ __all__ = [
     "api_whitelist_pending",
     "api_whitelist_servers_action",
     "api_whitelist_virtual_tools_action",
+    "api_create_virtual_tool",
+    "api_delete_virtual_tool",
 ]
 
 
@@ -204,6 +206,85 @@ def _normalize_transport_payload(data: dict) -> dict:
         raise ValueError("pipe_path is required for pipe transport")
 
     return data
+
+
+def _normalize_virtual_tool_process_config(config: dict, *, require_command: bool = True) -> dict:
+    normalized = dict(config or {})
+    if require_command and not str(normalized.get("command") or "").strip():
+        raise ValueError("config.command is required")
+    normalized["command"] = str(normalized.get("command") or "").strip()
+
+    normalized = _normalize_transport_payload(
+        {
+            "transport_type": "stdio",
+            "command": normalized["command"],
+            "command_args": normalized.get("command_args"),
+            "env_vars": normalized.get("env_vars"),
+        }
+    )
+
+    return {
+        "command": normalized["command"],
+        "command_args": normalized["command_args"],
+        "env_vars": normalized["env_vars"],
+        "working_dir": (config or {}).get("working_dir") or None,
+    }
+
+
+def _normalize_virtual_tool_config(execution_type: str, config: dict) -> dict:
+    normalized = dict(config or {})
+    input_schema = normalized.get("input_schema")
+    if input_schema is None:
+        normalized["input_schema"] = {}
+    elif not isinstance(input_schema, dict):
+        raise ValueError("config.input_schema must be an object")
+
+    if execution_type == "http_call":
+        request_cfg = normalized.get("request") or {}
+        if not isinstance(request_cfg, dict):
+            raise ValueError("config.request must be an object for http_call")
+        method = str(request_cfg.get("method") or "GET").upper()
+        url = str(request_cfg.get("url") or "").strip()
+        if not url:
+            raise ValueError("config.request.url is required for http_call")
+        headers = request_cfg.get("headers") or {}
+        if not isinstance(headers, dict):
+            raise ValueError("config.request.headers must be an object for http_call")
+        normalized["request"] = {
+            "method": method,
+            "url": url,
+            "headers": {str(key): str(value) for key, value in headers.items()},
+        }
+        return normalized
+
+    if execution_type == "stdio_call":
+        process_config = _normalize_virtual_tool_process_config(normalized)
+        normalized.update(process_config)
+        return normalized
+
+    if execution_type == "pipeline_call":
+        steps = normalized.get("steps")
+        if not isinstance(steps, list) or not steps:
+            raise ValueError("config.steps must be a non-empty array for pipeline_call")
+        normalized_steps = []
+        for step in steps:
+            if not isinstance(step, dict):
+                raise ValueError("Each pipeline step must be an object")
+            normalized_steps.append(_normalize_virtual_tool_process_config(step))
+        normalized["steps"] = normalized_steps
+        env_vars = normalized.get("env_vars")
+        if env_vars is not None and not isinstance(env_vars, (dict, str)):
+            raise ValueError("config.env_vars must be a mapping or KEY=VALUE lines")
+        if env_vars is not None:
+            normalized["env_vars"] = _normalize_transport_payload(
+                {"transport_type": "stdio", "command": "pipeline", "env_vars": env_vars}
+            )["env_vars"]
+        else:
+            normalized["env_vars"] = {}
+        normalized["working_dir"] = normalized.get("working_dir") or None
+        return normalized
+
+    raise ValueError("execution_type must be 'http_call', 'stdio_call', or 'pipeline_call'")
 
 
 def _strip_hash_comments(raw: str) -> str:
@@ -464,12 +545,14 @@ async def api_get_mcp_server_tools(request: Request) -> JSONResponse:
     for tool in virtual_tools:
         result_tools.append(
             {
+                "id": tool.get("id"),
                 "name": tool.get("name"),
                 "description": tool.get("description"),
                 "input_schema": (tool.get("config") or {}).get("input_schema", {}),
                 "source_server": tool.get("source_server_name") or server.get("name"),
                 "approval_state": tool.get("approval_state", "pending"),
                 "tool_type": "virtual",
+                "execution_type": tool.get("execution_type"),
             }
         )
 
@@ -622,3 +705,68 @@ async def api_whitelist_virtual_tools_action(request: Request) -> JSONResponse:
     ):
         return JSONResponse({"error": "Virtual tool not found"}, status_code=404)
     return JSONResponse({"message": f"Virtual tool {approval_state}"})
+
+
+@api_error_handler
+async def api_create_virtual_tool(request: Request) -> JSONResponse:
+    """API: Create a virtual tool for an MCP server."""
+    from authmcp_gateway.mcp.store import create_virtual_tool, get_mcp_server
+
+    _config = get_config(request)
+    server_id = int(request.path_params["server_id"])
+
+    server = get_mcp_server(_config.auth.sqlite_path, server_id)
+    if not server:
+        return JSONResponse({"error": "Server not found"}, status_code=404)
+
+    payload = await request.json()
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"error": "Tool name is required"}, status_code=400)
+
+    execution_type = (payload.get("execution_type") or "").strip().lower()
+    description = (payload.get("description") or "").strip() or None
+
+    try:
+        config = _normalize_virtual_tool_config(execution_type, payload.get("config") or {})
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+    try:
+        tool_id = create_virtual_tool(
+            db_path=_config.auth.sqlite_path,
+            mcp_server_id=server_id,
+            name=name,
+            description=description,
+            execution_type=execution_type,
+            config=config,
+            enabled=True,
+        )
+    except Exception as exc:
+        logger.error("Failed to create virtual tool: %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+    return JSONResponse({"tool_id": tool_id}, status_code=201)
+
+
+@api_error_handler
+async def api_delete_virtual_tool(request: Request) -> JSONResponse:
+    """API: Delete a virtual tool."""
+    from authmcp_gateway.mcp.store import delete_virtual_tool, get_virtual_tool
+
+    _config = get_config(request)
+    server_id = int(request.path_params["server_id"])
+    tool_id = int(request.path_params["tool_id"])
+
+    tool = get_virtual_tool(_config.auth.sqlite_path, tool_id)
+    if not tool:
+        return JSONResponse({"error": "Virtual tool not found"}, status_code=404)
+    if tool.get("mcp_server_id") != server_id:
+        return JSONResponse(
+            {"error": "Virtual tool does not belong to this server"}, status_code=404
+        )
+
+    success = delete_virtual_tool(_config.auth.sqlite_path, tool_id)
+    if success:
+        return JSONResponse({"message": "Virtual tool deleted"})
+    return JSONResponse({"error": "Failed to delete virtual tool"}, status_code=500)

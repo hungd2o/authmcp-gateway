@@ -6,7 +6,10 @@ import pytest
 from starlette.requests import Request
 
 from authmcp_gateway.admin import mcp_servers_api
-from authmcp_gateway.admin.mcp_servers_api import _normalize_transport_payload
+from authmcp_gateway.admin.mcp_servers_api import (
+    _normalize_transport_payload,
+    _normalize_virtual_tool_config,
+)
 from authmcp_gateway.mcp import store
 
 
@@ -87,6 +90,40 @@ def test_normalize_env_vars_preserves_hash_inside_quoted_value():
 def test_normalize_env_vars_rejects_invalid_non_assignment_lines():
     with pytest.raises(ValueError, match="Invalid env_vars line"):
         _normalize_transport_payload(_base_payload(env_vars="NOT_AN_ASSIGNMENT"))
+
+
+def test_normalize_virtual_tool_config_accepts_stdio_call():
+    payload = _normalize_virtual_tool_config(
+        "stdio_call",
+        {
+            "command": "python",
+            "command_args": "--flag value",
+            "env_vars": "MODE=test",
+            "working_dir": "/tmp/tool",
+            "input_schema": {"type": "object"},
+        },
+    )
+    assert payload["command"] == "python"
+    assert payload["command_args"] == ["--flag", "value"]
+    assert payload["env_vars"] == {"MODE": "test"}
+    assert payload["working_dir"] == "/tmp/tool"
+
+
+def test_normalize_virtual_tool_config_accepts_pipeline_call():
+    payload = _normalize_virtual_tool_config(
+        "pipeline_call",
+        {
+            "steps": [
+                {"command": "python", "command_args": "first.py"},
+                {"command": "jq", "command_args": [".result"]},
+            ],
+            "env_vars": "MODE=test",
+            "input_schema": {"type": "object"},
+        },
+    )
+    assert payload["steps"][0]["command_args"] == ["first.py"]
+    assert payload["steps"][1]["command_args"] == [".result"]
+    assert payload["env_vars"] == {"MODE": "test"}
 
 
 def test_create_server_defaults_to_pending_and_high_risk_for_stdio(db_path):
@@ -183,3 +220,42 @@ async def test_tools_api_returns_metadata_payload(monkeypatch):
     payload = json.loads(response.body.decode("utf-8"))
     assert len(payload["tools"]) == 2
     assert {tool["tool_type"] for tool in payload["tools"]} == {"native", "virtual"}
+
+
+@pytest.mark.asyncio
+async def test_api_create_virtual_tool_rejects_wrapper_execution_type(monkeypatch):
+    class DummyAuth:
+        sqlite_path = "/tmp/unused.db"
+
+    class DummyConfig:
+        auth = DummyAuth()
+
+    async def _receive():
+        return {
+            "type": "http.request",
+            "body": json.dumps(
+                {"name": "bad", "execution_type": "mcp_wrapper", "config": {}}
+            ).encode("utf-8"),
+            "more_body": False,
+        }
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/admin/api/mcp-servers/2/virtual-tools",
+        "headers": [(b"content-type", b"application/json")],
+        "query_string": b"",
+        "path_params": {"server_id": "2"},
+    }
+    request = Request(scope, _receive)
+    monkeypatch.setattr(mcp_servers_api, "get_config", lambda _req: DummyConfig())
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.store.get_mcp_server",
+        lambda _db, _sid: {"id": 2, "name": "srv", "approval_state": "approved"},
+    )
+
+    response = await mcp_servers_api.api_create_virtual_tool(request)
+
+    assert response.status_code == 400
+    payload = json.loads(response.body.decode("utf-8"))
+    assert "execution_type" in payload["error"]

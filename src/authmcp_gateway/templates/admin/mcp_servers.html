@@ -354,34 +354,335 @@
         </div>
     </div>
 
-    <!-- Tools Details Modal -->
+    <!-- Tools List Modal (tag/chip view) -->
     <div x-show="showToolsModal" x-cloak class="fixed inset-0 z-50 overflow-y-auto" @keydown.escape.window="showToolsModal = false">
         <div class="flex items-end sm:items-center justify-center min-h-screen">
             <div class="fixed inset-0 bg-black/50" @click="showToolsModal = false"></div>
-            <div class="bg-white rounded-xl shadow-2xl z-10 w-full sm:max-w-4xl relative sm:my-8 max-h-[90vh] overflow-hidden border border-gray-200">
+            <div class="bg-white rounded-xl shadow-2xl z-10 w-full sm:max-w-3xl relative sm:my-8 max-h-[85vh] overflow-hidden border border-gray-200">
                 <div class="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
-                    <h3 class="text-lg font-bold text-gray-900">Tool Details</h3>
-                    <button @click="showToolsModal = false" class="text-gray-500 hover:text-gray-800">
-                        <i data-lucide="x" class="w-5 h-5"></i>
-                    </button>
+                    <div>
+                        <h3 class="text-lg font-bold text-gray-900">Tools</h3>
+                        <p class="text-xs text-gray-500 mt-0.5">Click a tool tag to view details</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button x-show="toolsModalServerId" @click="showAddVirtualToolModal = true"
+                                class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold rounded-lg transition-colors">
+                            <i data-lucide="plus" class="w-4 h-4"></i>
+                            Add Virtual Tool
+                        </button>
+                        <button @click="showToolsModal = false" class="text-gray-500 hover:text-gray-800">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
                 </div>
-                <div class="p-4 overflow-auto" style="max-height: calc(90vh - 70px);">
+                <div class="p-5 overflow-auto" style="max-height: calc(85vh - 80px);">
                     <p x-show="toolsModalLoading" class="text-sm text-gray-600">Loading tools...</p>
                     <p x-show="!toolsModalLoading && toolsMetadata.length === 0" class="text-sm text-gray-500">No tools found.</p>
-                    <div class="space-y-3" x-show="!toolsModalLoading && toolsMetadata.length > 0">
+                    <div x-show="!toolsModalLoading && toolsMetadata.length > 0" class="flex flex-wrap gap-2">
                         <template x-for="tool in toolsMetadata" :key="tool.name + ':' + tool.tool_type">
-                            <div class="border border-gray-200 rounded-lg p-3">
-                                <div class="flex items-center gap-2 mb-1">
-                                    <code class="text-sm font-semibold" x-text="tool.name"></code>
-                                    <span class="px-2 py-0.5 text-xs rounded bg-blue-100 text-blue-700" x-text="tool.tool_type"></span>
-                                    <span class="px-2 py-0.5 text-xs rounded bg-gray-100 text-gray-700" x-text="tool.approval_state"></span>
-                                </div>
-                                <p class="text-xs text-gray-700 mb-2" x-text="tool.description || 'No description'"></p>
-                                <p class="text-xs text-gray-600 mb-1"><strong>Source:</strong> <span x-text="tool.source_server"></span></p>
-                                <pre class="text-xs bg-gray-50 border border-gray-200 rounded p-2 overflow-auto" x-text="JSON.stringify(tool.input_schema || {}, null, 2)"></pre>
-                            </div>
+                            <button
+                                @click="openToolDetail(tool)"
+                                :class="{
+                                    'bg-violet-100 border-violet-400 text-violet-900 shadow-sm': tool.tool_type === 'virtual',
+                                    'bg-gray-50 border-gray-300 text-gray-800': tool.tool_type !== 'virtual'
+                                }"
+                                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm font-medium hover:shadow-sm hover:scale-105 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400">
+                                <i data-lucide="wrench" class="w-3 h-3 opacity-60"></i>
+                                <span x-text="tool.name || 'virtual tool'"></span>
+                                <span x-show="tool.tool_type === 'virtual'" class="ml-0.5 px-1.5 py-0.5 text-xs rounded-full bg-violet-200 text-violet-800 font-semibold">virtual</span>
+                                <span x-show="tool.approval_state === 'pending'" class="ml-0.5 px-1.5 py-0.5 text-xs rounded-full bg-amber-100 text-amber-700 font-semibold">pending</span>
+                            </button>
                         </template>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tool Detail Modal -->
+    <div x-show="showToolDetailModal" x-cloak class="fixed inset-0 overflow-y-auto" style="z-index: 60;" @keydown.escape.window="showToolDetailModal = false">
+        <div class="flex items-end sm:items-center justify-center min-h-screen">
+            <div class="fixed inset-0 bg-black/60" @click="showToolDetailModal = false"></div>
+            <div class="bg-white rounded-xl shadow-2xl z-10 w-full sm:max-w-2xl relative sm:my-8 max-h-[90vh] overflow-hidden border border-gray-200">
+                <!-- Header -->
+                <div class="px-5 py-4 border-b border-gray-200 flex items-start justify-between gap-3">
+                    <div class="min-w-0 flex-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <code class="text-base font-bold text-gray-900" x-text="selectedTool && selectedTool.name"></code>
+                            <span x-show="selectedTool && selectedTool.tool_type === 'virtual'" class="px-2 py-0.5 text-xs rounded-full bg-violet-100 text-violet-700 font-semibold">virtual</span>
+                            <span x-show="selectedTool && selectedTool.tool_type !== 'virtual'" class="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-600 font-semibold">native</span>
+                            <span x-show="selectedTool && selectedTool.approval_state === 'pending'" class="px-2 py-0.5 text-xs rounded-full bg-amber-100 text-amber-700 font-semibold">pending</span>
+                            <span x-show="selectedTool && selectedTool.approval_state === 'approved'" class="px-2 py-0.5 text-xs rounded-full bg-green-100 text-green-700 font-semibold">approved</span>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-1">Source: <span x-text="selectedTool && selectedTool.source_server"></span></p>
+                    </div>
+                    <div class="flex items-center gap-2 flex-shrink-0">
+                        <!-- Delete Virtual Tool (only for virtual tools) -->
+                        <button x-show="selectedTool && selectedTool.tool_type === 'virtual'"
+                                @click="deleteVirtualTool(selectedTool)"
+                                class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg transition-colors"
+                                title="Delete this virtual tool">
+                            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                            <span>Delete</span>
+                        </button>
+                        <button @click="showToolDetailModal = false" class="flex-shrink-0 text-gray-500 hover:text-gray-800 p-1">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+                </div>
+                <!-- Tab bar -->
+                <div class="flex border-b border-gray-200 px-5">
+                    <button @click="toolDetailTab = 'details'"
+                            :class="toolDetailTab === 'details' ? 'border-b-2 border-blue-600 text-blue-700 font-semibold' : 'text-gray-500 hover:text-gray-700'"
+                            class="px-4 py-2.5 text-sm transition-colors mr-2">Details</button>
+                    <button @click="toolDetailTab = 'raw'"
+                            :class="toolDetailTab === 'raw' ? 'border-b-2 border-blue-600 text-blue-700 font-semibold' : 'text-gray-500 hover:text-gray-700'"
+                            class="px-4 py-2.5 text-sm transition-colors">Raw JSON</button>
+                </div>
+                <!-- Body -->
+                <div class="p-5 overflow-y-auto" style="max-height: calc(90vh - 140px);">
+                    <!-- Details tab -->
+                    <div x-show="toolDetailTab === 'details'" class="space-y-5">
+                        <!-- Description -->
+                        <div>
+                            <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Description</h4>
+                            <p class="text-sm text-gray-700" x-text="(selectedTool && selectedTool.description) || 'No description provided.'"></p>
+                        </div>
+                        <!-- Parameters -->
+                        <div x-show="selectedTool && toolDetailParams().length > 0">
+                            <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Parameters</h4>
+                            <div class="overflow-x-auto rounded-lg border border-gray-200">
+                                <table class="w-full text-sm">
+                                    <thead class="bg-gray-50 text-xs text-gray-600 uppercase tracking-wide">
+                                        <tr>
+                                            <th class="px-3 py-2 text-left font-semibold">Name</th>
+                                            <th class="px-3 py-2 text-left font-semibold">Type</th>
+                                            <th class="px-3 py-2 text-left font-semibold">Req</th>
+                                            <th class="px-3 py-2 text-left font-semibold">Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-gray-100">
+                                        <template x-for="param in toolDetailParams()" :key="param.path">
+                                           <tr :class="param.hasChildren ? 'bg-indigo-50/40' : 'hover:bg-gray-50'" class="transition-colors">
+                                                <td class="py-2 pr-3" :style="'padding-left: ' + (param.depth * 16 + 12) + 'px'">
+                                                    <div class="flex items-center gap-1">
+                                                       <button
+                                                           x-show="param.hasChildren"
+                                                           type="button"
+                                                           @click="toggleToolParam(param.path)"
+                                                           class="inline-flex items-center justify-center rounded p-0.5 text-indigo-500 hover:bg-indigo-100 transition-colors"
+                                                           :aria-expanded="isToolParamExpanded(param.path)">
+                                                           <i data-lucide="chevron-right"
+                                                              class="w-3 h-3 flex-shrink-0 transition-transform duration-150"
+                                                              :class="isToolParamExpanded(param.path) ? 'rotate-90' : ''"></i>
+                                                       </button>
+                                                       <span x-show="!param.hasChildren" class="inline-block w-4"></span>
+                                                       <i x-show="param.isArrayItems" data-lucide="list" class="w-3 h-3 text-blue-400 flex-shrink-0"></i>
+                                                       <code :class="param.depth > 0 ? 'text-xs text-gray-700' : 'text-xs font-semibold text-gray-900'" x-text="param.name"></code>
+                                                   </div>
+                                               </td>
+                                               <td class="px-3 py-2">
+                                                   <span :class="param.hasChildren ? 'bg-indigo-100 text-indigo-800' : 'bg-indigo-50 text-indigo-700'"
+                                                         class="px-1.5 py-0.5 text-xs rounded font-mono" x-text="param.type || 'any'"></span>
+                                               </td>
+                                                <td class="px-3 py-2">
+                                                    <span x-show="param.required" class="px-1.5 py-0.5 text-xs rounded bg-red-50 text-red-600 font-semibold">yes</span>
+                                                    <span x-show="!param.required && !param.isArrayItems" class="px-1.5 py-0.5 text-xs rounded bg-gray-100 text-gray-500">no</span>
+                                                    <span x-show="param.isArrayItems" class="text-gray-400">—</span>
+                                                </td>
+                                                <td class="px-3 py-2 text-xs text-gray-600" x-text="param.description || '—'"></td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div x-show="selectedTool && toolDetailParams().length === 0">
+                            <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Parameters</h4>
+                            <p class="text-sm text-gray-500 italic">No parameters defined.</p>
+                        </div>
+                        <!-- Example request -->
+                        <div x-show="selectedTool && toolDetailParams().length > 0">
+                            <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Example Request</h4>
+                            <pre class="text-xs bg-gray-900 text-green-300 rounded-lg p-4 overflow-x-auto max-w-full whitespace-pre-wrap break-all" x-text="toolDetailExample()"></pre>
+                        </div>
+                    </div>
+                    <!-- Raw JSON tab -->
+                    <div x-show="toolDetailTab === 'raw'">
+                        <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Input Schema (JSON)</h4>
+                        <pre class="text-xs bg-gray-50 border border-gray-200 rounded-lg p-4 overflow-x-auto max-w-full whitespace-pre-wrap break-all" x-text="selectedTool ? JSON.stringify(selectedTool.input_schema || {}, null, 2) : ''"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Virtual Tool Modal -->
+    <div x-show="showAddVirtualToolModal" x-cloak
+         role="dialog" aria-modal="true" aria-labelledby="addVirtualToolTitle"
+         class="fixed inset-0 z-[70] overflow-y-auto" @keydown.escape.window="if (!savingVirtualTool) { showAddVirtualToolModal = false; vtoolPrefill = null; }">
+        <div class="flex items-end sm:items-center justify-center min-h-screen">
+            <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" @click="if (!savingVirtualTool) { showAddVirtualToolModal = false; vtoolPrefill = null; }"></div>
+
+            <div class="bg-white sm:rounded-xl rounded-t-2xl shadow-2xl z-10 w-full sm:max-w-lg relative sm:my-8 max-h-[95vh] sm:max-h-[90vh] overflow-hidden border-t-2 sm:border-2 border-violet-100 animate-slide-up">
+                <!-- Modal Header -->
+                <div class="bg-gradient-to-r from-violet-600 via-purple-600 to-purple-700 px-4 sm:px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+                    <h3 id="addVirtualToolTitle" class="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
+                       <i data-lucide="sparkles" class="w-5 sm:w-6 h-5 sm:h-6"></i>
+                       Add Virtual Tool
+                    </h3>
+                    <button @click="showAddVirtualToolModal = false; vtoolPrefill = null;" :disabled="savingVirtualTool"
+                           class="text-white/80 hover:text-white hover:bg-white/10 rounded-lg p-2 transition-all touch-manipulation disabled:opacity-60 disabled:cursor-not-allowed">
+                       <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+
+                <!-- Modal Body -->
+                <div class="p-4 sm:p-6 overflow-y-auto" style="max-height: calc(90vh - 140px);">
+                    <form id="addVirtualToolForm" @submit.prevent="addVirtualTool">
+                       <div class="space-y-4">
+                           <div>
+                               <label class="block text-sm font-bold text-gray-800 mb-2">Tool Name <span class="text-red-600">*</span></label>
+                               <input type="text" id="vtoolName" required
+                                      class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm">
+                               <p class="text-xs text-gray-500 mt-1">Unique name for this tool within the server.</p>
+                           </div>
+                           <div>
+                               <label class="block text-sm font-bold text-gray-800 mb-2">Description</label>
+                               <textarea id="vtoolDescription" rows="3"
+                                         class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all text-sm resize-none"></textarea>
+                           </div>
+                           <div>
+                               <label class="block text-sm font-bold text-gray-800 mb-2">Execution Type <span class="text-red-600">*</span></label>
+                               <select id="vtoolExecType" x-model="virtualToolExecType"
+                                       class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-medium text-base">
+                                   <option value="http_call">http_call — calls an external HTTP endpoint</option>
+                                   <option value="stdio_call">stdio_call — runs a local command via stdin/stdout</option>
+                                   <option value="pipeline_call">pipeline_call — chains simple local commands</option>
+                               </select>
+                           </div>
+
+                           <!-- http_call fields -->
+                           <div x-show="virtualToolExecType === 'http_call'" class="space-y-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                               <p class="text-xs font-semibold text-blue-700 uppercase tracking-wide">HTTP Call Config</p>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">HTTP Method</label>
+                                   <select id="vtoolHttpMethod"
+                                           class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-medium text-base">
+                                       <option value="GET">GET</option>
+                                       <option value="POST" selected>POST</option>
+                                       <option value="PUT">PUT</option>
+                                       <option value="PATCH">PATCH</option>
+                                       <option value="DELETE">DELETE</option>
+                                   </select>
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">URL <span class="text-red-600">*</span></label>
+                                   <input type="url" id="vtoolUrl"
+                                          placeholder="https://api.example.com/endpoint"
+                                          class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm">
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Input Schema (JSON)</label>
+                                   <textarea id="vtoolInputSchemaHttpCall" rows="4"
+                                             placeholder='{"type":"object","properties":{}}'
+                                             class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
+                                   <p class="text-xs text-gray-500 mt-1">JSON Schema for this tool's input parameters (optional).</p>
+                               </div>
+                           </div>
+
+                           <!-- stdio_call fields -->
+                           <div x-show="virtualToolExecType === 'stdio_call'" class="space-y-4 p-4 bg-violet-50 rounded-lg border border-violet-200">
+                               <p class="text-xs font-semibold text-violet-700 uppercase tracking-wide">STDIO Call Config</p>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Command <span class="text-red-600">*</span></label>
+                                   <input type="text" id="vtoolStdioCommand"
+                                          placeholder="python"
+                                          class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm">
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Command Args</label>
+                                   <textarea id="vtoolStdioArgs" rows="4"
+                                             placeholder="script.py&#10;--format&#10;json"
+                                             class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
+                                   <p class="text-xs text-gray-500 mt-1">One argument per line. Lines starting with # are ignored.</p>
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Working Directory</label>
+                                   <input type="text" id="vtoolStdioWorkingDir"
+                                          placeholder="/app"
+                                          class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm">
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Environment Variables</label>
+                                   <textarea id="vtoolStdioEnvVars" rows="3"
+                                             placeholder='NODE_ENV=production&#10;API_BASE_URL=https://example.com'
+                                             class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Input Schema (JSON)</label>
+                                   <textarea id="vtoolInputSchemaStdioCall" rows="4"
+                                             placeholder='{"type":"object","properties":{}}'
+                                             class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
+                                   <p class="text-xs text-gray-500 mt-1">Arguments are sent to stdin as JSON.</p>
+                               </div>
+                           </div>
+
+                           <!-- pipeline_call fields -->
+                           <div x-show="virtualToolExecType === 'pipeline_call'" class="space-y-4 p-4 bg-emerald-50 rounded-lg border border-emerald-200">
+                               <p class="text-xs font-semibold text-emerald-700 uppercase tracking-wide">Pipeline Call Config</p>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Pipeline Steps (JSON) <span class="text-red-600">*</span></label>
+                                   <textarea id="vtoolPipelineSteps" rows="6"
+                                             placeholder='[{"command":"python","args":["script.py"]},{"command":"jq","args":[".result"]}]'
+                                             class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
+                                   <p class="text-xs text-gray-500 mt-1">Each step must include a command and optional args array.</p>
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Working Directory</label>
+                                   <input type="text" id="vtoolPipelineWorkingDir"
+                                          placeholder="/app"
+                                          class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm">
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Environment Variables</label>
+                                   <textarea id="vtoolPipelineEnvVars" rows="3"
+                                             placeholder='NODE_ENV=production&#10;API_BASE_URL=https://example.com'
+                                             class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Input Schema (JSON)</label>
+                                   <textarea id="vtoolInputSchemaPipelineCall" rows="4"
+                                             placeholder='{"type":"object","properties":{}}'
+                                             class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
+                                   <p class="text-xs text-gray-500 mt-1">Arguments are sent to the first step as JSON.</p>
+                               </div>
+                           </div>
+
+                           <div class="flex items-start gap-2 p-3 bg-amber-50 rounded-lg border border-amber-200">
+                               <i data-lucide="info" class="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0"></i>
+                               <p class="text-xs text-amber-800 leading-relaxed">Virtual tools are created with <strong>pending</strong> approval state and must be whitelisted before they become active.</p>
+                           </div>
+                       </div>
+
+                       <div class="flex gap-3 mt-6 pt-4 border-t border-gray-200 sticky bottom-0 bg-white -mx-4 sm:-mx-0 px-4 sm:px-0 pb-4 sm:pb-0">
+                           <button type="button" @click="showAddVirtualToolModal = false; vtoolPrefill = null;" :disabled="savingVirtualTool"
+                                   class="flex-1 px-4 py-3 sm:py-2.5 border-2 border-gray-400 text-gray-700 font-bold rounded-lg hover:bg-gray-100 hover:border-gray-600 transition-all touch-manipulation disabled:opacity-60 disabled:cursor-not-allowed">
+                               Cancel
+                           </button>
+                           <button type="submit" :disabled="savingVirtualTool"
+                                   class="flex-1 px-4 py-3 sm:py-2.5 bg-gradient-to-r from-violet-600 via-purple-600 to-purple-700 hover:from-violet-700 hover:via-purple-700 hover:to-purple-800 text-white font-bold rounded-lg shadow-lg hover:shadow-xl transition-all touch-manipulation disabled:opacity-70 disabled:cursor-not-allowed">
+                               <span x-show="!savingVirtualTool" class="flex items-center justify-center gap-2">
+                                   <i data-lucide="sparkles" class="w-4 h-4"></i>
+                                   Add Virtual Tool
+                               </span>
+                               <span x-show="savingVirtualTool" class="flex items-center justify-center gap-2">
+                                   <i data-lucide="refresh-cw" class="w-4 h-4 animate-spin"></i>
+                                   Saving...
+                               </span>
+                           </button>
+                       </div>
+                    </form>
                 </div>
             </div>
         </div>
@@ -407,9 +708,19 @@
             showToolsModal: false,
             toolsModalLoading: false,
             toolsMetadata: [],
+            toolsModalServerId: null,
+            showToolDetailModal: false,
+            selectedTool: null,
+            toolDetailTab: 'details',
             savingAdd: false,
             savingEdit: false,
+            showAddVirtualToolModal: false,
+            savingVirtualTool: false,
+            virtualToolExecType: 'http_call',
+            vtoolPrefill: null,
             pendingServerActions: {},
+            toolDetailRows: [],
+            expandedToolParamPaths: {},
 
             init() {
                 document.getElementById('aggregatedEndpoint').textContent = window.location.origin + '/mcp';
@@ -565,6 +876,34 @@
                 } catch {
                     return 'invalid';
                 }
+            },
+
+            _parseVirtualToolArgsOrToast(fieldId) {
+                try {
+                    return this._parseCommandArgs(document.getElementById(fieldId)?.value || '', 'lines');
+                } catch (error) {
+                    showToast(error.message, 'error');
+                    return null;
+                }
+            },
+
+            _parseVirtualToolEnvVarsOrToast(fieldId) {
+                const raw = (document.getElementById(fieldId)?.value || '').trim();
+                if (!raw) return {};
+                const envVars = {};
+                for (const line of raw.split('\n')) {
+                    const trimmed = line.trim();
+                    if (!trimmed || trimmed.startsWith('#')) continue;
+                    const idx = trimmed.indexOf('=');
+                    if (idx <= 0) {
+                        showToast('Environment variables must use KEY=VALUE format', 'error');
+                        return null;
+                    }
+                    const key = trimmed.slice(0, idx).trim();
+                    const value = trimmed.slice(idx + 1);
+                    envVars[key] = value;
+                }
+                return envVars;
             },
 
             async loadServers() {
@@ -801,6 +1140,7 @@
 
             async openToolsModal(serverId) {
                 this.showToolsModal = true;
+                this.toolsModalServerId = serverId;
                 this.toolsModalLoading = true;
                 this.toolsMetadata = [];
                 try {
@@ -814,6 +1154,316 @@
                 } finally {
                     this.toolsModalLoading = false;
                 }
+            },
+
+            openToolDetail(tool) {
+                this.selectedTool = tool;
+                this.toolDetailTab = 'details';
+                this._setToolDetailRows(tool);
+                this.showToolDetailModal = true;
+                this.$nextTick(() => lucide.createIcons());
+            },
+
+            async deleteVirtualTool(tool) {
+                if (!tool || !tool.id) {
+                    showToast('Cannot delete: tool ID is missing', 'error');
+                    return;
+                }
+                if (!confirm(`Delete virtual tool "${tool.name}"?\n\nThis action cannot be undone.`)) return;
+
+                try {
+                    const response = await fetch(`/admin/api/mcp-servers/${this.toolsModalServerId}/virtual-tools/${tool.id}`, {
+                        method: 'DELETE',
+                    });
+                    const payload = await response.json();
+                    if (!response.ok) throw new Error(payload.error || 'Failed to delete virtual tool');
+                    showToast(`Virtual tool "${tool.name}" deleted`, 'success');
+                    this.showToolDetailModal = false;
+                    await this.openToolsModal(this.toolsModalServerId);
+                } catch (error) {
+                    showToast(error.message, 'error');
+                }
+            },
+
+            async addVirtualTool() {
+                if (this.savingVirtualTool) return;
+
+                const name = (document.getElementById('vtoolName').value || '').trim();
+                if (!name) { showToast('Tool name is required', 'error'); return; }
+
+                const execType = this.virtualToolExecType;
+                const description = (document.getElementById('vtoolDescription').value || '').trim() || null;
+
+                let config = {};
+
+                if (execType === 'http_call') {
+                    const method = document.getElementById('vtoolHttpMethod').value || 'POST';
+                    const url = (document.getElementById('vtoolUrl').value || '').trim();
+                    if (!url) { showToast('URL is required for http_call', 'error'); return; }
+
+                    let inputSchema = {};
+                    const rawSchema = (document.getElementById('vtoolInputSchemaHttpCall').value || '').trim();
+                    if (rawSchema) {
+                        try { inputSchema = JSON.parse(rawSchema); } catch { showToast('Input Schema is not valid JSON', 'error'); return; }
+                    }
+
+                    config = { request: { method, url }, input_schema: inputSchema };
+                } else if (execType === 'stdio_call') {
+                    const command = (document.getElementById('vtoolStdioCommand').value || '').trim();
+                    if (!command) { showToast('Command is required for stdio_call', 'error'); return; }
+
+                    const commandArgs = this._parseVirtualToolArgsOrToast('vtoolStdioArgs');
+                    if (commandArgs === null) return;
+
+                    const envVars = this._parseVirtualToolEnvVarsOrToast('vtoolStdioEnvVars');
+                    if (envVars === null) return;
+
+                    let inputSchema = {};
+                    const rawSchema = (document.getElementById('vtoolInputSchemaStdioCall').value || '').trim();
+                    if (rawSchema) {
+                        try { inputSchema = JSON.parse(rawSchema); } catch { showToast('Input Schema is not valid JSON', 'error'); return; }
+                    }
+
+                    config = {
+                        command,
+                        command_args: commandArgs,
+                        working_dir: (document.getElementById('vtoolStdioWorkingDir').value || '').trim() || null,
+                        env_vars: envVars,
+                        input_schema: inputSchema
+                    };
+                } else if (execType === 'pipeline_call') {
+                    const rawSteps = (document.getElementById('vtoolPipelineSteps').value || '').trim();
+                    if (!rawSteps) { showToast('Pipeline steps are required for pipeline_call', 'error'); return; }
+
+                    let steps = [];
+                    try {
+                        steps = JSON.parse(rawSteps);
+                    } catch {
+                        showToast('Pipeline steps must be valid JSON', 'error');
+                        return;
+                    }
+                    if (!Array.isArray(steps) || steps.length === 0) {
+                        showToast('Pipeline steps must be a non-empty JSON array', 'error');
+                        return;
+                    }
+
+                    const envVars = this._parseVirtualToolEnvVarsOrToast('vtoolPipelineEnvVars');
+                    if (envVars === null) return;
+
+                    let inputSchema = {};
+                    const rawSchema = (document.getElementById('vtoolInputSchemaPipelineCall').value || '').trim();
+                    if (rawSchema) {
+                        try { inputSchema = JSON.parse(rawSchema); } catch { showToast('Input Schema is not valid JSON', 'error'); return; }
+                    }
+
+                    config = {
+                        steps,
+                        working_dir: (document.getElementById('vtoolPipelineWorkingDir').value || '').trim() || null,
+                        env_vars: envVars,
+                        input_schema: inputSchema
+                    };
+                }
+
+                this.savingVirtualTool = true;
+                try {
+                    const response = await fetch(`/admin/api/mcp-servers/${this.toolsModalServerId}/virtual-tools`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name, description, execution_type: execType, config }),
+                    });
+                    const payload = await response.json();
+                    if (!response.ok) throw new Error(payload.error || 'Failed to create virtual tool');
+                    showToast('Virtual tool created — pending whitelist approval', 'success');
+                    this.showAddVirtualToolModal = false;
+                    this.vtoolPrefill = null;
+                    document.getElementById('addVirtualToolForm').reset();
+                    this.virtualToolExecType = 'http_call';
+                    await this.openToolsModal(this.toolsModalServerId);
+                } catch (error) {
+                    showToast(error.message, 'error');
+                } finally {
+                    this.savingVirtualTool = false;
+                }
+            },
+
+            toolDetailParams() {
+                return this.toolDetailRows.filter(param => this._isToolParamVisible(param));
+            },
+
+            _setToolDetailRows(tool) {
+                const schema = tool?.input_schema || {};
+                this.toolDetailRows = this._flattenSchemaProperties(
+                    this._getSchemaProperties(schema),
+                    new Set(this._getSchemaRequired(schema)),
+                    '',
+                    0,
+                    []
+                );
+                this.expandedToolParamPaths = Object.fromEntries(
+                    this.toolDetailRows
+                        .filter(param => param.hasChildren)
+                        .map(param => [param.path, true])
+                );
+            },
+
+            _flattenSchemaProperties(properties, requiredSet, prefix, depth, ancestorPaths) {
+                if (depth > 6) return [];
+                const rows = [];
+                for (const [name, def] of Object.entries(properties || {})) {
+                    const path = prefix ? prefix + '.' + name : name;
+                    const childProperties = this._getSchemaProperties(def);
+                    const childRequired = new Set(this._getSchemaRequired(def));
+                    const arrayItems = this._getSchemaItems(def);
+                    const hasObjectChildren = Object.keys(childProperties).length > 0;
+                    const hasArrayChildren = !!arrayItems;
+                    rows.push({
+                        path,
+                        name,
+                        type: this._getSchemaTypeLabel(def),
+                        required: requiredSet.has(name),
+                        description: def?.description || '',
+                        depth,
+                        hasChildren: hasObjectChildren || hasArrayChildren,
+                        isArrayItems: false,
+                        ancestorPaths,
+                    });
+                    if (hasObjectChildren) {
+                        rows.push(...this._flattenSchemaProperties(
+                            childProperties,
+                            childRequired,
+                            path,
+                            depth + 1,
+                            [...ancestorPaths, path]
+                        ));
+                    }
+                    if (arrayItems) {
+                        const itemPath = path + '[]';
+                        const itemProperties = this._getSchemaProperties(arrayItems);
+                        const itemRequired = new Set(this._getSchemaRequired(arrayItems));
+                        const itemHasChildren = Object.keys(itemProperties).length > 0 || !!this._getSchemaItems(arrayItems);
+                        rows.push({
+                            path: itemPath,
+                            name: name + '[]',
+                            type: this._getSchemaTypeLabel(arrayItems),
+                            required: false,
+                            description: arrayItems?.description || 'Array item type',
+                            depth: depth + 1,
+                            hasChildren: itemHasChildren,
+                            isArrayItems: true,
+                            ancestorPaths: [...ancestorPaths, path],
+                        });
+                        if (Object.keys(itemProperties).length > 0) {
+                            rows.push(...this._flattenSchemaProperties(
+                                itemProperties,
+                                itemRequired,
+                                itemPath,
+                                depth + 2,
+                                [...ancestorPaths, path, itemPath]
+                            ));
+                        }
+                    }
+                }
+                return rows;
+            },
+
+            _getSchemaVariants(def) {
+                return [
+                    ...(Array.isArray(def?.anyOf) ? def.anyOf : []),
+                    ...(Array.isArray(def?.oneOf) ? def.oneOf : []),
+                ];
+            },
+
+            _getSchemaTypes(def) {
+                const rawType = def?.type;
+                const directTypes = Array.isArray(rawType)
+                    ? rawType.map(type => String(type))
+                    : (typeof rawType === 'string' ? [rawType] : []);
+                const variantTypes = this._getSchemaVariants(def)
+                    .flatMap(variant => this._getSchemaTypes(variant));
+                const inferredTypes = [];
+                if (def?.properties) inferredTypes.push('object');
+                if (def?.items) inferredTypes.push('array');
+                if (def?.enum) inferredTypes.push('enum');
+                return [...new Set([...directTypes, ...variantTypes, ...inferredTypes])];
+            },
+
+            _getSchemaTypeLabel(def) {
+                const types = this._getSchemaTypes(def);
+                return types.length > 0 ? types.join(' | ') : 'any';
+            },
+
+            _getSchemaProperties(def) {
+                const merged = {};
+                if (def?.properties && typeof def.properties === 'object') {
+                    Object.assign(merged, def.properties);
+                }
+                for (const variant of this._getSchemaVariants(def)) {
+                    if (variant?.properties && typeof variant.properties === 'object') {
+                        Object.assign(merged, variant.properties);
+                    }
+                }
+                return merged;
+            },
+
+            _getSchemaRequired(def) {
+                return [...new Set([
+                    ...(Array.isArray(def?.required) ? def.required : []),
+                    ...this._getSchemaVariants(def).flatMap(variant => (
+                        Array.isArray(variant?.required) ? variant.required : []
+                    )),
+                ])];
+            },
+
+            _getSchemaItems(def) {
+                if (def?.items) return def.items;
+                return this._getSchemaVariants(def).find(variant => variant?.items)?.items || null;
+            },
+
+            _isToolParamVisible(param) {
+                return (param.ancestorPaths || []).every(path => this.expandedToolParamPaths[path] !== false);
+            },
+
+            toggleToolParam(path) {
+                if (!(path in this.expandedToolParamPaths)) return;
+                this.expandedToolParamPaths[path] = !this.expandedToolParamPaths[path];
+                this.$nextTick(() => lucide.createIcons());
+            },
+
+            isToolParamExpanded(path) {
+                return this.expandedToolParamPaths[path] !== false;
+            },
+
+            toolDetailExample() {
+                if (!this.selectedTool) return '';
+                const schema = this.selectedTool.input_schema || {};
+                const args = this._buildExampleValue(schema);
+                return JSON.stringify({ name: this.selectedTool.name, arguments: args }, null, 2);
+            },
+
+            _buildExampleValue(def) {
+                if (!def) return null;
+                // Resolve anyOf/oneOf: use first schema
+                if (def.anyOf && def.anyOf.length > 0) return this._buildExampleValue(def.anyOf[0]);
+                if (def.oneOf && def.oneOf.length > 0) return this._buildExampleValue(def.oneOf[0]);
+                if (def.enum) return def.enum[0];
+                const type = Array.isArray(def.type) ? def.type.find(value => value !== 'null') : def.type;
+                if (type === 'string') return def.example !== undefined ? def.example : (def.default !== undefined ? def.default : '<string>');
+                if (type === 'number' || type === 'integer') return def.example !== undefined ? def.example : (def.default !== undefined ? def.default : 0);
+                if (type === 'boolean') return def.example !== undefined ? def.example : (def.default !== undefined ? def.default : false);
+                if (type === 'null') return null;
+                if (type === 'array') {
+                    const items = this._getSchemaItems(def) || {};
+                    return [this._buildExampleValue(items)];
+                }
+                const props = this._getSchemaProperties(def);
+                if (type === 'object' || Object.keys(props).length > 0) {
+                    const result = {};
+                    for (const [k, v] of Object.entries(props)) {
+                        result[k] = this._buildExampleValue(v);
+                    }
+                    return result;
+                }
+                return def.example !== undefined ? def.example : (def.default !== undefined ? def.default : null);
             },
 
             async addServer() {

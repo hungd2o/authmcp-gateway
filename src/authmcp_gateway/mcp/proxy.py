@@ -848,31 +848,13 @@ class McpProxy:
 
         execution_type = str(virtual_tool.get("execution_type") or "").lower()
         config = deepcopy(virtual_tool.get("config") or {})
-        if execution_type == "mcp_wrapper":
-            target_tool = config.get("target_tool")
-            if not target_tool:
-                raise ToolNotFoundError(f"Virtual tool '{virtual_tool['name']}' is misconfigured")
-            if str(target_tool) == str(virtual_tool.get("name")):
-                raise ToolNotFoundError(f"Virtual tool '{virtual_tool['name']}' cannot wrap itself")
-            merged_args = {}
-            merged_args.update(config.get("static_arguments") or {})
-            merged_args.update(arguments or {})
-            # Route wrappers to native MCP tools only.
-            data, _ = await self.call_tool(
-                tool_name=str(target_tool),
-                arguments=merged_args,
-                user_id=user_id,
-                server_name=server_name,
-            )
-            if "result" in data:
-                data["result"].setdefault("_meta", {})
-                data["result"]["_meta"]["virtual_tool"] = virtual_tool["name"]
-            return data
-
         if execution_type == "http_call":
             request_cfg = config.get("request") or {}
             method = str(request_cfg.get("method") or "GET").upper()
             url = str(request_cfg.get("url") or "")
+            headers = {
+                str(key): str(value) for key, value in (request_cfg.get("headers") or {}).items()
+            }
             if not url:
                 raise ToolNotFoundError(
                     f"Virtual tool '{virtual_tool['name']}' has no URL configured"
@@ -882,9 +864,9 @@ class McpProxy:
                 timeout=float(source_server.get("timeout") or self.timeout)
             ) as client:
                 if method in {"POST", "PUT", "PATCH"}:
-                    resp = await client.request(method, url, json=payload)
+                    resp = await client.request(method, url, json=payload, headers=headers)
                 else:
-                    resp = await client.request(method, url, params=payload)
+                    resp = await client.request(method, url, params=payload, headers=headers)
             content_type = resp.headers.get("content-type", "")
             body: Any
             if "application/json" in content_type:
@@ -909,7 +891,135 @@ class McpProxy:
                 },
             }
 
+        if execution_type == "stdio_call":
+            command = str(config.get("command") or "").strip()
+            if not command:
+                raise ToolNotFoundError(
+                    f"Virtual tool '{virtual_tool['name']}' has no command configured"
+                )
+            payload = json.dumps(arguments or {}, ensure_ascii=False)
+            result = await self._run_virtual_process_command(
+                {
+                    "command": command,
+                    "command_args": list(config.get("command_args") or []),
+                    "working_dir": config.get("working_dir"),
+                    "env_vars": config.get("env_vars") or {},
+                },
+                stdin_text=payload,
+                timeout=float(
+                    config.get("timeout") or source_server.get("timeout") or self.timeout
+                ),
+            )
+            return self._build_virtual_process_response(
+                virtual_tool=virtual_tool,
+                execution_type="stdio_call",
+                result=result,
+            )
+
+        if execution_type == "pipeline_call":
+            steps = config.get("steps") or []
+            if not isinstance(steps, list) or not steps:
+                raise ToolNotFoundError(
+                    f"Virtual tool '{virtual_tool['name']}' has no pipeline steps configured"
+                )
+            current_input = json.dumps(arguments or {}, ensure_ascii=False)
+            timeout = float(config.get("timeout") or source_server.get("timeout") or self.timeout)
+            env_overrides = config.get("env_vars") or {}
+            working_dir = config.get("working_dir")
+            last_result: Dict[str, Any] = {
+                "returncode": 0,
+                "stdout": current_input,
+                "stderr": "",
+            }
+            for step in steps:
+                merged_step = dict(step or {})
+                if env_overrides and not merged_step.get("env_vars"):
+                    merged_step["env_vars"] = env_overrides
+                if working_dir and not merged_step.get("working_dir"):
+                    merged_step["working_dir"] = working_dir
+                last_result = await self._run_virtual_process_command(
+                    merged_step,
+                    stdin_text=current_input,
+                    timeout=timeout,
+                )
+                current_input = str(last_result.get("stdout") or "")
+                if int(last_result.get("returncode") or 0) != 0:
+                    break
+            return self._build_virtual_process_response(
+                virtual_tool=virtual_tool,
+                execution_type="pipeline_call",
+                result=last_result,
+            )
+
         raise ToolNotFoundError(f"Unsupported virtual tool execution_type '{execution_type}'")
+
+    async def _run_virtual_process_command(
+        self,
+        command_config: Dict[str, Any],
+        *,
+        stdin_text: str,
+        timeout: float,
+    ) -> Dict[str, Any]:
+        command = str(command_config.get("command") or "").strip()
+        if not command:
+            raise ToolNotFoundError("Virtual tool command is missing")
+        command_args = [str(arg) for arg in (command_config.get("command_args") or [])]
+        env = os.environ.copy()
+        env.update(
+            {str(key): str(value) for key, value in (command_config.get("env_vars") or {}).items()}
+        )
+        process = await asyncio.create_subprocess_exec(
+            command,
+            *command_args,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=command_config.get("working_dir") or None,
+            env=env,
+        )
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(stdin_text.encode("utf-8")),
+            timeout=timeout,
+        )
+        return {
+            "returncode": process.returncode or 0,
+            "stdout": stdout.decode("utf-8", errors="replace").strip(),
+            "stderr": stderr.decode("utf-8", errors="replace").strip(),
+        }
+
+    def _build_virtual_process_response(
+        self,
+        *,
+        virtual_tool: Dict[str, Any],
+        execution_type: str,
+        result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        stdout = str(result.get("stdout") or "")
+        stderr = str(result.get("stderr") or "")
+        returncode = int(result.get("returncode") or 0)
+        body: Any
+        try:
+            body = json.loads(stdout) if stdout else {}
+        except json.JSONDecodeError:
+            body = stdout or stderr
+        if isinstance(body, str):
+            content_text = body
+        else:
+            content_text = json.dumps(body, ensure_ascii=False)
+        if returncode != 0 and stderr:
+            content_text = f"{content_text}\n{stderr}".strip() if content_text else stderr
+        return {
+            "jsonrpc": "2.0",
+            "result": {
+                "content": [{"type": "text", "text": content_text}],
+                "isError": returncode != 0,
+                "_meta": {
+                    "virtual_tool": virtual_tool["name"],
+                    "execution_type": execution_type,
+                    "returncode": returncode,
+                },
+            },
+        }
 
     async def _route_tool_to_server(
         self, tool_name: str, user_id: Optional[int] = None, server_name: Optional[str] = None

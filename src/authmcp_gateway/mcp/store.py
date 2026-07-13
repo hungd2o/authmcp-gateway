@@ -1325,6 +1325,29 @@ def list_mcp_servers_by_state(
     return [s for s in servers if s.get("approval_state") == approval_state]
 
 
+def delete_virtual_tool(db_path: str, tool_id: int) -> bool:
+    """Delete a virtual tool by ID.
+
+    Args:
+        db_path: Path to SQLite database
+        tool_id: Virtual tool ID
+
+    Returns:
+        bool: True if deleted, False if not found
+    """
+    with _db_conn(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM virtual_tools WHERE id = ?", (tool_id,))
+        rows_affected = cursor.rowcount
+        conn.commit()
+
+    if rows_affected > 0:
+        logger.info(f"Deleted virtual tool {tool_id}")
+        return True
+
+    return False
+
+
 def list_virtual_tools_by_state(
     db_path: str, approval_state: Optional[str] = None
 ) -> List[Dict[str, Any]]:

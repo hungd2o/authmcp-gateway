@@ -652,6 +652,16 @@ def create_app(config=None):
                 methods=["GET"],
             ),
             Route(
+                "/admin/api/mcp-servers/{server_id:int}/virtual-tools",
+                admin_routes.api_create_virtual_tool,
+                methods=["POST"],
+            ),
+            Route(
+                "/admin/api/mcp-servers/{server_id:int}/virtual-tools/{tool_id:int}",
+                admin_routes.api_delete_virtual_tool,
+                methods=["DELETE"],
+            ),
+            Route(
                 "/admin/api/mcp-servers/{server_id:int}/process/{action:str}",
                 admin_routes.api_mcp_server_process_action,
                 methods=["POST"],

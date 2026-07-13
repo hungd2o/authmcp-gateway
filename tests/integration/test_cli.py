@@ -289,7 +289,10 @@ def test_background_log_only_mode_starts_new_session_on_non_windows(tmp_path, mo
     monkeypatch.setattr(cli.os, "name", "posix")
 
     assert cli._should_start_new_session(args, tray_available=True) is True
-    assert cli._should_start_new_session(_start_args(tmp_path, no_tray=False), tray_available=False) is True
+    assert (
+        cli._should_start_new_session(_start_args(tmp_path, no_tray=False), tray_available=False)
+        is True
+    )
 
 
 # ---------------------------------------------------------------------------

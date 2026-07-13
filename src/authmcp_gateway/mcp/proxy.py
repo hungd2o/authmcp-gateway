@@ -38,6 +38,9 @@ from .trust import approval_is_active
 logger = logging.getLogger(__name__)
 _MCP_DEBUG = os.getenv("MCP_DEBUG", "").lower() in ("1", "true", "yes", "on")
 _IDEMPOTENCY_KEY_FIELD = "idempotency_key"
+# Cap on captured stdout/stderr for stdio_call/pipeline_call virtual tools —
+# bounds memory use and MCP response size against a runaway/compromised command.
+VIRTUAL_TOOL_MAX_OUTPUT_BYTES = 256 * 1024
 _IDEMPOTENCY_VALUES = frozenset({"unsupported", "supported", "required"})
 _RETRY_VALUES = frozenset({"never", "safe", "safe_with_idempotency"})
 
@@ -981,10 +984,15 @@ class McpProxy:
             process.communicate(stdin_text.encode("utf-8")),
             timeout=timeout,
         )
+        truncated = (
+            len(stdout) > VIRTUAL_TOOL_MAX_OUTPUT_BYTES
+            or len(stderr) > VIRTUAL_TOOL_MAX_OUTPUT_BYTES
+        )
         return {
             "returncode": process.returncode or 0,
-            "stdout": stdout.decode("utf-8", errors="replace").strip(),
-            "stderr": stderr.decode("utf-8", errors="replace").strip(),
+            "stdout": stdout[:VIRTUAL_TOOL_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace").strip(),
+            "stderr": stderr[:VIRTUAL_TOOL_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace").strip(),
+            "truncated": truncated,
         }
 
     def _build_virtual_process_response(
@@ -1008,6 +1016,9 @@ class McpProxy:
             content_text = json.dumps(body, ensure_ascii=False)
         if returncode != 0 and stderr:
             content_text = f"{content_text}\n{stderr}".strip() if content_text else stderr
+        if result.get("truncated"):
+            cap_kb = VIRTUAL_TOOL_MAX_OUTPUT_BYTES // 1024
+            content_text = f"{content_text}\n[output truncated at {cap_kb}KB]".strip()
         return {
             "jsonrpc": "2.0",
             "result": {

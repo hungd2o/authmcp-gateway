@@ -123,15 +123,21 @@ def _schedule_health_check(db_path: str, server_id: int) -> None:
 
 async def api_list_mcp_servers(request: Request) -> JSONResponse:
     """API: List all MCP servers."""
-    from authmcp_gateway.mcp.store import list_mcp_servers
+    from authmcp_gateway.mcp.store import list_mcp_servers, list_virtual_tools
 
-    servers = list_mcp_servers(get_config(request).auth.sqlite_path)
+    db_path = get_config(request).auth.sqlite_path
+    servers = list_mcp_servers(db_path)
     try:
         from authmcp_gateway.mcp.process_manager import get_process_manager
 
         process_manager = get_process_manager()
     except Exception:
         process_manager = None
+
+    virtual_tool_counts: dict = {}
+    for tool in list_virtual_tools(db_path):
+        server_id = tool.get("mcp_server_id")
+        virtual_tool_counts[server_id] = virtual_tool_counts.get(server_id, 0) + 1
 
     for server in servers:
         transport_type = (server.get("transport_type") or "http").lower()
@@ -141,6 +147,7 @@ async def api_list_mcp_servers(request: Request) -> JSONResponse:
             server["process_status"] = "n/a"
         else:
             server["process_status"] = "n/a"
+        server["virtual_tools_count"] = virtual_tool_counts.get(server["id"], 0)
 
     return JSONResponse({"servers": servers})
 

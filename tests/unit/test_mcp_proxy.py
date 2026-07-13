@@ -1,8 +1,10 @@
 import json
+import sys
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from authmcp_gateway.mcp import proxy as proxy_module
 from authmcp_gateway.mcp.proxy import McpProxy
 
 
@@ -517,3 +519,33 @@ async def test_execute_virtual_tool_pipeline_call_chains_step_outputs(monkeypatc
     assert calls[1][1] == '{"result":"step-one"}'
     assert result["result"]["_meta"]["execution_type"] == "pipeline_call"
     assert result["result"]["content"][0]["text"] == "step-one"
+
+
+@pytest.mark.asyncio
+async def test_run_virtual_process_command_truncates_oversized_stdout(monkeypatch, db_path):
+    proxy = McpProxy(db_path)
+    monkeypatch.setattr(proxy_module, "VIRTUAL_TOOL_MAX_OUTPUT_BYTES", 10)
+
+    result = await proxy._run_virtual_process_command(
+        {
+            "command": sys.executable,
+            "command_args": ["-c", "print('x' * 1000)"],
+        },
+        stdin_text="",
+        timeout=5,
+    )
+
+    assert result["truncated"] is True
+    assert len(result["stdout"]) <= 10
+
+
+def test_build_virtual_process_response_notes_truncation(db_path):
+    proxy = McpProxy(db_path)
+
+    response = proxy._build_virtual_process_response(
+        virtual_tool={"name": "virt_stdio"},
+        execution_type="stdio_call",
+        result={"returncode": 0, "stdout": "partial-out", "stderr": "", "truncated": True},
+    )
+
+    assert "[output truncated at 256KB]" in response["result"]["content"][0]["text"]

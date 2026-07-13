@@ -632,7 +632,8 @@
                                    <textarea id="vtoolInputSchemaStdioCall" rows="4"
                                              placeholder='{"type":"object","properties":{}}'
                                              class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
-                                   <p class="text-xs text-gray-500 mt-1">Arguments are sent to stdin as JSON.</p>
+                                   <p class="text-xs text-gray-500 mt-1">Arguments matching this schema are JSON-encoded and piped to the process's stdin — e.g. schema <code class="font-mono">{"query":{"type":"string"}}</code> sends <code class="font-mono">{"query":"..."}</code> on stdin; your script reads/parses it (<code class="font-mono">json.load(sys.stdin)</code> in Python). Command and args below are static — schema fields are NOT substituted into them.</p>
+                                   <p class="text-xs text-amber-700 mt-1 flex items-start gap-1"><i data-lucide="shield-alert" class="w-3.5 h-3.5 mt-0.5 flex-shrink-0"></i> Stdout/stderr are capped at 256KB and truncated beyond that; non-zero exit codes are returned as tool errors.</p>
                                </div>
                            </div>
 
@@ -663,7 +664,8 @@
                                    <textarea id="vtoolInputSchemaPipelineCall" rows="4"
                                              placeholder='{"type":"object","properties":{}}'
                                              class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
-                                   <p class="text-xs text-gray-500 mt-1">Arguments are sent to the first step as JSON.</p>
+                                   <p class="text-xs text-gray-500 mt-1">Only the <strong>first</strong> step receives the tool's arguments as JSON on stdin. Each later step receives the previous step's raw stdout as its stdin (plain text passthrough, not re-parsed against this schema) — chain steps like <code class="font-mono">script.py | jq</code>.</p>
+                                   <p class="text-xs text-amber-700 mt-1 flex items-start gap-1"><i data-lucide="shield-alert" class="w-3.5 h-3.5 mt-0.5 flex-shrink-0"></i> Each step's stdout/stderr are capped at 256KB and truncated beyond that; a non-zero exit code stops the pipeline and is returned as a tool error.</p>
                                </div>
                            </div>
 
@@ -1046,7 +1048,7 @@
                                             ${server.status.toUpperCase()}
                                         </span>
                                         <span class="px-2.5 py-1 text-xs font-bold rounded-full bg-cyan-600 text-white shadow-sm">
-                                            ${server.tools_count || 0} tools
+                                            ${(server.tools_count || 0) + (server.virtual_tools_count || 0)} tools
                                         </span>
                                         ${(server.transport_type || 'http') === 'stdio' ? `
                                             <span class="px-2.5 py-1 text-xs font-bold rounded-full ${(server.process_status || 'stopped') === 'running' ? 'bg-emerald-600' : ((server.process_status || 'stopped') === 'error' ? 'bg-amber-600' : 'bg-gray-600')} text-white shadow-sm">
@@ -1107,7 +1109,7 @@
                                                 ${server.approval_state !== 'approved' ? 'disabled' : ''}
                                                 class="text-xs px-2.5 py-1.5 border-2 border-gray-400 text-gray-800 font-semibold rounded-lg hover:bg-gray-100 hover:border-gray-600 transition-all flex items-center gap-1.5">
                                             <i data-lucide="wrench" class="w-3.5 h-3.5"></i>
-                                            Tool Details (${server.tools_count || 0})
+                                            Tool Details (${(server.tools_count || 0) + (server.virtual_tools_count || 0)})
                                         </button>
                                         ${(server.transport_type || 'http') === 'stdio' ? `
                                             <div class="mt-2 flex gap-1.5 flex-wrap">

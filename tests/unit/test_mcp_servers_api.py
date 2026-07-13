@@ -223,6 +223,50 @@ async def test_tools_api_returns_metadata_payload(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_api_list_mcp_servers_includes_virtual_tools_count(monkeypatch):
+    class DummyAuth:
+        sqlite_path = "/tmp/unused.db"
+
+    class DummyConfig:
+        auth = DummyAuth()
+
+    async def _receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/admin/api/mcp-servers",
+        "headers": [],
+        "query_string": b"",
+        "path_params": {},
+    }
+    request = Request(scope, _receive)
+    monkeypatch.setattr(mcp_servers_api, "get_config", lambda _req: DummyConfig())
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.store.list_mcp_servers",
+        lambda *_args, **_kwargs: [
+            {"id": 1, "name": "srv-a", "transport_type": "http", "tools_count": 3},
+            {"id": 2, "name": "srv-b", "transport_type": "http", "tools_count": 0},
+        ],
+    )
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.store.list_virtual_tools",
+        lambda *_args, **_kwargs: [
+            {"id": 10, "mcp_server_id": 1, "name": "vt1"},
+            {"id": 11, "mcp_server_id": 1, "name": "vt2"},
+        ],
+    )
+
+    response = await mcp_servers_api.api_list_mcp_servers(request)
+    assert response.status_code == 200
+    payload = json.loads(response.body.decode("utf-8"))
+    servers_by_id = {s["id"]: s for s in payload["servers"]}
+    assert servers_by_id[1]["virtual_tools_count"] == 2
+    assert servers_by_id[2]["virtual_tools_count"] == 0
+
+
+@pytest.mark.asyncio
 async def test_api_create_virtual_tool_rejects_wrapper_execution_type(monkeypatch):
     class DummyAuth:
         sqlite_path = "/tmp/unused.db"

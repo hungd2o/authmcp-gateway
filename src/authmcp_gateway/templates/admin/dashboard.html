@@ -176,7 +176,7 @@
                                               'bg-gray-100 text-gray-700': server.status === 'offline'
                                           }"
                                           x-text="server.status.toUpperCase()"></span>
-                                    <span class="text-xs text-gray-500" x-show="server.tools_count" x-text="server.tools_count + ' tools'"></span>
+                                    <span class="text-xs text-gray-500" x-show="server.tools_count || server.virtual_tools_count" x-text="((server.tools_count || 0) + (server.virtual_tools_count || 0)) + ' tools'"></span>
                                 </div>
                             </div>
                         </div>

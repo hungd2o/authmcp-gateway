@@ -60,6 +60,22 @@ For more information, visit: https://github.com/loglux/authmcp-gateway
     start_parser.add_argument(
         "--reload", action="store_true", help="Enable auto-reload for development"
     )
+    start_parser.add_argument(
+        "--no-tray",
+        action="store_true",
+        dest="no_tray",
+        help=(
+            "Disable the system tray icon and run in console-only mode. "
+            "The tray is enabled by default in the packaged application."
+        ),
+    )
+    start_parser.add_argument(
+        "--tray-icon",
+        type=Path,
+        default=None,
+        metavar="ICON_PATH",
+        help="Path to a custom .ico or .png file for the tray icon",
+    )
 
     # Init DB command
     init_parser = subparsers.add_parser("init-db", help="Initialize database")
@@ -138,16 +154,78 @@ Starting server...
   Port: {args.port}
   Log Level: {args.log_level}
   Reload: {args.reload}
-
-Press CTRL+C to stop
 """)
 
     # Import app here to ensure environment is loaded first
     from authmcp_gateway.app import app
+    from authmcp_gateway.tray import is_tray_available
 
-    uvicorn.run(
-        app, host=args.host, port=args.port, log_level=args.log_level.lower(), reload=args.reload
+    no_tray = getattr(args, "no_tray", False)
+    use_tray = (not no_tray) and is_tray_available()
+
+    if use_tray:
+        _start_server_with_tray(app, args)
+    else:
+        if not no_tray and not is_tray_available():
+            print(
+                "ℹ  System tray not available. "
+                "Reinstall authmcp-gateway to restore bundled tray dependencies.\n"
+                "   Running in console mode — press CTRL+C to stop.\n",
+                file=sys.stderr,
+            )
+        else:
+            print("Press CTRL+C to stop\n")
+
+        uvicorn.run(
+            app,
+            host=args.host,
+            port=args.port,
+            log_level=args.log_level.lower(),
+            reload=args.reload,
+        )
+
+
+def _start_server_with_tray(app, args) -> None:
+    """Run uvicorn in a background thread and the system tray on the main thread."""
+    import threading
+
+    import uvicorn
+
+    from authmcp_gateway.tray import run_tray
+
+    if args.reload:
+        print(
+            "⚠  --reload is not compatible with the system tray "
+            "(uvicorn reloader requires the main thread).  Ignoring --reload.",
+            file=sys.stderr,
+        )
+
+    config = uvicorn.Config(
+        app,
+        host=args.host,
+        port=args.port,
+        log_level=args.log_level.lower(),
     )
+    server = uvicorn.Server(config)
+
+    server_thread = threading.Thread(target=server.run, daemon=True, name="uvicorn-server")
+    server_thread.start()
+
+    display_host = "localhost" if args.host == "0.0.0.0" else args.host
+    print(
+        f"✓ AuthMCP Gateway is running in the system tray.\n"
+        f"  Right-click the tray icon to open the dashboard or exit.\n"
+        f"  Dashboard: http://{display_host}:{args.port}\n"
+    )
+
+    icon_path = str(args.tray_icon) if getattr(args, "tray_icon", None) else None
+
+    # run_tray blocks until the user clicks Exit
+    run_tray(port=args.port, host=args.host, server=server, icon_path=icon_path)
+
+    # Ensure uvicorn has stopped after the tray exits
+    server.should_exit = True
+    server_thread.join(timeout=10)
 
 
 def init_database(args):

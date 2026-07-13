@@ -1,7 +1,7 @@
 """Admin API: MCP server management."""
 
-import logging
 import json
+import logging
 from datetime import datetime
 
 import jwt
@@ -367,7 +367,9 @@ async def api_mcp_server_process_action(request: Request) -> JSONResponse:
         return JSONResponse({"error": "Server not found"}, status_code=404)
 
     if (server.get("transport_type") or "http").lower() != "stdio":
-        return JSONResponse({"error": "Process actions are supported only for stdio transport"}, status_code=400)
+        return JSONResponse(
+            {"error": "Process actions are supported only for stdio transport"}, status_code=400
+        )
 
     process_manager = get_process_manager()
     if action == "start":
@@ -379,4 +381,6 @@ async def api_mcp_server_process_action(request: Request) -> JSONResponse:
     else:
         return JSONResponse({"error": "Invalid action"}, status_code=400)
 
-    return JSONResponse({"message": f"Process {action} requested", "status": process_manager.get_status(server_id)})
+    return JSONResponse(
+        {"message": f"Process {action} requested", "status": process_manager.get_status(server_id)}
+    )

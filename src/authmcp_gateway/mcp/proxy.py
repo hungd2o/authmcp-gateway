@@ -447,7 +447,9 @@ class McpProxy:
                         headers=notify_headers,
                     )
                 else:
-                    await self._proxy_jsonrpc(server, "notifications/initialized", {}, allow_retry=False)
+                    await self._proxy_jsonrpc(
+                        server, "notifications/initialized", {}, allow_retry=False
+                    )
             except Exception as notify_err:
                 # Best-effort: backends that ignore the notification still
                 # work; only transport-layer issues are interesting here.

@@ -1,10 +1,12 @@
 import pytest
 
 from authmcp_gateway.mcp.health import HealthChecker
+from authmcp_gateway.mcp.store import init_mcp_database
 
 
 @pytest.mark.asyncio
 async def test_health_checker_stdio_transport_online(db_path, monkeypatch):
+    init_mcp_database(db_path)
     checker = HealthChecker(db_path)
 
     class FakeTransport:

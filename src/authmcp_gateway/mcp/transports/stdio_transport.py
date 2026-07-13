@@ -59,7 +59,9 @@ class StdioTransport(McpTransport):
                 line = await self._proc.stderr.readline()
                 if not line:
                     break
-                logger.debug("STDIO MCP stderr: %s", line.decode("utf-8", errors="replace").rstrip())
+                logger.debug(
+                    "STDIO MCP stderr: %s", line.decode("utf-8", errors="replace").rstrip()
+                )
         except Exception as e:
             logger.debug("STDIO stderr reader stopped: %s", e)
 

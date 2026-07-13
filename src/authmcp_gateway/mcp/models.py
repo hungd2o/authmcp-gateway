@@ -20,9 +20,7 @@ class McpServerBase(BaseModel):
     transport_type: Literal["http", "stdio", "pipe"] = Field(
         "http", description="Backend transport type"
     )
-    command: Optional[str] = Field(
-        None, description="Command to execute for STDIO transport"
-    )
+    command: Optional[str] = Field(None, description="Command to execute for STDIO transport")
     command_args: Optional[List[str]] = Field(
         default=None, description="Command arguments for STDIO transport"
     )

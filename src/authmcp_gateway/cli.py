@@ -323,7 +323,12 @@ def show_version():
 
         pkg_version = version("authmcp-gateway")
     except PackageNotFoundError:
-        pkg_version = "unknown"
+        try:
+            from authmcp_gateway import __version__
+
+            pkg_version = __version__
+        except ImportError:
+            pkg_version = "unknown"
 
     print(f"""
 AuthMCP Gateway

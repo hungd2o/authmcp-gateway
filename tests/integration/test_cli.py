@@ -41,7 +41,7 @@ def test_main_dispatches_to_start(monkeypatch):
     monkeypatch.setattr(cli, "start_server", fake_start)
     monkeypatch.setattr(sys, "argv", ["authmcp-gateway", "start", "--port", "9000"])
     cli.main()
-    assert called["host"] == "0.0.0.0"
+    assert called["host"] is None
     assert called["port"] == 9000
 
 
@@ -86,12 +86,14 @@ def test_main_dispatches_to_version(monkeypatch):
 
 def _start_args(tmp_path, **overrides):
     defaults = dict(
-        host="0.0.0.0",
-        port=8000,
+        host=None,
+        port=None,
         config=None,
         env_file=tmp_path / "missing.env",
-        log_level="INFO",
+        log_level=None,
         reload=False,
+        no_tray=True,
+        tray_icon=None,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -114,6 +116,29 @@ def test_start_server_passes_args_to_uvicorn(tmp_path, monkeypatch, capsys):
     )
     captured = capsys.readouterr()
     assert "URL: http://localhost:9090" in captured.out  # 0.0.0.0 → localhost cosmetic
+
+
+def test_start_server_uses_env_file_for_host_port_and_log_level(tmp_path, monkeypatch, capsys):
+    """HOST/PORT/LOG_LEVEL from env file are used when CLI flags are omitted."""
+    env_file = tmp_path / "real.env"
+    env_file.write_text("HOST=127.0.0.1\nPORT=9105\nLOG_LEVEL=ERROR\n", encoding="utf-8")
+
+    monkeypatch.setitem(sys.modules, "uvicorn", MagicMock())
+    fake_app_module = MagicMock()
+    fake_app_module.app = "APP"
+    monkeypatch.setitem(sys.modules, "authmcp_gateway.app", fake_app_module)
+    monkeypatch.delenv("HOST", raising=False)
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+
+    cli.start_server(_start_args(tmp_path, env_file=env_file))
+
+    sys.modules["uvicorn"].run.assert_called_once_with(
+        "APP", host="127.0.0.1", port=9105, log_level="error", reload=False
+    )
+    captured = capsys.readouterr()
+    assert "URL: http://127.0.0.1:9105" in captured.out
+    assert "Log Level: ERROR" in captured.out
 
 
 def test_start_server_loads_existing_env_file(tmp_path, monkeypatch, capsys):

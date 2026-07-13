@@ -136,7 +136,7 @@ Open **http://localhost:8000/** in your browser to create admin user.
 curl -o .env https://raw.githubusercontent.com/loglux/authmcp-gateway/main/.env.example.pypi
 
 # Common settings to customize in .env:
-# PORT=9000                          # Change server port
+# PORT=9000                          # Change CLI server port (`authmcp-gateway start`)
 # PASSWORD_REQUIRE_SPECIAL=false     # Relax password requirements
 # LOG_LEVEL=DEBUG                    # More detailed logs
 
@@ -183,7 +183,7 @@ authmcp-gateway --help                   # Show all options
 
 ```bash
 # Gateway Settings
-GATEWAY_PORT=9105              # Host port mapping for Docker (container listens on 8000)
+GATEWAY_PORT=9105              # Docker host port mapping only (CLI uses PORT / --port)
 JWT_SECRET_KEY=your-secret-key # JWT signing key (auto-generated if not set)
 AUTH_REQUIRED=true             # Enable authentication (default: true)
 

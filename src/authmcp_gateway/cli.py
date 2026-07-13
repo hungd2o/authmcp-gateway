@@ -308,7 +308,7 @@ def _launch_background_server(args, tray_available: bool, server_url: str) -> No
                 stdin=subprocess.DEVNULL,
                 stdout=log_stream,
                 stderr=log_stream,
-                start_new_session=(os.name != "nt"),
+                start_new_session=_should_start_new_session(args, tray_available),
                 creationflags=_windows_background_creationflags(),
             )
         except OSError as exc:
@@ -354,6 +354,14 @@ def _build_background_start_command(args) -> list[str]:
 def _background_log_file_path() -> Path:
     """Return the default log file for detached startup."""
     return Path("data/logs/gateway-console.log").resolve()
+
+
+def _should_start_new_session(args, tray_available: bool) -> bool:
+    """Return True when background mode should fully detach from the current session."""
+    if os.name == "nt":
+        return False
+
+    return bool(getattr(args, "no_tray", False) or not tray_available)
 
 
 def _windows_background_creationflags() -> int:

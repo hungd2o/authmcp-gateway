@@ -275,6 +275,23 @@ def test_build_background_start_command_preserves_cli_flags(tmp_path):
     ]
 
 
+def test_background_tray_mode_keeps_current_session_on_non_windows(tmp_path, monkeypatch):
+    """Tray-enabled background mode must stay in the current session so the tray can initialize."""
+    args = _start_args(tmp_path, no_tray=False)
+    monkeypatch.setattr(cli.os, "name", "posix")
+
+    assert cli._should_start_new_session(args, tray_available=True) is False
+
+
+def test_background_log_only_mode_starts_new_session_on_non_windows(tmp_path, monkeypatch):
+    """Log-only background mode can fully detach from the current session."""
+    args = _start_args(tmp_path, no_tray=True)
+    monkeypatch.setattr(cli.os, "name", "posix")
+
+    assert cli._should_start_new_session(args, tray_available=True) is True
+    assert cli._should_start_new_session(_start_args(tmp_path, no_tray=False), tray_available=False) is True
+
+
 # ---------------------------------------------------------------------------
 # init_database
 # ---------------------------------------------------------------------------

@@ -66,7 +66,7 @@ For more information, visit: https://github.com/loglux/authmcp-gateway
         dest="no_tray",
         help=(
             "Disable the system tray icon and run in console-only mode. "
-            "The tray is enabled by default when authmcp-gateway[tray] is installed."
+            "The tray is enabled by default in the packaged application."
         ),
     )
     start_parser.add_argument(
@@ -169,7 +169,7 @@ Starting server...
         if not no_tray and not is_tray_available():
             print(
                 "ℹ  System tray not available. "
-                "Install authmcp-gateway[tray] to enable the tray icon.\n"
+                "Reinstall authmcp-gateway to restore bundled tray dependencies.\n"
                 "   Running in console mode — press CTRL+C to stop.\n",
                 file=sys.stderr,
             )

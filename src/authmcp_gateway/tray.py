@@ -1,8 +1,7 @@
 """Cross-platform System Tray support for AuthMCP Gateway.
 
-Requires the optional [tray] extras:
-    pip install authmcp-gateway[tray]
-which installs ``pystray`` and ``Pillow``.
+The tray support is bundled with the application and relies on the
+``pystray`` and ``Pillow`` dependencies installed with the package.
 
 pystray supports Windows (win32), macOS (AppKit), and Linux (GTK /
 AppIndicator / Xorg) out of the box.
@@ -43,7 +42,7 @@ def _create_icon_image():
     except ImportError as exc:
         raise ImportError(
             "Pillow is required for the system tray icon. "
-            "Install it with: pip install authmcp-gateway[tray]"
+            "Reinstall authmcp-gateway to restore bundled tray dependencies."
         ) from exc
 
     size = 64
@@ -109,7 +108,7 @@ def run_tray(
     except ImportError as exc:
         raise ImportError(
             "pystray is required for the system tray. "
-            "Install it with: pip install authmcp-gateway[tray]"
+            "Reinstall authmcp-gateway to restore bundled tray dependencies."
         ) from exc
 
     display_host = "localhost" if host in ("0.0.0.0", "") else host
@@ -144,4 +143,3 @@ def run_tray(
     )
 
     tray_icon.run()
-

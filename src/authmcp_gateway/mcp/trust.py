@@ -113,7 +113,9 @@ def derive_server_allowlist_policy(server: Dict[str, Any]) -> Dict[str, Any]:
     return {"kind": transport}
 
 
-def server_matches_allowlist_policy(server: Dict[str, Any], policy: Optional[Dict[str, Any]]) -> bool:
+def server_matches_allowlist_policy(
+    server: Dict[str, Any], policy: Optional[Dict[str, Any]]
+) -> bool:
     if not isinstance(policy, dict):
         return False
 
@@ -155,7 +157,9 @@ def server_matches_allowlist_policy(server: Dict[str, Any], policy: Optional[Dic
     return False
 
 
-def build_approval_metadata(actor: str, action: str, reason: Optional[str] = None) -> Dict[str, Any]:
+def build_approval_metadata(
+    actor: str, action: str, reason: Optional[str] = None
+) -> Dict[str, Any]:
     metadata = {
         "action": action,
         "actor": actor,

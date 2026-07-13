@@ -228,8 +228,7 @@ class HealthChecker:
                 "status": "offline",
                 "response_time_ms": None,
                 "tools_count": None,
-                "error": server.get("blocked_reason")
-                or "Server is pending whitelist approval",
+                "error": server.get("blocked_reason") or "Server is pending whitelist approval",
                 "checked_at": datetime.now(timezone.utc),
             }
 

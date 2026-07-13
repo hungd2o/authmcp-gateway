@@ -33,6 +33,7 @@ async def test_health_checker_stdio_transport_online(db_path, monkeypatch):
             "transport_type": "stdio",
             "command": "python",
             "enabled": 1,
+            "approval_state": "approved",
         }
     )
 
@@ -73,6 +74,7 @@ async def test_health_checker_stdio_transport_timeout_returns_offline(db_path, m
             "transport_type": "stdio",
             "command": "python",
             "enabled": 1,
+            "approval_state": "approved",
         }
     )
 

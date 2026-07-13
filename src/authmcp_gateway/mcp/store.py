@@ -554,9 +554,7 @@ def update_mcp_server(db_path: str, server_id: int, **fields) -> bool:
         current_state = (current.get("approval_state") or APPROVAL_PENDING).lower()
         if current_state == APPROVAL_APPROVED and current_fingerprint != new_fingerprint:
             fields["approval_state"] = APPROVAL_PENDING
-            fields["blocked_reason"] = (
-                "Configuration changed and requires whitelist re-approval"
-            )
+            fields["blocked_reason"] = "Configuration changed and requires whitelist re-approval"
 
     # Add updated_at timestamp
     fields["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -1209,7 +1207,10 @@ def update_virtual_tool(db_path: str, tool_id: int, **fields) -> bool:
         merged["config"] = json.loads(merged["config"] or "{}")
     new_fp = build_virtual_tool_fingerprint(merged)
     fields["config_fingerprint"] = new_fp
-    if current.get("approval_state") == APPROVAL_APPROVED and current.get("config_fingerprint") != new_fp:
+    if (
+        current.get("approval_state") == APPROVAL_APPROVED
+        and current.get("config_fingerprint") != new_fp
+    ):
         fields["approval_state"] = APPROVAL_PENDING
         fields["blocked_reason"] = "Configuration changed and requires whitelist re-approval"
 
@@ -1252,4 +1253,8 @@ def update_virtual_tool_approval(
 
 
 def list_pending_virtual_tools(db_path: str) -> List[Dict[str, Any]]:
-    return [tool for tool in list_virtual_tools(db_path) if tool.get("approval_state") == APPROVAL_PENDING]
+    return [
+        tool
+        for tool in list_virtual_tools(db_path)
+        if tool.get("approval_state") == APPROVAL_PENDING
+    ]

@@ -30,9 +30,9 @@ from .mcp.health import initialize_health_checker
 from .mcp.process_manager import initialize_process_manager
 from .mcp.proxy import McpProxy
 from .mcp.store import init_mcp_database, list_mcp_servers
-from .mcp.trust import ensure_whitelist_token
 from .mcp.token_manager import initialize_token_manager
 from .mcp.token_refresher import initialize_token_refresher
+from .mcp.trust import ensure_whitelist_token
 from .middleware import (
     ContentTypeFixMiddleware,
     McpAuthMiddleware,
@@ -223,6 +223,10 @@ def create_app(config=None):
     logger.info("✓ AuthMCP Gateway initialized")
     logger.info(f"  - Auth required: {config.auth_required}")
     logger.info(f"  - JWT algorithm: {config.jwt.algorithm}")
+    whitelist_token, generated = ensure_whitelist_token(config.whitelist_token)
+    config.whitelist_token = whitelist_token
+    config.whitelist_token_generated = generated
+    os.environ["MCP_WHITELIST_TOKEN"] = whitelist_token
 
     # ========================================================================
     # ENDPOINT CLOSURES (capture config, mcp_handler, mcp_proxy from scope)
@@ -441,10 +445,9 @@ def create_app(config=None):
         try:
             servers = list_mcp_servers(config.auth.sqlite_path, enabled_only=True)
             for server in servers:
-                if (
-                    (server.get("transport_type") or "http").lower() == "stdio"
-                    and server.get("approval_state") == "approved"
-                ):
+                if (server.get("transport_type") or "http").lower() == "stdio" and server.get(
+                    "approval_state"
+                ) == "approved":
                     await process_manager.start_server(server["id"], server)
             logger.info("✓ STDIO process manager initialized")
         except Exception as e:
@@ -869,7 +872,3 @@ app = create_app()
 
 # Export app for uvicorn
 __all__ = ["app", "create_app"]
-    whitelist_token, generated = ensure_whitelist_token(config.whitelist_token)
-    config.whitelist_token = whitelist_token
-    config.whitelist_token_generated = generated
-    os.environ["MCP_WHITELIST_TOKEN"] = whitelist_token

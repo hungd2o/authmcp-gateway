@@ -114,7 +114,9 @@ def run_tray(
 
     display_host = "localhost" if host in ("0.0.0.0", "") else host
     dashboard_url = f"http://{display_host}:{port}"
-    whitelist_url = f"http://{display_host}:{port}/{whitelist_token}/whitelist" if whitelist_token else ""
+    whitelist_url = (
+        f"http://{display_host}:{port}/{whitelist_token}/whitelist" if whitelist_token else ""
+    )
 
     icon_image = _load_icon_image(icon_path)
 

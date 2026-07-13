@@ -26,7 +26,13 @@ async def test_proxy_jsonrpc_uses_transport_for_stdio(db_path):
     proxy._get_transport = fake_get_transport  # type: ignore[method-assign]
 
     result = await proxy._proxy_jsonrpc(
-        {"id": 1, "name": "stdio-server", "transport_type": "stdio", "timeout": 12},
+        {
+            "id": 1,
+            "name": "stdio-server",
+            "transport_type": "stdio",
+            "timeout": 12,
+            "approval_state": "approved",
+        },
         "ping",
         {},
     )

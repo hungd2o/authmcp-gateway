@@ -26,10 +26,10 @@ from .process_manager import get_process_manager
 from .store import (
     check_user_mcp_access,
     get_mcp_server,
-    get_virtual_tool_by_name,
     get_tool_mapping,
-    list_virtual_tools,
+    get_virtual_tool_by_name,
     list_mcp_servers,
+    list_virtual_tools,
     update_server_health,
 )
 from .transports import HttpTransport, McpTransport, PipeTransport
@@ -544,8 +544,13 @@ class McpProxy:
         all_tools.extend(virtual_tools)
         return all_tools
 
-    def _list_approved_virtual_tools(self, server_name: Optional[str] = None) -> List[Dict[str, Any]]:
-        tools = list_virtual_tools(self.db_path, enabled_only=True, approved_only=True)
+    def _list_approved_virtual_tools(
+        self, server_name: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        try:
+            tools = list_virtual_tools(self.db_path, enabled_only=True, approved_only=True)
+        except sqlite3.OperationalError:
+            return []
         if server_name:
             normalized = normalize_server_name(server_name)
             tools = [
@@ -560,7 +565,8 @@ class McpProxy:
                 {
                     "name": tool["name"],
                     "description": tool.get("description") or config.get("description"),
-                    "inputSchema": config.get("input_schema") or {"type": "object", "properties": {}},
+                    "inputSchema": config.get("input_schema")
+                    or {"type": "object", "properties": {}},
                     "_meta": {
                         "virtual": True,
                         "approval_state": tool.get("approval_state"),
@@ -666,7 +672,9 @@ class McpProxy:
         """Route tool call to appropriate backend MCP server."""
         virtual_tool = self._get_virtual_tool(tool_name, server_name=server_name)
         if virtual_tool:
-            data = await self._execute_virtual_tool(virtual_tool, arguments or {}, user_id, server_name)
+            data = await self._execute_virtual_tool(
+                virtual_tool, arguments or {}, user_id, server_name
+            )
             server = get_mcp_server(self.db_path, int(virtual_tool["mcp_server_id"])) or {
                 "id": virtual_tool["mcp_server_id"],
                 "name": virtual_tool.get("source_server_name") or "virtual",
@@ -800,8 +808,13 @@ class McpProxy:
         logger.info(f"Tool '{tool_name}' executed on {server['name']}")
         return data, server
 
-    def _get_virtual_tool(self, tool_name: str, server_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        tool = get_virtual_tool_by_name(self.db_path, tool_name)
+    def _get_virtual_tool(
+        self, tool_name: str, server_name: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            tool = get_virtual_tool_by_name(self.db_path, tool_name)
+        except sqlite3.OperationalError:
+            return None
         if not tool:
             return None
         if not approval_is_active(tool.get("approval_state")):
@@ -829,7 +842,9 @@ class McpProxy:
         if not source_server or not approval_is_active(source_server.get("approval_state")):
             raise PermissionError("Virtual tool source server is not approved")
         if user_id and not check_user_mcp_access(self.db_path, user_id, source_server["id"]):
-            raise PermissionError(f"User {user_id} doesn't have access to server {source_server['name']}")
+            raise PermissionError(
+                f"User {user_id} doesn't have access to server {source_server['name']}"
+            )
 
         execution_type = str(virtual_tool.get("execution_type") or "").lower()
         config = deepcopy(virtual_tool.get("config") or {})
@@ -859,9 +874,13 @@ class McpProxy:
             method = str(request_cfg.get("method") or "GET").upper()
             url = str(request_cfg.get("url") or "")
             if not url:
-                raise ToolNotFoundError(f"Virtual tool '{virtual_tool['name']}' has no URL configured")
+                raise ToolNotFoundError(
+                    f"Virtual tool '{virtual_tool['name']}' has no URL configured"
+                )
             payload = arguments or {}
-            async with httpx.AsyncClient(timeout=float(source_server.get("timeout") or self.timeout)) as client:
+            async with httpx.AsyncClient(
+                timeout=float(source_server.get("timeout") or self.timeout)
+            ) as client:
                 if method in {"POST", "PUT", "PATCH"}:
                     resp = await client.request(method, url, json=payload)
                 else:
@@ -875,7 +894,12 @@ class McpProxy:
             return {
                 "jsonrpc": "2.0",
                 "result": {
-                    "content": [{"type": "text", "text": json.dumps(body) if not isinstance(body, str) else body}],
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(body) if not isinstance(body, str) else body,
+                        }
+                    ],
                     "isError": resp.status_code >= 400,
                     "_meta": {
                         "virtual_tool": virtual_tool["name"],

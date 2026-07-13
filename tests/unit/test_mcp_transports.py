@@ -35,6 +35,34 @@ async def test_stdio_transport_send_request_roundtrip():
 
 
 @pytest.mark.asyncio
+async def test_stdio_transport_handles_large_single_line_response():
+    large_value = "x" * 70000
+    transport = StdioTransport(
+        command=sys.executable,
+        command_args=[
+            "-u",
+            "-c",
+            (
+                "import json,sys\n"
+                "payload='x'*70000\n"
+                "for line in sys.stdin:\n"
+                " req=json.loads(line)\n"
+                " out={'jsonrpc':'2.0','id':req.get('id'),'result':{'blob':payload}}\n"
+                " print(json.dumps(out), flush=True)\n"
+            ),
+        ],
+    )
+
+    data = await transport.send_request(
+        {"jsonrpc": "2.0", "id": 1, "method": "ping", "params": {}},
+        timeout=5,
+    )
+
+    assert data["result"]["blob"] == large_value
+    await transport.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.skipif(os.name == "nt", reason="Unix domain socket test")
 async def test_pipe_transport_unix_socket_roundtrip(tmp_path):
     socket_path = str(tmp_path / "mcp.sock")

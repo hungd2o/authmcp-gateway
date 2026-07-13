@@ -1,6 +1,7 @@
 """Tests for user-managed personal access tokens in account portal."""
 
 import json
+from datetime import date, timedelta
 from pathlib import Path
 
 from starlette.testclient import TestClient
@@ -47,7 +48,13 @@ def _csrf_headers(client: TestClient) -> dict:
     return {"X-CSRF-Token": csrf}
 
 
-def test_create_lifetime_personal_access_token_and_use_it(db_path):
+def _date_window(days: int = 30) -> dict:
+    start = date.today()
+    end = start + timedelta(days=days)
+    return {"date_from": start.isoformat(), "date_to": end.isoformat(), "no_expire": False}
+
+
+def test_create_no_expiry_personal_access_token_and_use_it(db_path):
     with _create_test_client(db_path) as client:
         create_user(
             db_path=db_path,
@@ -62,13 +69,14 @@ def test_create_lifetime_personal_access_token_and_use_it(db_path):
 
         created = client.post(
             "/account/pats",
-            json={"name": "CI Service", "lifetime": "lifetime"},
+            json={"name": "CI Service", "no_expire": True},
             headers=_csrf_headers(client),
         )
         assert created.status_code == 201
         body = created.json()
         assert body["name"] == "CI Service"
         assert body["lifetime_minutes"] == 60 * 24 * 365 * 10
+        assert body["no_expire"] is True
         assert body["access_token"]
 
         mcp = client.post("/mcp", **_mcp_initialize(body["access_token"]))
@@ -80,6 +88,7 @@ def test_create_lifetime_personal_access_token_and_use_it(db_path):
         assert len(tokens) == 1
         assert tokens[0]["name"] == "CI Service"
         assert tokens[0]["is_active"] is True
+        assert tokens[0]["no_expire"] is True
 
 
 def test_rotate_and_revoke_personal_access_token_invalidates_old_tokens(db_path):
@@ -96,7 +105,7 @@ def test_rotate_and_revoke_personal_access_token_invalidates_old_tokens(db_path)
 
         created = client.post(
             "/account/pats",
-            json={"name": "Deploy Bot", "lifetime": "very_long"},
+            json={"name": "Deploy Bot", **_date_window(7)},
             headers=_csrf_headers(client),
         )
         assert created.status_code == 201

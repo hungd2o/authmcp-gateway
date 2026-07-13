@@ -1,6 +1,7 @@
 """Tests for admin-managed API key creation and lifecycle."""
 
 import json
+from datetime import date, timedelta
 from pathlib import Path
 
 from starlette.testclient import TestClient
@@ -48,6 +49,12 @@ def _admin_csrf_headers(client: TestClient) -> dict:
     return {"X-CSRF-Token": csrf}
 
 
+def _date_window(days: int = 30) -> dict:
+    start = date.today()
+    end = start + timedelta(days=days)
+    return {"date_from": start.isoformat(), "date_to": end.isoformat(), "no_expire": False}
+
+
 def _login_admin(client: TestClient, db_path: str) -> None:
     create_user(
         db_path=db_path,
@@ -66,19 +73,18 @@ def test_admin_can_create_api_key_and_use_it(db_path):
 
         created = client.post(
             "/admin/api/api-keys",
-            json={"name": "CI Deploy", "lifetime": "long"},
+            json={"name": "CI Deploy", **_date_window(30)},
             headers=_admin_csrf_headers(client),
         )
         assert created.status_code == 201
         body = created.json()
         assert body["name"] == "CI Deploy"
-        assert body["lifetime_minutes"] == 60 * 24 * 90
+        assert body["lifetime_minutes"] == 60 * 24 * 30
         assert body["access_token"]
 
         listed = client.get("/admin/api/api-keys")
         assert listed.status_code == 200
         data = listed.json()
-        assert data["lifetime_options"]["long"] == 60 * 24 * 90
         assert data["current_user_id"] > 0
         assert len(data["tokens"]) == 1
         token = data["tokens"][0]
@@ -86,32 +92,42 @@ def test_admin_can_create_api_key_and_use_it(db_path):
         assert token["name"] == "CI Deploy"
         assert token["username"] == "admin"
         assert token["revoked_at"] is None
+        assert token["can_view_token"] is True
         assert "access_token" not in token
+
+        secret = client.get(f"/admin/api/api-keys/{body['id']}/secret")
+        assert secret.status_code == 200
+        assert secret.json()["access_token"] == body["access_token"]
 
         mcp = client.post("/mcp", **_mcp_initialize(body["access_token"]))
         assert mcp.status_code == 200
 
 
-def test_admin_api_key_create_validates_name_and_lifetime(db_path):
+def test_admin_api_key_create_validates_name_and_dates(db_path):
     with _create_test_client(db_path) as client:
         _login_admin(client, db_path)
         headers = _admin_csrf_headers(client)
 
         short_name = client.post(
             "/admin/api/api-keys",
-            json={"name": "ab", "lifetime": "long"},
+            json={"name": "ab", **_date_window(30)},
             headers=headers,
         )
         assert short_name.status_code == 400
         assert short_name.json()["detail"] == "Token name must be between 3 and 64 characters"
 
-        invalid_lifetime = client.post(
+        invalid_dates = client.post(
             "/admin/api/api-keys",
-            json={"name": "Deploy Bot", "lifetime": "forever"},
+            json={
+                "name": "Deploy Bot",
+                "date_from": date.today().isoformat(),
+                "date_to": date.today().isoformat(),
+                "no_expire": False,
+            },
             headers=headers,
         )
-        assert invalid_lifetime.status_code == 400
-        assert invalid_lifetime.json()["detail"] == "Invalid lifetime option"
+        assert invalid_dates.status_code == 400
+        assert invalid_dates.json()["detail"] == "Date to must be at least 1 day after date from"
 
 
 def test_admin_can_revoke_created_api_key(db_path):
@@ -121,11 +137,12 @@ def test_admin_can_revoke_created_api_key(db_path):
 
         created = client.post(
             "/admin/api/api-keys",
-            json={"name": "Release Bot", "lifetime": "very_long"},
+            json={"name": "Release Bot", "no_expire": True},
             headers=headers,
         )
         assert created.status_code == 201
         created_body = created.json()
+        assert created_body["no_expire"] is True
 
         assert (
             client.post("/mcp", **_mcp_initialize(created_body["access_token"])).status_code == 200

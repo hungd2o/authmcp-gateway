@@ -31,7 +31,7 @@ def is_tray_available() -> bool:
         from PIL import Image  # noqa: F401
 
         return True
-    except ImportError:
+    except Exception:
         return False
 
 

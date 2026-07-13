@@ -179,7 +179,7 @@ def test_start_server_sets_log_level_env(tmp_path, monkeypatch):
 
 
 def test_start_server_interactive_foreground_disables_tray(tmp_path, monkeypatch):
-    """Choosing foreground keeps logs attached even when tray support exists."""
+    """Choosing foreground keeps logs attached without disabling tray mode."""
     monkeypatch.setitem(sys.modules, "uvicorn", MagicMock())
     fake_app_module = MagicMock()
     fake_app_module.app = "APP"
@@ -190,17 +190,19 @@ def test_start_server_interactive_foreground_disables_tray(tmp_path, monkeypatch
     monkeypatch.setattr(cli, "_supports_interactive_start_prompt", lambda: True)
     monkeypatch.setattr(cli, "_prompt_start_mode", lambda _args, _tray_available: "foreground")
     monkeypatch.setattr("authmcp_gateway.tray.is_tray_available", lambda: True)
-    tray_started = {"value": False}
+    tray_started = {"value": False, "whitelist_token": None}
     monkeypatch.setattr(
-        cli, "_start_server_with_tray", lambda *_args: tray_started.__setitem__("value", True)
+        cli,
+        "_start_server_with_tray",
+        lambda _app, _args, whitelist_token=None: tray_started.update(
+            {"value": True, "whitelist_token": whitelist_token}
+        ),
     )
 
     cli.start_server(_start_args(tmp_path, no_tray=False))
 
-    sys.modules["uvicorn"].run.assert_called_once_with(
-        "APP", host="0.0.0.0", port=8000, log_level="info", reload=False
-    )
-    assert tray_started["value"] is False
+    sys.modules["uvicorn"].run.assert_not_called()
+    assert tray_started == {"value": True, "whitelist_token": None}
 
 
 def test_start_server_background_mode_relaunches_and_returns(tmp_path, monkeypatch):
@@ -293,6 +295,20 @@ def test_background_log_only_mode_starts_new_session_on_non_windows(tmp_path, mo
         cli._should_start_new_session(_start_args(tmp_path, no_tray=False), tray_available=False)
         is True
     )
+
+
+def test_windows_background_creationflags_include_breakaway_from_job(monkeypatch):
+    """Windows detached launch includes breakaway flag to survive parent job/process exit."""
+    monkeypatch.setattr(cli.os, "name", "nt")
+    monkeypatch.setattr(cli.subprocess, "DETACHED_PROCESS", 0x00000008, raising=False)
+    monkeypatch.setattr(cli.subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200, raising=False)
+    monkeypatch.setattr(cli.subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000, raising=False)
+
+    flags = cli._windows_background_creationflags()
+
+    assert flags & cli.subprocess.DETACHED_PROCESS
+    assert flags & cli.subprocess.CREATE_NEW_PROCESS_GROUP
+    assert flags & cli.subprocess.CREATE_BREAKAWAY_FROM_JOB
 
 
 # ---------------------------------------------------------------------------

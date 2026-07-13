@@ -42,7 +42,9 @@ def test_invalid_admin_cookie_redirect_clears_cookie(db_path, monkeypatch):
     monkeypatch.setattr("authmcp_gateway.admin_auth.is_setup_required", lambda _: False)
 
     with TestClient(_build_app(db_path)) as client:
-        response = client.get("/admin", cookies={"admin_token": "invalid.jwt.token"}, follow_redirects=False)
+        response = client.get(
+            "/admin", cookies={"admin_token": "invalid.jwt.token"}, follow_redirects=False
+        )
 
     assert response.status_code == 302
     assert response.headers["location"] == "/admin/login"

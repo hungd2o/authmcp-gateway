@@ -123,7 +123,9 @@ def _normalize_transport_payload(data: dict) -> dict:
         else:
             try:
                 parsed = json.loads(raw)
-                data["command_args"] = [str(part) for part in parsed] if isinstance(parsed, list) else []
+                data["command_args"] = (
+                    [str(part) for part in parsed] if isinstance(parsed, list) else []
+                )
             except json.JSONDecodeError:
                 try:
                     data["command_args"] = shlex.split(raw)

@@ -744,6 +744,23 @@ def get_user_personal_access_token(
         return dict(row) if row else None
 
 
+def get_personal_access_token_by_id(db_path: str, token_id: int) -> Optional[Dict[str, Any]]:
+    """Get a specific personal access token regardless of owning user."""
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, user_id, token_name, token_jti, expires_at, lifetime_minutes,
+                   last_used_at, last_used_ip, revoked_at, created_at, updated_at
+            FROM user_personal_access_tokens
+            WHERE id = ?
+            """,
+            (token_id,),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
 def get_user_personal_access_token_by_jti(
     db_path: str, user_id: int, token_jti: str
 ) -> Optional[Dict[str, Any]]:

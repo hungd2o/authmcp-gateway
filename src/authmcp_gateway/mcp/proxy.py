@@ -11,6 +11,7 @@ import os
 import sqlite3
 import time
 import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
@@ -25,11 +26,14 @@ from .process_manager import get_process_manager
 from .store import (
     check_user_mcp_access,
     get_mcp_server,
+    get_virtual_tool_by_name,
     get_tool_mapping,
+    list_virtual_tools,
     list_mcp_servers,
     update_server_health,
 )
 from .transports import HttpTransport, McpTransport, PipeTransport
+from .trust import approval_is_active
 
 logger = logging.getLogger(__name__)
 _MCP_DEBUG = os.getenv("MCP_DEBUG", "").lower() in ("1", "true", "yes", "on")
@@ -232,6 +236,9 @@ class McpProxy:
         """
         server_name = server["name"]
         server_id = server["id"]
+        if not approval_is_active(server.get("approval_state")):
+            reason = server.get("blocked_reason") or "Server is pending whitelist approval"
+            raise PermissionError(reason)
         headers = self._get_auth_headers(server)
         transport_type = self._transport_type(server)
 
@@ -375,6 +382,7 @@ class McpProxy:
     ) -> List[Dict[str, Any]]:
         """Get filtered list of enabled MCP servers."""
         servers = list_mcp_servers(self.db_path, enabled_only=True, user_id=user_id)
+        servers = [s for s in servers if approval_is_active(s.get("approval_state"))]
         if server_name:
             normalized = normalize_server_name(server_name)
             servers = [s for s in servers if normalize_server_name(s["name"]) == normalized]
@@ -532,7 +540,37 @@ class McpProxy:
                 )
 
         logger.info(f"Aggregated {len(all_tools)} tools from {len(servers)} servers")
+        virtual_tools = self._list_approved_virtual_tools(server_name=server_name)
+        all_tools.extend(virtual_tools)
         return all_tools
+
+    def _list_approved_virtual_tools(self, server_name: Optional[str] = None) -> List[Dict[str, Any]]:
+        tools = list_virtual_tools(self.db_path, enabled_only=True, approved_only=True)
+        if server_name:
+            normalized = normalize_server_name(server_name)
+            tools = [
+                t
+                for t in tools
+                if normalize_server_name(str(t.get("source_server_name") or "")) == normalized
+            ]
+        formatted: List[Dict[str, Any]] = []
+        for tool in tools:
+            config = tool.get("config") or {}
+            formatted.append(
+                {
+                    "name": tool["name"],
+                    "description": tool.get("description") or config.get("description"),
+                    "inputSchema": config.get("input_schema") or {"type": "object", "properties": {}},
+                    "_meta": {
+                        "virtual": True,
+                        "approval_state": tool.get("approval_state"),
+                        "source_server_name": tool.get("source_server_name"),
+                        "source_server_id": tool.get("mcp_server_id"),
+                        "execution_type": tool.get("execution_type"),
+                    },
+                }
+            )
+        return formatted
 
     def _client_tool_name(
         self, server: Dict[str, Any], backend_tool_name: str, *, aggregate_mode: bool
@@ -626,6 +664,15 @@ class McpProxy:
         server_name: Optional[str] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Route tool call to appropriate backend MCP server."""
+        virtual_tool = self._get_virtual_tool(tool_name, server_name=server_name)
+        if virtual_tool:
+            data = await self._execute_virtual_tool(virtual_tool, arguments or {}, user_id, server_name)
+            server = get_mcp_server(self.db_path, int(virtual_tool["mcp_server_id"])) or {
+                "id": virtual_tool["mcp_server_id"],
+                "name": virtual_tool.get("source_server_name") or "virtual",
+            }
+            return data, server
+
         server = await self._route_tool_to_server(tool_name, user_id, server_name)
 
         if not server:
@@ -752,6 +799,93 @@ class McpProxy:
 
         logger.info(f"Tool '{tool_name}' executed on {server['name']}")
         return data, server
+
+    def _get_virtual_tool(self, tool_name: str, server_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        tool = get_virtual_tool_by_name(self.db_path, tool_name)
+        if not tool:
+            return None
+        if not approval_is_active(tool.get("approval_state")):
+            return None
+        if not tool.get("enabled"):
+            return None
+        if server_name:
+            source_name = str(tool.get("source_server_name") or "")
+            if normalize_server_name(source_name) != normalize_server_name(server_name):
+                return None
+        return tool
+
+    async def _execute_virtual_tool(
+        self,
+        virtual_tool: Dict[str, Any],
+        arguments: Dict[str, Any],
+        user_id: Optional[int],
+        server_name: Optional[str],
+    ) -> Dict[str, Any]:
+        if not approval_is_active(virtual_tool.get("approval_state")):
+            raise PermissionError(
+                virtual_tool.get("blocked_reason") or "Virtual tool is pending whitelist approval"
+            )
+        source_server = get_mcp_server(self.db_path, int(virtual_tool["mcp_server_id"]))
+        if not source_server or not approval_is_active(source_server.get("approval_state")):
+            raise PermissionError("Virtual tool source server is not approved")
+        if user_id and not check_user_mcp_access(self.db_path, user_id, source_server["id"]):
+            raise PermissionError(f"User {user_id} doesn't have access to server {source_server['name']}")
+
+        execution_type = str(virtual_tool.get("execution_type") or "").lower()
+        config = deepcopy(virtual_tool.get("config") or {})
+        if execution_type == "mcp_wrapper":
+            target_tool = config.get("target_tool")
+            if not target_tool:
+                raise ToolNotFoundError(f"Virtual tool '{virtual_tool['name']}' is misconfigured")
+            if str(target_tool) == str(virtual_tool.get("name")):
+                raise ToolNotFoundError(f"Virtual tool '{virtual_tool['name']}' cannot wrap itself")
+            merged_args = {}
+            merged_args.update(config.get("static_arguments") or {})
+            merged_args.update(arguments or {})
+            # Route wrappers to native MCP tools only.
+            data, _ = await self.call_tool(
+                tool_name=str(target_tool),
+                arguments=merged_args,
+                user_id=user_id,
+                server_name=server_name,
+            )
+            if "result" in data:
+                data["result"].setdefault("_meta", {})
+                data["result"]["_meta"]["virtual_tool"] = virtual_tool["name"]
+            return data
+
+        if execution_type == "http_call":
+            request_cfg = config.get("request") or {}
+            method = str(request_cfg.get("method") or "GET").upper()
+            url = str(request_cfg.get("url") or "")
+            if not url:
+                raise ToolNotFoundError(f"Virtual tool '{virtual_tool['name']}' has no URL configured")
+            payload = arguments or {}
+            async with httpx.AsyncClient(timeout=float(source_server.get("timeout") or self.timeout)) as client:
+                if method in {"POST", "PUT", "PATCH"}:
+                    resp = await client.request(method, url, json=payload)
+                else:
+                    resp = await client.request(method, url, params=payload)
+            content_type = resp.headers.get("content-type", "")
+            body: Any
+            if "application/json" in content_type:
+                body = resp.json()
+            else:
+                body = resp.text
+            return {
+                "jsonrpc": "2.0",
+                "result": {
+                    "content": [{"type": "text", "text": json.dumps(body) if not isinstance(body, str) else body}],
+                    "isError": resp.status_code >= 400,
+                    "_meta": {
+                        "virtual_tool": virtual_tool["name"],
+                        "execution_type": "http_call",
+                        "status_code": resp.status_code,
+                    },
+                },
+            }
+
+        raise ToolNotFoundError(f"Unsupported virtual tool execution_type '{execution_type}'")
 
     async def _route_tool_to_server(
         self, tool_name: str, user_id: Optional[int] = None, server_name: Optional[str] = None

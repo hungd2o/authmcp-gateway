@@ -218,6 +218,8 @@ class AppConfig:
     mcp_log_db_max_mb: int = 200
     mcp_log_db_max_rows: int = 200000
     mcp_log_db_check_interval_seconds: int = 300
+    whitelist_token: Optional[str] = None
+    whitelist_token_generated: bool = False
 
     @property
     def retrieval_config_ttl(self) -> float:
@@ -359,6 +361,7 @@ def load_config() -> AppConfig:
         mcp_log_db_max_mb=_env_int("MCP_LOG_DB_MAX_MB", 200),
         mcp_log_db_max_rows=_env_int("MCP_LOG_DB_MAX_ROWS", 200000),
         mcp_log_db_check_interval_seconds=_env_int("MCP_LOG_DB_CHECK_INTERVAL_SECONDS", 300),
+        whitelist_token=os.getenv("MCP_WHITELIST_TOKEN", "").strip() or None,
     )
 
     return app_config

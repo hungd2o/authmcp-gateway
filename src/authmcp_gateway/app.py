@@ -30,6 +30,7 @@ from .mcp.health import initialize_health_checker
 from .mcp.process_manager import initialize_process_manager
 from .mcp.proxy import McpProxy
 from .mcp.store import init_mcp_database, list_mcp_servers
+from .mcp.trust import ensure_whitelist_token
 from .mcp.token_manager import initialize_token_manager
 from .mcp.token_refresher import initialize_token_refresher
 from .middleware import (
@@ -440,7 +441,10 @@ def create_app(config=None):
         try:
             servers = list_mcp_servers(config.auth.sqlite_path, enabled_only=True)
             for server in servers:
-                if (server.get("transport_type") or "http").lower() == "stdio":
+                if (
+                    (server.get("transport_type") or "http").lower() == "stdio"
+                    and server.get("approval_state") == "approved"
+                ):
                     await process_manager.start_server(server["id"], server)
             logger.info("✓ STDIO process manager initialized")
         except Exception as e:
@@ -553,6 +557,11 @@ def create_app(config=None):
             Route("/admin", admin_routes.admin_dashboard, methods=["GET"]),
             Route("/admin/users", admin_routes.admin_users, methods=["GET"]),
             Route("/admin/mcp-servers", admin_routes.admin_mcp_servers, methods=["GET"]),
+            Route(
+                "/{token:str}/whitelist",
+                admin_routes.hidden_whitelist_page,
+                methods=["GET"],
+            ),
             Route("/admin/mcp-tokens", admin_routes.admin_mcp_tokens, methods=["GET"]),
             Route("/admin/settings", admin_routes.admin_settings, methods=["GET"]),
             Route("/admin/logs", admin_routes.admin_logs, methods=["GET"]),
@@ -646,6 +655,21 @@ def create_app(config=None):
             Route(
                 "/admin/api/mcp-servers/{server_id:int}/process/{action:str}",
                 admin_routes.api_mcp_server_process_action,
+                methods=["POST"],
+            ),
+            Route(
+                "/{token:str}/api/whitelist/pending",
+                admin_routes.api_whitelist_pending,
+                methods=["GET"],
+            ),
+            Route(
+                "/{token:str}/api/whitelist/servers/{server_id:int}",
+                admin_routes.api_whitelist_servers_action,
+                methods=["POST"],
+            ),
+            Route(
+                "/{token:str}/api/whitelist/virtual-tools/{tool_id:int}",
+                admin_routes.api_whitelist_virtual_tools_action,
                 methods=["POST"],
             ),
             Route(
@@ -845,3 +869,7 @@ app = create_app()
 
 # Export app for uvicorn
 __all__ = ["app", "create_app"]
+    whitelist_token, generated = ensure_whitelist_token(config.whitelist_token)
+    config.whitelist_token = whitelist_token
+    config.whitelist_token_generated = generated
+    os.environ["MCP_WHITELIST_TOKEN"] = whitelist_token

@@ -187,6 +187,7 @@ class HealthChecker:
             List of health check results
         """
         servers = list_mcp_servers(self.db_path, enabled_only=True)
+        servers = [s for s in servers if s.get("approval_state") == "approved"]
 
         if not servers:
             logger.debug("No enabled servers to check")
@@ -220,6 +221,17 @@ class HealthChecker:
         server_name = server["name"]
         server_url = server["url"]
         transport_type = (server.get("transport_type") or "http").lower()
+        if server.get("approval_state") != "approved":
+            return {
+                "server_id": server_id,
+                "server_name": server_name,
+                "status": "offline",
+                "response_time_ms": None,
+                "tools_count": None,
+                "error": server.get("blocked_reason")
+                or "Server is pending whitelist approval",
+                "checked_at": datetime.now(timezone.utc),
+            }
 
         if transport_type != "http":
             return await self._check_non_http_server(server)

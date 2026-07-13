@@ -186,7 +186,16 @@ Starting server...
 
     # Import app here to ensure environment is loaded first
     from authmcp_gateway.app import app
+    from authmcp_gateway.config import get_config
     from authmcp_gateway.tray import is_tray_available
+
+    runtime_config = get_config()
+    if runtime_config.whitelist_token_generated and runtime_config.whitelist_token:
+        print(
+            "⚠ MCP_WHITELIST_TOKEN was not set. Generated temporary token for this run:\n"
+            f"  {runtime_config.whitelist_token}\n"
+            f"  Hidden whitelist URL: {server_url}/{runtime_config.whitelist_token}/whitelist\n"
+        )
 
     tray_available = is_tray_available()
 
@@ -197,7 +206,7 @@ Starting server...
     use_tray = (not no_tray) and tray_available
 
     if use_tray:
-        _start_server_with_tray(app, args)
+        _start_server_with_tray(app, args, runtime_config.whitelist_token)
     else:
         if not no_tray and not tray_available:
             print(
@@ -357,7 +366,7 @@ def _windows_background_creationflags() -> int:
     return detached_process | new_process_group
 
 
-def _start_server_with_tray(app, args) -> None:
+def _start_server_with_tray(app, args, whitelist_token: str | None = None) -> None:
     """Run uvicorn in a background thread and the system tray on the main thread."""
     import threading
 
@@ -393,7 +402,13 @@ def _start_server_with_tray(app, args) -> None:
     icon_path = str(args.tray_icon) if getattr(args, "tray_icon", None) else None
 
     # run_tray blocks until the user clicks Exit
-    run_tray(port=args.port, host=args.host, server=server, icon_path=icon_path)
+    run_tray(
+        port=args.port,
+        host=args.host,
+        server=server,
+        icon_path=icon_path,
+        whitelist_token=whitelist_token,
+    )
 
     # Ensure uvicorn has stopped after the tray exits
     server.should_exit = True

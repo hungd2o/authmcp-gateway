@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import shlex
 from datetime import datetime
 from io import StringIO
@@ -27,6 +28,10 @@ __all__ = [
     "api_test_mcp_server",
     "api_get_mcp_server_tools",
     "api_mcp_server_process_action",
+    "hidden_whitelist_page",
+    "api_whitelist_pending",
+    "api_whitelist_servers_action",
+    "api_whitelist_virtual_tools_action",
 ]
 
 
@@ -100,7 +105,7 @@ def _schedule_health_check(db_path: str, server_id: int) -> None:
         try:
             health_checker = get_health_checker()
             server = get_mcp_server(db_path, server_id)
-            if server:
+            if server and server.get("approval_state") == "approved":
                 await health_checker.check_server(server)
         except Exception as e:
             logger.debug(f"Health check skipped for server {server_id}: {e}")
@@ -264,7 +269,7 @@ async def api_mcp_servers_token_status(request: Request) -> JSONResponse:
 @api_error_handler
 async def api_create_mcp_server(request: Request) -> JSONResponse:
     """API: Create new MCP server."""
-    from authmcp_gateway.mcp.store import create_mcp_server
+    from authmcp_gateway.mcp.store import create_mcp_server, get_mcp_server
 
     _config = get_config(request)
     data = await request.json()
@@ -298,9 +303,17 @@ async def api_create_mcp_server(request: Request) -> JSONResponse:
         env_vars=data.get("env_vars"),
     )
 
-    _schedule_health_check(_config.auth.sqlite_path, server_id)
+    server = get_mcp_server(_config.auth.sqlite_path, server_id)
+    if server and server.get("approval_state") == "approved":
+        _schedule_health_check(_config.auth.sqlite_path, server_id)
 
-    return JSONResponse({"id": server_id, "message": "Server created successfully"})
+    return JSONResponse(
+        {
+            "id": server_id,
+            "message": "Server created successfully",
+            "approval_state": (server or {}).get("approval_state", "pending"),
+        }
+    )
 
 
 @api_error_handler
@@ -359,7 +372,9 @@ async def api_update_mcp_server(request: Request) -> JSONResponse:
         proxy = McpProxy(_config.auth.sqlite_path)
         proxy.invalidate_cache(server_id)
 
-        _schedule_health_check(_config.auth.sqlite_path, server_id)
+        server = get_mcp_server(_config.auth.sqlite_path, server_id)
+        if server and server.get("approval_state") == "approved":
+            _schedule_health_check(_config.auth.sqlite_path, server_id)
 
         return JSONResponse({"message": "Server updated successfully"})
     else:
@@ -378,6 +393,14 @@ async def api_test_mcp_server(request: Request) -> JSONResponse:
 
     if not server:
         return JSONResponse({"error": "Server not found"}, status_code=404)
+    if server.get("approval_state") != "approved":
+        return JSONResponse(
+            {
+                "error": server.get("blocked_reason")
+                or "Server is pending whitelist approval and cannot be tested"
+            },
+            status_code=403,
+        )
 
     # Perform health check
     health_checker = HealthChecker(_config.auth.sqlite_path)
@@ -394,7 +417,7 @@ async def api_test_mcp_server(request: Request) -> JSONResponse:
 async def api_get_mcp_server_tools(request: Request) -> JSONResponse:
     """API: Get tools from MCP server."""
     from authmcp_gateway.mcp.proxy import McpProxy
-    from authmcp_gateway.mcp.store import get_mcp_server
+    from authmcp_gateway.mcp.store import get_mcp_server, list_virtual_tools
 
     _config = get_config(request)
     server_id = int(request.path_params["server_id"])
@@ -402,15 +425,49 @@ async def api_get_mcp_server_tools(request: Request) -> JSONResponse:
 
     if not server:
         return JSONResponse({"error": "Server not found"}, status_code=404)
+    if server.get("approval_state") != "approved":
+        return JSONResponse(
+            {
+                "error": server.get("blocked_reason")
+                or "Server is pending whitelist approval and tools cannot be listed"
+            },
+            status_code=403,
+        )
 
     # Fetch tools from server
     proxy = McpProxy(_config.auth.sqlite_path)
     tools = await proxy._fetch_tools_from_server(server)
+    virtual_tools = list_virtual_tools(
+        _config.auth.sqlite_path,
+        mcp_server_id=server_id,
+        enabled_only=True,
+    )
 
-    # Extract tool names
-    tool_names = [tool.get("name") for tool in tools if "name" in tool]
+    result_tools = []
+    for tool in tools:
+        result_tools.append(
+            {
+                "name": tool.get("name"),
+                "description": tool.get("description"),
+                "input_schema": tool.get("inputSchema") or {},
+                "source_server": server.get("name"),
+                "approval_state": "approved",
+                "tool_type": "native",
+            }
+        )
+    for tool in virtual_tools:
+        result_tools.append(
+            {
+                "name": tool.get("name"),
+                "description": tool.get("description"),
+                "input_schema": (tool.get("config") or {}).get("input_schema", {}),
+                "source_server": tool.get("source_server_name") or server.get("name"),
+                "approval_state": tool.get("approval_state", "pending"),
+                "tool_type": "virtual",
+            }
+        )
 
-    return JSONResponse(tool_names)
+    return JSONResponse({"server": server, "tools": result_tools})
 
 
 @api_error_handler
@@ -426,6 +483,14 @@ async def api_mcp_server_process_action(request: Request) -> JSONResponse:
     server = get_mcp_server(_config.auth.sqlite_path, server_id)
     if not server:
         return JSONResponse({"error": "Server not found"}, status_code=404)
+    if server.get("approval_state") != "approved":
+        return JSONResponse(
+            {
+                "error": server.get("blocked_reason")
+                or "Server is pending whitelist approval and process control is blocked"
+            },
+            status_code=403,
+        )
 
     if (server.get("transport_type") or "http").lower() != "stdio":
         return JSONResponse(
@@ -445,3 +510,92 @@ async def api_mcp_server_process_action(request: Request) -> JSONResponse:
     return JSONResponse(
         {"message": f"Process {action} requested", "status": process_manager.get_status(server_id)}
     )
+
+
+async def hidden_whitelist_page(request: Request) -> HTMLResponse:
+    expected_token = (os.getenv("MCP_WHITELIST_TOKEN") or "").strip()
+    token = request.path_params.get("token", "")
+    if not expected_token or token != expected_token:
+        return HTMLResponse("Not found", status_code=404)
+    return render_template("admin/whitelist.html", token=token, active_page="mcp-servers")
+
+
+@api_error_handler
+async def api_whitelist_pending(request: Request) -> JSONResponse:
+    from authmcp_gateway.mcp.store import list_pending_mcp_servers, list_pending_virtual_tools
+
+    expected_token = (os.getenv("MCP_WHITELIST_TOKEN") or "").strip()
+    token = request.path_params.get("token", "")
+    if not expected_token or token != expected_token:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+
+    db_path = get_config(request).auth.sqlite_path
+    return JSONResponse(
+        {
+            "servers": list_pending_mcp_servers(db_path),
+            "virtual_tools": list_pending_virtual_tools(db_path),
+        }
+    )
+
+
+@api_error_handler
+async def api_whitelist_servers_action(request: Request) -> JSONResponse:
+    from authmcp_gateway.mcp.store import update_server_approval
+
+    expected_token = (os.getenv("MCP_WHITELIST_TOKEN") or "").strip()
+    token = request.path_params.get("token", "")
+    if not expected_token or token != expected_token:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+
+    server_id = int(request.path_params["server_id"])
+    payload = await request.json()
+    action = (payload.get("action") or "").lower()
+    reason = payload.get("reason")
+    allowlist_policy = payload.get("allowlist_policy")
+    actor = payload.get("actor") or "whitelist-admin"
+    approval_state = {"approve": "approved", "reject": "rejected", "revoke": "revoked"}.get(action)
+    if not approval_state:
+        return JSONResponse({"error": "Invalid action"}, status_code=400)
+
+    success = update_server_approval(
+        get_config(request).auth.sqlite_path,
+        server_id=server_id,
+        approval_state=approval_state,
+        actor=actor,
+        blocked_reason=reason,
+        allowlist_policy=allowlist_policy,
+    )
+    if not success:
+        return JSONResponse(
+            {"error": "Server not found or does not match allowlist policy"},
+            status_code=400,
+        )
+    return JSONResponse({"message": f"Server {approval_state}"})
+
+
+@api_error_handler
+async def api_whitelist_virtual_tools_action(request: Request) -> JSONResponse:
+    from authmcp_gateway.mcp.store import update_virtual_tool_approval
+
+    expected_token = (os.getenv("MCP_WHITELIST_TOKEN") or "").strip()
+    token = request.path_params.get("token", "")
+    if not expected_token or token != expected_token:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+
+    tool_id = int(request.path_params["tool_id"])
+    payload = await request.json()
+    action = (payload.get("action") or "").lower()
+    reason = payload.get("reason")
+    actor = payload.get("actor") or "whitelist-admin"
+    approval_state = {"approve": "approved", "reject": "rejected", "revoke": "revoked"}.get(action)
+    if not approval_state:
+        return JSONResponse({"error": "Invalid action"}, status_code=400)
+    if not update_virtual_tool_approval(
+        get_config(request).auth.sqlite_path,
+        tool_id=tool_id,
+        approval_state=approval_state,
+        actor=actor,
+        blocked_reason=reason,
+    ):
+        return JSONResponse({"error": "Virtual tool not found"}, status_code=404)
+    return JSONResponse({"message": f"Virtual tool {approval_state}"})

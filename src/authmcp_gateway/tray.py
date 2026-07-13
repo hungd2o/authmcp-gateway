@@ -84,6 +84,7 @@ def run_tray(
     host: str = "0.0.0.0",
     server: "uvicorn.Server | None" = None,
     icon_path: str | None = None,
+    whitelist_token: str | None = None,
 ) -> None:
     """Start the system tray icon and block until the user clicks Exit.
 
@@ -113,11 +114,16 @@ def run_tray(
 
     display_host = "localhost" if host in ("0.0.0.0", "") else host
     dashboard_url = f"http://{display_host}:{port}"
+    whitelist_url = f"http://{display_host}:{port}/{whitelist_token}/whitelist" if whitelist_token else ""
 
     icon_image = _load_icon_image(icon_path)
 
     def open_dashboard(_icon: pystray.Icon, _item: pystray.MenuItem) -> None:
         webbrowser.open(dashboard_url)
+
+    def open_whitelist(_icon: pystray.Icon, _item: pystray.MenuItem) -> None:
+        if whitelist_url:
+            webbrowser.open(whitelist_url)
 
     def on_exit(_icon: pystray.Icon, _item: pystray.MenuItem) -> None:
         if server is not None:
@@ -132,6 +138,7 @@ def run_tray(
         ),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Open Dashboard", open_dashboard),
+        pystray.MenuItem("Open Whitelist", open_whitelist, enabled=bool(whitelist_token)),
         pystray.MenuItem("Exit", on_exit),
     )
 

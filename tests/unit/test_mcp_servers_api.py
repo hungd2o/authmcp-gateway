@@ -1,8 +1,13 @@
 """Tests for MCP server API payload normalization."""
 
-import pytest
+import json
 
+import pytest
+from starlette.requests import Request
+
+from authmcp_gateway.admin import mcp_servers_api
 from authmcp_gateway.admin.mcp_servers_api import _normalize_transport_payload
+from authmcp_gateway.mcp import store
 
 
 def _base_payload(command_args=None, **overrides):
@@ -82,3 +87,99 @@ def test_normalize_env_vars_preserves_hash_inside_quoted_value():
 def test_normalize_env_vars_rejects_invalid_non_assignment_lines():
     with pytest.raises(ValueError, match="Invalid env_vars line"):
         _normalize_transport_payload(_base_payload(env_vars="NOT_AN_ASSIGNMENT"))
+
+
+def test_create_server_defaults_to_pending_and_high_risk_for_stdio(db_path):
+    store.init_mcp_database(db_path)
+    server_id = store.create_mcp_server(
+        db_path=db_path,
+        name="stdio-risk",
+        url="",
+        transport_type="stdio",
+        command="python",
+    )
+    server = store.get_mcp_server(db_path, server_id)
+    assert server["approval_state"] == "pending"
+    assert server["risk_level"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_api_test_mcp_server_blocks_unapproved(monkeypatch):
+    class DummyAuth:
+        sqlite_path = "/tmp/unused.db"
+
+    class DummyConfig:
+        auth = DummyAuth()
+
+    async def _receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/admin/api/mcp-servers/1/test",
+        "headers": [],
+        "query_string": b"",
+        "path_params": {"server_id": "1"},
+    }
+    request = Request(scope, _receive)
+    monkeypatch.setattr(mcp_servers_api, "get_config", lambda _req: DummyConfig())
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.store.get_mcp_server",
+        lambda _db, _sid: {"id": 1, "approval_state": "pending", "blocked_reason": "pending"},
+    )
+    response = await mcp_servers_api.api_test_mcp_server(request)
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_tools_api_returns_metadata_payload(monkeypatch):
+    class DummyAuth:
+        sqlite_path = "/tmp/unused.db"
+
+    class DummyConfig:
+        auth = DummyAuth()
+
+    async def _receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/admin/api/mcp-servers/2/tools",
+        "headers": [],
+        "query_string": b"",
+        "path_params": {"server_id": "2"},
+    }
+    request = Request(scope, _receive)
+    monkeypatch.setattr(mcp_servers_api, "get_config", lambda _req: DummyConfig())
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.store.get_mcp_server",
+        lambda _db, _sid: {"id": 2, "name": "srv", "approval_state": "approved"},
+    )
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.store.list_virtual_tools",
+        lambda *_args, **_kwargs: [
+            {
+                "name": "virt",
+                "description": "v",
+                "config": {"input_schema": {"type": "object"}},
+                "approval_state": "approved",
+                "source_server_name": "srv",
+            }
+        ],
+    )
+
+    class FakeProxy:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def _fetch_tools_from_server(self, _server):
+            return [{"name": "native", "description": "n", "inputSchema": {"type": "object"}}]
+
+    monkeypatch.setattr("authmcp_gateway.mcp.proxy.McpProxy", FakeProxy)
+    response = await mcp_servers_api.api_get_mcp_server_tools(request)
+    assert response.status_code == 200
+    payload = json.loads(response.body.decode("utf-8"))
+    assert len(payload["tools"]) == 2
+    assert {tool["tool_type"] for tool in payload["tools"]} == {"native", "virtual"}

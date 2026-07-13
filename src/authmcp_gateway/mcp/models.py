@@ -1,9 +1,9 @@
 """Pydantic models for MCP server management."""
 
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class McpServerBase(BaseModel):
@@ -11,9 +11,26 @@ class McpServerBase(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
-    url: str = Field(..., description="Backend MCP server URL (e.g., http://rag-mcp:8001/mcp)")
+    url: Optional[str] = Field(
+        None, description="Backend MCP server URL (e.g., http://rag-mcp:8001/mcp)"
+    )
     tool_prefix: Optional[str] = Field(
         None, description="Tool prefix for routing (e.g., 'rag_', 'ha_')"
+    )
+    transport_type: Literal["http", "stdio", "pipe"] = Field(
+        "http", description="Backend transport type"
+    )
+    command: Optional[str] = Field(None, description="Command to execute for STDIO transport")
+    command_args: Optional[List[str]] = Field(
+        default=None, description="Command arguments for STDIO transport"
+    )
+    pipe_path: Optional[str] = Field(None, description="Pipe/socket path for pipe transport")
+    expose_port: Optional[int] = Field(
+        None, ge=1, le=65535, description="Optional HTTP bridge port"
+    )
+    working_dir: Optional[str] = Field(None, description="Working directory for STDIO process")
+    env_vars: Optional[Dict[str, str]] = Field(
+        default=None, description="Environment variables for STDIO process"
     )
 
     # Status
@@ -39,6 +56,17 @@ class McpServerBase(BaseModel):
         "prefix", description="How to route tools to this server"
     )
 
+    @model_validator(mode="after")
+    def validate_transport_config(self):
+        """Validate required fields per transport type."""
+        if self.transport_type == "http" and not self.url:
+            raise ValueError("url is required when transport_type is 'http'")
+        if self.transport_type == "stdio" and not self.command:
+            raise ValueError("command is required when transport_type is 'stdio'")
+        if self.transport_type == "pipe" and not self.pipe_path:
+            raise ValueError("pipe_path is required when transport_type is 'pipe'")
+        return self
+
 
 class McpServerCreate(McpServerBase):
     """Create MCP server request."""
@@ -61,6 +89,13 @@ class McpServerUpdate(BaseModel):
     token_expires_at: Optional[datetime] = None
     refresh_endpoint: Optional[str] = None
     routing_strategy: Optional[Literal["prefix", "explicit", "auto"]] = None
+    transport_type: Optional[Literal["http", "stdio", "pipe"]] = None
+    command: Optional[str] = None
+    command_args: Optional[List[str]] = None
+    pipe_path: Optional[str] = None
+    expose_port: Optional[int] = Field(default=None, ge=1, le=65535)
+    working_dir: Optional[str] = None
+    env_vars: Optional[Dict[str, str]] = None
 
 
 class McpServerResponse(McpServerBase):
@@ -72,6 +107,7 @@ class McpServerResponse(McpServerBase):
     last_error: Optional[str] = None
     tools_count: int = 0
     token_last_refreshed: Optional[datetime] = None  # NEW
+    process_status: Literal["running", "stopped", "error", "n/a"] = "n/a"
     created_at: datetime
     updated_at: datetime
 

@@ -1,5 +1,6 @@
 """Database operations for MCP servers."""
 
+import json
 import logging
 import sqlite3
 from datetime import datetime, timezone
@@ -19,6 +20,17 @@ def _decrypt_server_dict(server: Dict[str, Any]) -> Dict[str, Any]:
     """
     if server.get("auth_token"):
         server["auth_token"] = decrypt_token_safe(server["auth_token"])
+    if isinstance(server.get("command_args"), str):
+        try:
+            server["command_args"] = json.loads(server["command_args"])
+        except json.JSONDecodeError:
+            server["command_args"] = []
+    if isinstance(server.get("env_vars"), str):
+        try:
+            parsed_env = json.loads(server["env_vars"])
+            server["env_vars"] = parsed_env if isinstance(parsed_env, dict) else {}
+        except json.JSONDecodeError:
+            server["env_vars"] = {}
     return server
 
 
@@ -60,7 +72,14 @@ def init_mcp_database(db_path: str) -> None:
                 token_expires_at TIMESTAMP,
                 token_last_refreshed TIMESTAMP,
                 refresh_endpoint TEXT DEFAULT '/oauth/token',
-                timeout INTEGER DEFAULT NULL
+                timeout INTEGER DEFAULT NULL,
+                transport_type TEXT DEFAULT 'http',
+                command TEXT,
+                command_args TEXT,
+                pipe_path TEXT,
+                expose_port INTEGER,
+                working_dir TEXT,
+                env_vars TEXT
             )
         """)
 
@@ -132,6 +151,23 @@ def init_mcp_database(db_path: str) -> None:
         except sqlite3.OperationalError:
             pass  # Column already exists
 
+        # Multi-transport columns (migration for existing DBs)
+        transport_columns = [
+            ("transport_type", "TEXT DEFAULT 'http'"),
+            ("command", "TEXT"),
+            ("command_args", "TEXT"),
+            ("pipe_path", "TEXT"),
+            ("expose_port", "INTEGER"),
+            ("working_dir", "TEXT"),
+            ("env_vars", "TEXT"),
+        ]
+        for column_name, column_def in transport_columns:
+            try:
+                cursor.execute(f"ALTER TABLE mcp_servers ADD COLUMN {column_name} {column_def}")
+                logger.info(f"Added {column_name} column to mcp_servers")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
         # Create indexes for performance
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_mcp_servers_enabled ON mcp_servers(enabled)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_mcp_servers_status ON mcp_servers(status)")
@@ -169,6 +205,13 @@ def create_mcp_server(
     auth_token: Optional[str] = None,
     routing_strategy: str = "prefix",
     timeout: Optional[int] = None,
+    transport_type: str = "http",
+    command: Optional[str] = None,
+    command_args: Optional[List[str]] = None,
+    pipe_path: Optional[str] = None,
+    expose_port: Optional[int] = None,
+    working_dir: Optional[str] = None,
+    env_vars: Optional[Dict[str, str]] = None,
 ) -> int:
     """Create a new MCP server entry.
 
@@ -207,9 +250,10 @@ def create_mcp_server(
             """
             INSERT INTO mcp_servers (
                 name, description, url, tool_prefix, enabled,
-                auth_type, auth_token, routing_strategy, timeout, updated_at
+                auth_type, auth_token, routing_strategy, timeout, updated_at,
+                transport_type, command, command_args, pipe_path, expose_port, working_dir, env_vars
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 name,
@@ -222,6 +266,13 @@ def create_mcp_server(
                 routing_strategy,
                 timeout,
                 datetime.now(timezone.utc).isoformat(),
+                transport_type,
+                command,
+                json.dumps(command_args or []),
+                pipe_path,
+                expose_port,
+                working_dir,
+                json.dumps(env_vars or {}),
             ),
         )
 
@@ -352,6 +403,13 @@ def update_mcp_server(db_path: str, server_id: int, **fields) -> bool:
         "token_last_refreshed",
         "refresh_endpoint",
         "timeout",
+        "transport_type",
+        "command",
+        "command_args",
+        "pipe_path",
+        "expose_port",
+        "working_dir",
+        "env_vars",
     }
 
     # Reject any keys not in the whitelist
@@ -366,6 +424,10 @@ def update_mcp_server(db_path: str, server_id: int, **fields) -> bool:
             fields["auth_token"] = encrypt_token(fields["auth_token"])
         except RuntimeError:
             logger.warning("Crypto not initialized, storing auth_token as plaintext")
+    if "command_args" in fields and fields["command_args"] is not None:
+        fields["command_args"] = json.dumps(fields["command_args"])
+    if "env_vars" in fields and fields["env_vars"] is not None:
+        fields["env_vars"] = json.dumps(fields["env_vars"])
 
     # Add updated_at timestamp
     fields["updated_at"] = datetime.now(timezone.utc).isoformat()

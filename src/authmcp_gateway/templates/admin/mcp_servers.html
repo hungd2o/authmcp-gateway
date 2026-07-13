@@ -383,13 +383,13 @@
                             <button
                                 @click="openToolDetail(tool)"
                                 :class="{
-                                    'bg-blue-50 border-blue-400 text-blue-800': tool.tool_type === 'virtual',
+                                    'bg-violet-100 border-violet-400 text-violet-900 shadow-sm': tool.tool_type === 'virtual',
                                     'bg-gray-50 border-gray-300 text-gray-800': tool.tool_type !== 'virtual'
                                 }"
                                 class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm font-medium hover:shadow-sm hover:scale-105 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400">
                                 <i data-lucide="wrench" class="w-3 h-3 opacity-60"></i>
-                                <span x-text="tool.name"></span>
-                                <span x-show="tool.tool_type === 'virtual'" class="ml-0.5 px-1.5 py-0.5 text-xs rounded-full bg-blue-200 text-blue-700 font-semibold">virtual</span>
+                                <span x-text="tool.name || 'virtual tool'"></span>
+                                <span x-show="tool.tool_type === 'virtual'" class="ml-0.5 px-1.5 py-0.5 text-xs rounded-full bg-violet-200 text-violet-800 font-semibold">virtual</span>
                                 <span x-show="tool.approval_state === 'pending'" class="ml-0.5 px-1.5 py-0.5 text-xs rounded-full bg-amber-100 text-amber-700 font-semibold">pending</span>
                             </button>
                         </template>
@@ -417,21 +417,13 @@
                         <p class="text-xs text-gray-500 mt-1">Source: <span x-text="selectedTool && selectedTool.source_server"></span></p>
                     </div>
                     <div class="flex items-center gap-2 flex-shrink-0">
-                        <!-- Clone as Virtual Tool (only for native tools) -->
-                        <button x-show="selectedTool && selectedTool.tool_type !== 'virtual'"
-                                @click="openCreateVirtualTool(selectedTool)"
-                                class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold rounded-lg transition-colors"
-                                title="Create a virtual wrapper for this tool">
-                            <i data-lucide="wand-2" class="w-3.5 h-3.5"></i>
-                            <span class="hidden sm:inline">Clone as Virtual</span>
-                        </button>
                         <!-- Delete Virtual Tool (only for virtual tools) -->
                         <button x-show="selectedTool && selectedTool.tool_type === 'virtual'"
                                 @click="deleteVirtualTool(selectedTool)"
                                 class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg transition-colors"
                                 title="Delete this virtual tool">
                             <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-                            <span class="hidden sm:inline">Delete</span>
+                            <span>Delete</span>
                         </button>
                         <button @click="showToolDetailModal = false" class="flex-shrink-0 text-gray-500 hover:text-gray-800 p-1">
                             <i data-lucide="x" class="w-5 h-5"></i>
@@ -471,18 +463,28 @@
                                     </thead>
                                     <tbody class="divide-y divide-gray-100">
                                         <template x-for="param in toolDetailParams()" :key="param.path">
-                                            <tr :class="param.isParent ? 'bg-indigo-50/40' : 'hover:bg-gray-50'" class="transition-colors">
+                                           <tr :class="param.hasChildren ? 'bg-indigo-50/40' : 'hover:bg-gray-50'" class="transition-colors">
                                                 <td class="py-2 pr-3" :style="'padding-left: ' + (param.depth * 16 + 12) + 'px'">
                                                     <div class="flex items-center gap-1">
-                                                        <i x-show="param.isParent" data-lucide="chevron-right" class="w-3 h-3 text-indigo-400 flex-shrink-0"></i>
-                                                        <i x-show="param.isArrayItems" data-lucide="list" class="w-3 h-3 text-blue-400 flex-shrink-0"></i>
-                                                        <code :class="param.depth > 0 ? 'text-xs text-gray-700' : 'text-xs font-semibold text-gray-900'" x-text="param.name"></code>
-                                                    </div>
-                                                </td>
-                                                <td class="px-3 py-2">
-                                                    <span :class="param.isParent ? 'bg-indigo-100 text-indigo-800' : 'bg-indigo-50 text-indigo-700'"
-                                                          class="px-1.5 py-0.5 text-xs rounded font-mono" x-text="param.type || 'any'"></span>
-                                                </td>
+                                                       <button
+                                                           x-show="param.hasChildren"
+                                                           type="button"
+                                                           @click="toggleToolParam(param.path)"
+                                                           class="inline-flex items-center justify-center rounded p-0.5 text-indigo-500 hover:bg-indigo-100 transition-colors"
+                                                           :aria-expanded="isToolParamExpanded(param.path)">
+                                                           <i data-lucide="chevron-right"
+                                                              class="w-3 h-3 flex-shrink-0 transition-transform duration-150"
+                                                              :class="isToolParamExpanded(param.path) ? 'rotate-90' : ''"></i>
+                                                       </button>
+                                                       <span x-show="!param.hasChildren" class="inline-block w-4"></span>
+                                                       <i x-show="param.isArrayItems" data-lucide="list" class="w-3 h-3 text-blue-400 flex-shrink-0"></i>
+                                                       <code :class="param.depth > 0 ? 'text-xs text-gray-700' : 'text-xs font-semibold text-gray-900'" x-text="param.name"></code>
+                                                   </div>
+                                               </td>
+                                               <td class="px-3 py-2">
+                                                   <span :class="param.hasChildren ? 'bg-indigo-100 text-indigo-800' : 'bg-indigo-50 text-indigo-700'"
+                                                         class="px-1.5 py-0.5 text-xs rounded font-mono" x-text="param.type || 'any'"></span>
+                                               </td>
                                                 <td class="px-3 py-2">
                                                     <span x-show="param.required" class="px-1.5 py-0.5 text-xs rounded bg-red-50 text-red-600 font-semibold">yes</span>
                                                     <span x-show="!param.required && !param.isArrayItems" class="px-1.5 py-0.5 text-xs rounded bg-gray-100 text-gray-500">no</span>
@@ -554,35 +556,10 @@
                                <label class="block text-sm font-bold text-gray-800 mb-2">Execution Type <span class="text-red-600">*</span></label>
                                <select id="vtoolExecType" x-model="virtualToolExecType"
                                        class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-medium text-base">
-                                   <option value="mcp_wrapper">mcp_wrapper — wraps a native MCP tool</option>
                                    <option value="http_call">http_call — calls an external HTTP endpoint</option>
+                                   <option value="stdio_call">stdio_call — runs a local command via stdin/stdout</option>
+                                   <option value="pipeline_call">pipeline_call — chains simple local commands</option>
                                </select>
-                           </div>
-
-                           <!-- mcp_wrapper fields -->
-                           <div x-show="virtualToolExecType === 'mcp_wrapper'" class="space-y-4 p-4 bg-violet-50 rounded-lg border border-violet-200">
-                               <p class="text-xs font-semibold text-violet-700 uppercase tracking-wide">MCP Wrapper Config</p>
-                               <div>
-                                   <label class="block text-sm font-bold text-gray-800 mb-2">Target Tool Name <span class="text-red-600">*</span></label>
-                                   <input type="text" id="vtoolTargetTool"
-                                          class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm"
-                                          placeholder="native_tool_name">
-                                   <p class="text-xs text-gray-500 mt-1">The native MCP tool this virtual tool wraps.</p>
-                               </div>
-                               <div>
-                                   <label class="block text-sm font-bold text-gray-800 mb-2">Static Arguments (JSON)</label>
-                                   <textarea id="vtoolStaticArgs" rows="3"
-                                             placeholder="{}"
-                                             class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
-                                   <p class="text-xs text-gray-500 mt-1">Fixed arguments merged before caller-supplied arguments.</p>
-                               </div>
-                               <div>
-                                   <label class="block text-sm font-bold text-gray-800 mb-2">Input Schema (JSON)</label>
-                                   <textarea id="vtoolInputSchemaMcpWrapper" rows="4"
-                                             placeholder='{"type":"object","properties":{}}'
-                                             class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
-                                   <p class="text-xs text-gray-500 mt-1">JSON Schema for this tool's input parameters (optional).</p>
-                               </div>
                            </div>
 
                            <!-- http_call fields -->
@@ -611,6 +588,74 @@
                                              placeholder='{"type":"object","properties":{}}'
                                              class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
                                    <p class="text-xs text-gray-500 mt-1">JSON Schema for this tool's input parameters (optional).</p>
+                               </div>
+                           </div>
+
+                           <!-- stdio_call fields -->
+                           <div x-show="virtualToolExecType === 'stdio_call'" class="space-y-4 p-4 bg-violet-50 rounded-lg border border-violet-200">
+                               <p class="text-xs font-semibold text-violet-700 uppercase tracking-wide">STDIO Call Config</p>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Command <span class="text-red-600">*</span></label>
+                                   <input type="text" id="vtoolStdioCommand"
+                                          placeholder="python"
+                                          class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm">
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Command Args</label>
+                                   <textarea id="vtoolStdioArgs" rows="4"
+                                             placeholder="script.py&#10;--format&#10;json"
+                                             class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
+                                   <p class="text-xs text-gray-500 mt-1">One argument per line. Lines starting with # are ignored.</p>
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Working Directory</label>
+                                   <input type="text" id="vtoolStdioWorkingDir"
+                                          placeholder="/app"
+                                          class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm">
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Environment Variables</label>
+                                   <textarea id="vtoolStdioEnvVars" rows="3"
+                                             placeholder='NODE_ENV=production&#10;API_BASE_URL=https://example.com'
+                                             class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Input Schema (JSON)</label>
+                                   <textarea id="vtoolInputSchemaStdioCall" rows="4"
+                                             placeholder='{"type":"object","properties":{}}'
+                                             class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
+                                   <p class="text-xs text-gray-500 mt-1">Arguments are sent to stdin as JSON.</p>
+                               </div>
+                           </div>
+
+                           <!-- pipeline_call fields -->
+                           <div x-show="virtualToolExecType === 'pipeline_call'" class="space-y-4 p-4 bg-emerald-50 rounded-lg border border-emerald-200">
+                               <p class="text-xs font-semibold text-emerald-700 uppercase tracking-wide">Pipeline Call Config</p>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Pipeline Steps (JSON) <span class="text-red-600">*</span></label>
+                                   <textarea id="vtoolPipelineSteps" rows="6"
+                                             placeholder='[{"command":"python","args":["script.py"]},{"command":"jq","args":[".result"]}]'
+                                             class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
+                                   <p class="text-xs text-gray-500 mt-1">Each step must include a command and optional args array.</p>
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Working Directory</label>
+                                   <input type="text" id="vtoolPipelineWorkingDir"
+                                          placeholder="/app"
+                                          class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm">
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Environment Variables</label>
+                                   <textarea id="vtoolPipelineEnvVars" rows="3"
+                                             placeholder='NODE_ENV=production&#10;API_BASE_URL=https://example.com'
+                                             class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Input Schema (JSON)</label>
+                                   <textarea id="vtoolInputSchemaPipelineCall" rows="4"
+                                             placeholder='{"type":"object","properties":{}}'
+                                             class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
+                                   <p class="text-xs text-gray-500 mt-1">Arguments are sent to the first step as JSON.</p>
                                </div>
                            </div>
 
@@ -671,9 +716,11 @@
             savingEdit: false,
             showAddVirtualToolModal: false,
             savingVirtualTool: false,
-            virtualToolExecType: 'mcp_wrapper',
+            virtualToolExecType: 'http_call',
             vtoolPrefill: null,
             pendingServerActions: {},
+            toolDetailRows: [],
+            expandedToolParamPaths: {},
 
             init() {
                 document.getElementById('aggregatedEndpoint').textContent = window.location.origin + '/mcp';
@@ -829,6 +876,34 @@
                 } catch {
                     return 'invalid';
                 }
+            },
+
+            _parseVirtualToolArgsOrToast(fieldId) {
+                try {
+                    return this._parseCommandArgs(document.getElementById(fieldId)?.value || '', 'lines');
+                } catch (error) {
+                    showToast(error.message, 'error');
+                    return null;
+                }
+            },
+
+            _parseVirtualToolEnvVarsOrToast(fieldId) {
+                const raw = (document.getElementById(fieldId)?.value || '').trim();
+                if (!raw) return {};
+                const envVars = {};
+                for (const line of raw.split('\n')) {
+                    const trimmed = line.trim();
+                    if (!trimmed || trimmed.startsWith('#')) continue;
+                    const idx = trimmed.indexOf('=');
+                    if (idx <= 0) {
+                        showToast('Environment variables must use KEY=VALUE format', 'error');
+                        return null;
+                    }
+                    const key = trimmed.slice(0, idx).trim();
+                    const value = trimmed.slice(idx + 1);
+                    envVars[key] = value;
+                }
+                return envVars;
             },
 
             async loadServers() {
@@ -1084,30 +1159,9 @@
             openToolDetail(tool) {
                 this.selectedTool = tool;
                 this.toolDetailTab = 'details';
+                this._setToolDetailRows(tool);
                 this.showToolDetailModal = true;
                 this.$nextTick(() => lucide.createIcons());
-            },
-
-            openCreateVirtualTool(nativeTool) {
-                // Close detail modal and open Add Virtual Tool modal pre-filled for mcp_wrapper
-                this.showToolDetailModal = false;
-                this.vtoolPrefill = { name: nativeTool.name + '_virtual', targetTool: nativeTool.name, inputSchema: nativeTool.input_schema || {} };
-                this.virtualToolExecType = 'mcp_wrapper';
-                this.showAddVirtualToolModal = true;
-                this.$nextTick(() => {
-                    const p = this.vtoolPrefill;
-                    if (p) {
-                        const nameEl = document.getElementById('vtoolName');
-                        const targetEl = document.getElementById('vtoolTargetTool');
-                        const schemaEl = document.getElementById('vtoolInputSchemaMcpWrapper');
-                        if (nameEl) nameEl.value = p.name;
-                        if (targetEl) targetEl.value = p.targetTool;
-                        if (schemaEl && p.inputSchema && Object.keys(p.inputSchema).length > 0) {
-                            schemaEl.value = JSON.stringify(p.inputSchema, null, 2);
-                        }
-                    }
-                    lucide.createIcons();
-                });
             },
 
             async deleteVirtualTool(tool) {
@@ -1142,25 +1196,7 @@
 
                 let config = {};
 
-                if (execType === 'mcp_wrapper') {
-                    const targetTool = (document.getElementById('vtoolTargetTool').value || '').trim();
-                    if (!targetTool) { showToast('Target tool name is required for mcp_wrapper', 'error'); return; }
-
-                    let staticArgs = {};
-                    const rawStatic = (document.getElementById('vtoolStaticArgs').value || '').trim();
-                    if (rawStatic) {
-                        try { staticArgs = JSON.parse(rawStatic); } catch { showToast('Static Arguments is not valid JSON', 'error'); return; }
-                    }
-
-                    let inputSchema = {};
-                    const rawSchema = (document.getElementById('vtoolInputSchemaMcpWrapper').value || '').trim();
-                    if (rawSchema) {
-                        try { inputSchema = JSON.parse(rawSchema); } catch { showToast('Input Schema is not valid JSON', 'error'); return; }
-                    }
-
-                    config = { target_tool: targetTool, static_arguments: staticArgs, input_schema: inputSchema };
-
-                } else if (execType === 'http_call') {
+                if (execType === 'http_call') {
                     const method = document.getElementById('vtoolHttpMethod').value || 'POST';
                     const url = (document.getElementById('vtoolUrl').value || '').trim();
                     if (!url) { showToast('URL is required for http_call', 'error'); return; }
@@ -1172,6 +1208,60 @@
                     }
 
                     config = { request: { method, url }, input_schema: inputSchema };
+                } else if (execType === 'stdio_call') {
+                    const command = (document.getElementById('vtoolStdioCommand').value || '').trim();
+                    if (!command) { showToast('Command is required for stdio_call', 'error'); return; }
+
+                    const commandArgs = this._parseVirtualToolArgsOrToast('vtoolStdioArgs');
+                    if (commandArgs === null) return;
+
+                    const envVars = this._parseVirtualToolEnvVarsOrToast('vtoolStdioEnvVars');
+                    if (envVars === null) return;
+
+                    let inputSchema = {};
+                    const rawSchema = (document.getElementById('vtoolInputSchemaStdioCall').value || '').trim();
+                    if (rawSchema) {
+                        try { inputSchema = JSON.parse(rawSchema); } catch { showToast('Input Schema is not valid JSON', 'error'); return; }
+                    }
+
+                    config = {
+                        command,
+                        command_args: commandArgs,
+                        working_dir: (document.getElementById('vtoolStdioWorkingDir').value || '').trim() || null,
+                        env_vars: envVars,
+                        input_schema: inputSchema
+                    };
+                } else if (execType === 'pipeline_call') {
+                    const rawSteps = (document.getElementById('vtoolPipelineSteps').value || '').trim();
+                    if (!rawSteps) { showToast('Pipeline steps are required for pipeline_call', 'error'); return; }
+
+                    let steps = [];
+                    try {
+                        steps = JSON.parse(rawSteps);
+                    } catch {
+                        showToast('Pipeline steps must be valid JSON', 'error');
+                        return;
+                    }
+                    if (!Array.isArray(steps) || steps.length === 0) {
+                        showToast('Pipeline steps must be a non-empty JSON array', 'error');
+                        return;
+                    }
+
+                    const envVars = this._parseVirtualToolEnvVarsOrToast('vtoolPipelineEnvVars');
+                    if (envVars === null) return;
+
+                    let inputSchema = {};
+                    const rawSchema = (document.getElementById('vtoolInputSchemaPipelineCall').value || '').trim();
+                    if (rawSchema) {
+                        try { inputSchema = JSON.parse(rawSchema); } catch { showToast('Input Schema is not valid JSON', 'error'); return; }
+                    }
+
+                    config = {
+                        steps,
+                        working_dir: (document.getElementById('vtoolPipelineWorkingDir').value || '').trim() || null,
+                        env_vars: envVars,
+                        input_schema: inputSchema
+                    };
                 }
 
                 this.savingVirtualTool = true;
@@ -1187,7 +1277,7 @@
                     this.showAddVirtualToolModal = false;
                     this.vtoolPrefill = null;
                     document.getElementById('addVirtualToolForm').reset();
-                    this.virtualToolExecType = 'mcp_wrapper';
+                    this.virtualToolExecType = 'http_call';
                     await this.openToolsModal(this.toolsModalServerId);
                 } catch (error) {
                     showToast(error.message, 'error');
@@ -1197,52 +1287,150 @@
             },
 
             toolDetailParams() {
-                if (!this.selectedTool) return [];
-                const schema = this.selectedTool.input_schema || {};
-                return this._flattenSchema(schema.properties || {}, new Set(schema.required || []), '', 0);
+                return this.toolDetailRows.filter(param => this._isToolParamVisible(param));
             },
 
-            _flattenSchema(properties, requiredSet, prefix, depth) {
-                if (depth > 3) return [];
+            _setToolDetailRows(tool) {
+                const schema = tool?.input_schema || {};
+                this.toolDetailRows = this._flattenSchemaProperties(
+                    this._getSchemaProperties(schema),
+                    new Set(this._getSchemaRequired(schema)),
+                    '',
+                    0,
+                    []
+                );
+                this.expandedToolParamPaths = Object.fromEntries(
+                    this.toolDetailRows
+                        .filter(param => param.hasChildren)
+                        .map(param => [param.path, true])
+                );
+            },
+
+            _flattenSchemaProperties(properties, requiredSet, prefix, depth, ancestorPaths) {
+                if (depth > 6) return [];
                 const rows = [];
-                for (const [name, def] of Object.entries(properties)) {
+                for (const [name, def] of Object.entries(properties || {})) {
                     const path = prefix ? prefix + '.' + name : name;
-                    const type = def.type || (def.anyOf ? 'anyOf' : (def.oneOf ? 'oneOf' : (def.enum ? 'enum' : 'any')));
-                    const isObject = type === 'object' && def.properties && Object.keys(def.properties).length > 0;
-                    const isArray = type === 'array';
+                    const childProperties = this._getSchemaProperties(def);
+                    const childRequired = new Set(this._getSchemaRequired(def));
+                    const arrayItems = this._getSchemaItems(def);
+                    const hasObjectChildren = Object.keys(childProperties).length > 0;
+                    const hasArrayChildren = !!arrayItems;
                     rows.push({
                         path,
                         name,
-                        type,
+                        type: this._getSchemaTypeLabel(def),
                         required: requiredSet.has(name),
-                        description: def.description || '',
+                        description: def?.description || '',
                         depth,
-                        isParent: isObject,
+                        hasChildren: hasObjectChildren || hasArrayChildren,
                         isArrayItems: false,
+                        ancestorPaths,
                     });
-                    if (isObject && depth < 3) {
-                        const childRequired = new Set(def.required || []);
-                        rows.push(...this._flattenSchema(def.properties, childRequired, path, depth + 1));
-                    } else if (isArray && def.items && depth < 3) {
-                        const items = def.items;
-                        const itemType = items.type || (items.enum ? 'enum' : 'any');
+                    if (hasObjectChildren) {
+                        rows.push(...this._flattenSchemaProperties(
+                            childProperties,
+                            childRequired,
+                            path,
+                            depth + 1,
+                            [...ancestorPaths, path]
+                        ));
+                    }
+                    if (arrayItems) {
+                        const itemPath = path + '[]';
+                        const itemProperties = this._getSchemaProperties(arrayItems);
+                        const itemRequired = new Set(this._getSchemaRequired(arrayItems));
+                        const itemHasChildren = Object.keys(itemProperties).length > 0 || !!this._getSchemaItems(arrayItems);
                         rows.push({
-                            path: path + '[]',
+                            path: itemPath,
                             name: name + '[]',
-                            type: itemType,
+                            type: this._getSchemaTypeLabel(arrayItems),
                             required: false,
-                            description: items.description || 'Array item type',
+                            description: arrayItems?.description || 'Array item type',
                             depth: depth + 1,
-                            isParent: false,
+                            hasChildren: itemHasChildren,
                             isArrayItems: true,
+                            ancestorPaths: [...ancestorPaths, path],
                         });
-                        if (itemType === 'object' && items.properties && depth + 1 < 3) {
-                            const childRequired = new Set(items.required || []);
-                            rows.push(...this._flattenSchema(items.properties, childRequired, path + '[]', depth + 2));
+                        if (Object.keys(itemProperties).length > 0) {
+                            rows.push(...this._flattenSchemaProperties(
+                                itemProperties,
+                                itemRequired,
+                                itemPath,
+                                depth + 2,
+                                [...ancestorPaths, path, itemPath]
+                            ));
                         }
                     }
                 }
                 return rows;
+            },
+
+            _getSchemaVariants(def) {
+                return [
+                    ...(Array.isArray(def?.anyOf) ? def.anyOf : []),
+                    ...(Array.isArray(def?.oneOf) ? def.oneOf : []),
+                ];
+            },
+
+            _getSchemaTypes(def) {
+                const rawType = def?.type;
+                const directTypes = Array.isArray(rawType)
+                    ? rawType.map(type => String(type))
+                    : (typeof rawType === 'string' ? [rawType] : []);
+                const variantTypes = this._getSchemaVariants(def)
+                    .flatMap(variant => this._getSchemaTypes(variant));
+                const inferredTypes = [];
+                if (def?.properties) inferredTypes.push('object');
+                if (def?.items) inferredTypes.push('array');
+                if (def?.enum) inferredTypes.push('enum');
+                return [...new Set([...directTypes, ...variantTypes, ...inferredTypes])];
+            },
+
+            _getSchemaTypeLabel(def) {
+                const types = this._getSchemaTypes(def);
+                return types.length > 0 ? types.join(' | ') : 'any';
+            },
+
+            _getSchemaProperties(def) {
+                const merged = {};
+                if (def?.properties && typeof def.properties === 'object') {
+                    Object.assign(merged, def.properties);
+                }
+                for (const variant of this._getSchemaVariants(def)) {
+                    if (variant?.properties && typeof variant.properties === 'object') {
+                        Object.assign(merged, variant.properties);
+                    }
+                }
+                return merged;
+            },
+
+            _getSchemaRequired(def) {
+                return [...new Set([
+                    ...(Array.isArray(def?.required) ? def.required : []),
+                    ...this._getSchemaVariants(def).flatMap(variant => (
+                        Array.isArray(variant?.required) ? variant.required : []
+                    )),
+                ])];
+            },
+
+            _getSchemaItems(def) {
+                if (def?.items) return def.items;
+                return this._getSchemaVariants(def).find(variant => variant?.items)?.items || null;
+            },
+
+            _isToolParamVisible(param) {
+                return (param.ancestorPaths || []).every(path => this.expandedToolParamPaths[path] !== false);
+            },
+
+            toggleToolParam(path) {
+                if (!(path in this.expandedToolParamPaths)) return;
+                this.expandedToolParamPaths[path] = !this.expandedToolParamPaths[path];
+                this.$nextTick(() => lucide.createIcons());
+            },
+
+            isToolParamExpanded(path) {
+                return this.expandedToolParamPaths[path] !== false;
             },
 
             toolDetailExample() {
@@ -1258,17 +1446,17 @@
                 if (def.anyOf && def.anyOf.length > 0) return this._buildExampleValue(def.anyOf[0]);
                 if (def.oneOf && def.oneOf.length > 0) return this._buildExampleValue(def.oneOf[0]);
                 if (def.enum) return def.enum[0];
-                const type = def.type;
+                const type = Array.isArray(def.type) ? def.type.find(value => value !== 'null') : def.type;
                 if (type === 'string') return def.example !== undefined ? def.example : (def.default !== undefined ? def.default : '<string>');
                 if (type === 'number' || type === 'integer') return def.example !== undefined ? def.example : (def.default !== undefined ? def.default : 0);
                 if (type === 'boolean') return def.example !== undefined ? def.example : (def.default !== undefined ? def.default : false);
                 if (type === 'null') return null;
                 if (type === 'array') {
-                    const items = def.items || {};
+                    const items = this._getSchemaItems(def) || {};
                     return [this._buildExampleValue(items)];
                 }
-                if (type === 'object' || def.properties) {
-                    const props = def.properties || {};
+                const props = this._getSchemaProperties(def);
+                if (type === 'object' || Object.keys(props).length > 0) {
                     const result = {};
                     for (const [k, v] of Object.entries(props)) {
                         result[k] = this._buildExampleValue(v);

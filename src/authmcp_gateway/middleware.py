@@ -270,7 +270,12 @@ class McpAuthMiddleware:
                 # Verify JWT token
                 try:
                     from .auth.jwt_handler import get_token_jti, verify_token
-                    from .auth.user_store import get_current_user_token_jti, is_token_blacklisted
+                    from .auth.user_store import (
+                        get_current_user_token_jti,
+                        get_user_personal_access_token_by_jti,
+                        is_token_blacklisted,
+                        touch_user_personal_access_token_usage,
+                    )
 
                     token_payload = verify_token(token, "access", self.jwt_config)
 
@@ -288,12 +293,19 @@ class McpAuthMiddleware:
                             user_id_int = int(token_payload["sub"])
                             current_jti = get_current_user_token_jti(self.auth_db_path, user_id_int)
                             if current_jti and jti and jti != current_jti:
-                                logger.warning(
-                                    "Token is not current. jti=%s expected=%s", jti, current_jti
+                                pat = get_user_personal_access_token_by_jti(
+                                    self.auth_db_path, user_id_int, jti
                                 )
-                                resp = _unauthorized(self.mcp_public_url, self.oauth_scopes)
-                                await resp(scope, receive, send)
-                                return
+                                if not pat:
+                                    logger.warning(
+                                        "Token is not current. jti=%s expected=%s", jti, current_jti
+                                    )
+                                    resp = _unauthorized(self.mcp_public_url, self.oauth_scopes)
+                                    await resp(scope, receive, send)
+                                    return
+                                touch_user_personal_access_token_usage(
+                                    self.auth_db_path, jti, get_request_ip(request)
+                                )
                         except (ValueError, TypeError):
                             pass
 

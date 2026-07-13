@@ -1,8 +1,16 @@
 {% extends "base_shell.html" %}
 
-{% block title %}Account - Auth MCP{% endblock %}
+{% block title %}API Keys - Auth MCP{% endblock %}
 
 {% block sidebar_subtitle %}Account{% endblock %}
+
+{% block extra_styles %}
+@import url('https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css');
+.flatpickr-input[disabled] {
+    background-color: rgb(243 244 246);
+    cursor: not-allowed;
+}
+{% endblock %}
 
 {% block sidebar_nav %}
     <a
@@ -11,7 +19,7 @@
         class="flex items-center px-3 py-3 rounded-lg transition-all group bg-white/20 shadow-lg"
     >
         <i data-lucide="key-round" class="w-5 h-5 min-w-[20px]"></i>
-        <span x-show="sidebarOpen" class="ml-3 font-medium slide-in">Account Access</span>
+        <span x-show="sidebarOpen" class="ml-3 font-medium slide-in">API Keys</span>
         <span x-show="sidebarOpen" class="ml-auto w-1.5 h-1.5 bg-white rounded-full"></span>
     </a>
 {% endblock %}
@@ -21,15 +29,15 @@
 {% block main_attrs %}x-data="accountPortal()" x-init="window.accountPortalInstance = $data; loadInfo()"{% endblock %}
 
 {% block content %}
-<div class="max-w-6xl mx-auto">
+<div class="max-w-6xl mx-auto" @keydown.escape.window="closePatCreateModal()">
     <div class="flex items-center justify-between mb-8">
         <div class="flex items-center gap-3">
             <div class="p-3 rounded-xl bg-gradient-to-br from-blue-600 to-cyan-600 text-white shadow-sm">
                 <i data-lucide="key-round" class="w-6 h-6"></i>
             </div>
             <div>
-                <h1 class="text-3xl font-bold text-gray-900">Account Access</h1>
-                <p class="text-gray-600">Get your access token for MCP clients</p>
+                <h1 class="text-3xl font-bold text-gray-900">API Keys</h1>
+                <p class="text-gray-600">Create and manage API keys (personal access tokens) for MCP clients and services</p>
             </div>
         </div>
     </div>
@@ -43,7 +51,7 @@
             </div>
 
             <div class="mb-4 text-sm text-gray-600">
-                This page does not provide admin access.
+                This page is for your own API keys only and does not grant admin access.
             </div>
 
             <div class="mb-6 text-sm text-gray-700" x-show="expiresAt">
@@ -60,25 +68,14 @@
                         class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors">
                     Rotate Token
                 </button>
-                <span x-show="loading" class="text-sm text-gray-500">Loading...</span>
             </div>
 
-            <template x-if="error">
-                <div class="mt-4 text-sm text-red-600" x-text="error"></div>
-            </template>
-
             <template x-if="token">
-                <div class="mt-6 space-y-3">
-                    <div class="text-sm text-gray-700 font-medium">Access Token</div>
-                    <textarea readonly rows="4"
+                <div class="mt-4 space-y-3">
+                    <div class="text-sm text-gray-700 font-medium">Current access token</div>
+                    <textarea readonly rows="3"
                               class="w-full text-xs font-mono bg-gray-50 border border-gray-200 rounded-lg p-3"
                               x-text="token"></textarea>
-
-                    <div class="text-sm text-gray-700 font-medium">Authorization Header</div>
-                    <input readonly
-                           class="w-full text-xs font-mono bg-gray-50 border border-gray-200 rounded-lg p-2"
-                           :value="`Authorization: Bearer ${token}`">
-
                     <div class="flex gap-2">
                         <button type="button" @click="copyToken"
                                 class="px-3 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm">
@@ -86,11 +83,80 @@
                         </button>
                         <button type="button" @click="copyHeader"
                                 class="px-3 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm">
-                            Copy Header
+                            Copy Authorization Header
                         </button>
                     </div>
                 </div>
             </template>
+
+            <template x-if="error">
+                <div class="mt-4 text-sm text-red-600" x-text="error"></div>
+            </template>
+
+            <div class="mt-8 border-t border-gray-200 pt-6">
+                <div class="flex items-center justify-between mb-3">
+                    <div class="text-sm font-medium text-gray-700">API Keys</div>
+                    <div class="flex items-center gap-2">
+                        <button type="button" @click="openPatCreateModal()"
+                                class="px-3 py-1.5 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white rounded-lg text-sm">
+                            Add API Key
+                        </button>
+                        <button type="button" @click="loadPersonalTokens"
+                                class="px-3 py-1.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm">
+                            Refresh
+                        </button>
+                    </div>
+                </div>
+                <div class="text-xs text-gray-500 mb-4">
+                    Create named API keys for services that cannot auto-refresh. The secret is shown once after creation.
+                </div>
+
+                <template x-if="createdPatToken">
+                    <div class="mt-4 space-y-2">
+                        <div class="text-sm text-gray-700 font-medium">New API key (copy now)</div>
+                        <div class="text-xs text-amber-700">Copy this secret now. For security, it will not be shown again.</div>
+                        <textarea readonly rows="3"
+                                  class="w-full text-xs font-mono bg-gray-50 border border-gray-200 rounded-lg p-3"
+                                  x-text="createdPatToken"></textarea>
+                        <button type="button" @click="copyCreatedPatToken"
+                                class="px-3 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm">
+                            Copy New API Key
+                        </button>
+                    </div>
+                </template>
+
+                <div class="mt-4 space-y-2">
+                    <template x-if="personalTokens.length === 0">
+                        <div class="text-sm text-gray-500">No API keys yet. Create one above for a service, script, or integration.</div>
+                    </template>
+                    <template x-for="pt in personalTokens" :key="pt.id">
+                        <div class="border border-gray-200 rounded-lg p-3 text-sm">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <div class="font-medium text-gray-900" x-text="pt.name"></div>
+                                    <div class="text-xs text-gray-500">
+                                        <span x-show="pt.is_active" class="text-green-600">Active</span>
+                                        <span x-show="!pt.is_active" class="text-red-600">Inactive</span>
+                                        · Expires: <span x-text="formatPatExpires(pt)"></span>
+                                    </div>
+                                </div>
+                                <div class="flex gap-2">
+                                    <button type="button" @click="rotatePersonalToken(pt)"
+                                            class="px-2.5 py-1.5 border border-gray-300 text-gray-700 rounded hover:bg-gray-50 text-xs"
+                                            :disabled="!pt.is_active">
+                                        Rotate
+                                    </button>
+                                    <button type="button" @click="revokePersonalToken(pt)"
+                                            class="px-2.5 py-1.5 border border-red-300 text-red-700 rounded hover:bg-red-50 text-xs"
+                                            :disabled="!pt.is_active">
+                                        Revoke
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
 
             <div class="mt-8">
                 <div class="text-sm font-medium text-gray-700 mb-2">Available MCP Servers</div>
@@ -133,22 +199,100 @@
         Use the MCP endpoint <span class="font-mono" x-text="gatewayEndpointDisplay || '/mcp'">/mcp</span> with your token in the
         <span class="font-mono">Authorization</span> header.
     </div>
+
+    <div x-cloak x-show="showPatCreateModal" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="absolute inset-0 bg-slate-900/60" @click="closePatCreateModal()"></div>
+        <div x-ref="patCreateModal"
+             x-show="showPatCreateModal"
+             x-transition
+             class="relative w-full max-w-2xl rounded-2xl bg-white shadow-2xl border border-gray-200 p-6">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <h2 class="text-xl font-semibold text-gray-900">Create API Key</h2>
+                    <p class="mt-1 text-sm text-gray-600">Create a named API key for scripts, automation, or tools that need stable access. The secret is shown once after creation.</p>
+                </div>
+                <button type="button" @click="closePatCreateModal()" class="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+            </div>
+
+            <div class="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">API key name</label>
+                    <input x-ref="newPatNameInput" type="text" x-model="newPatName" placeholder="Token name (e.g., CI Service)"
+                           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Date from</label>
+                    <input x-ref="patDateFromInput" type="text" x-model="newPatDateFrom" :disabled="newPatNoExpire"
+                           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Date to</label>
+                    <input x-ref="patDateToInput" type="text" x-model="newPatDateTo" :disabled="newPatNoExpire"
+                           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
+                </div>
+            </div>
+
+            <label class="mt-4 inline-flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" x-model="newPatNoExpire" @change="syncPatDateState()" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                No expiry
+            </label>
+            <div class="mt-2 text-xs text-gray-500">Minimum range is 1 day. Date to cannot be before the next day after date from.</div>
+
+            <div class="mt-6 flex items-center justify-end gap-3">
+                <button type="button" @click="closePatCreateModal()"
+                        class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm">
+                    Cancel
+                </button>
+                <button type="button" @click="createPersonalToken"
+                        class="px-4 py-2 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white rounded-lg transition-colors text-sm">
+                    Create API Key
+                </button>
+            </div>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
 {% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
 <script>
     function accountPortal() {
         return {
             token: '',
             error: '',
             loading: false,
+            personalTokens: [],
+            newPatName: '',
+            newPatDateFrom: '',
+            newPatDateTo: '',
+            newPatNoExpire: false,
+            showPatCreateModal: false,
+            createdPatToken: '',
             servers: [],
             gatewayEndpoint: '',
             gatewayEndpointDisplay: '',
             expiresAt: '',
             expiresIn: '',
+            patFromPicker: null,
+            patToPicker: null,
+            patCreateModalTrap: null,
+            todayString() {
+                const d = new Date();
+                return d.toISOString().slice(0, 10);
+            },
+            addDays(dateStr, days) {
+                const d = new Date(`${dateStr}T00:00:00`);
+                d.setDate(d.getDate() + days);
+                return d.toISOString().slice(0, 10);
+            },
+            resetPatDates() {
+                this.newPatDateFrom = this.todayString();
+                this.newPatDateTo = this.addDays(this.newPatDateFrom, 1);
+            },
             async loadInfo() {
+                this.resetPatDates();
                 try {
                     const response = await fetch('/account/info');
                     const data = await response.json();
@@ -175,8 +319,21 @@
                         else label = `(${mins}m left)`;
                         this.expiresIn = label;
                     }
+                    await this.loadPersonalTokens();
                 } catch (err) {
                     this.error = err.message || 'Failed to load account info';
+                }
+            },
+            async loadPersonalTokens() {
+                try {
+                    const response = await fetch('/account/pats');
+                    const data = await response.json();
+                    if (!response.ok) {
+                        throw new Error(data.detail || 'Failed to load personal tokens');
+                    }
+                    this.personalTokens = data.tokens || [];
+                } catch (err) {
+                    this.error = err.message || 'Failed to load personal tokens';
                 }
             },
             async loadToken() {
@@ -201,7 +358,7 @@
             },
             async copyHeader() {
                 if (!this.token) return;
-                await navigator.clipboard.writeText(`Authorization: Bearer ${this.token}`);
+                await navigator.clipboard.writeText('Authorization: Bearer ' + this.token);
             },
             async rotateToken() {
                 this.error = '';
@@ -218,6 +375,146 @@
                     this.error = err.message || 'Failed to rotate token';
                 } finally {
                     this.loading = false;
+                }
+            },
+            openPatCreateModal() {
+                this.error = '';
+                this.newPatName = '';
+                this.newPatNoExpire = false;
+                this.resetPatDates();
+                this.showPatCreateModal = true;
+                this.$nextTick(() => {
+                    this.initPatPickers();
+                    this.$refs.newPatNameInput?.focus();
+                    this.patCreateModalTrap?.release?.();
+                    this.patCreateModalTrap = trapFocus(this.$refs.patCreateModal);
+                    lucide.createIcons();
+                });
+            },
+            closePatCreateModal() {
+                this.showPatCreateModal = false;
+                this.patCreateModalTrap?.release?.();
+                this.patCreateModalTrap = null;
+            },
+            initPatPickers() {
+                if (typeof flatpickr === 'undefined' || !this.$refs.patDateFromInput || !this.$refs.patDateToInput) {
+                    return;
+                }
+                this.patFromPicker?.destroy?.();
+                this.patToPicker?.destroy?.();
+                this.patFromPicker = flatpickr(this.$refs.patDateFromInput, {
+                    dateFormat: 'Y-m-d',
+                    minDate: 'today',
+                    defaultDate: this.newPatDateFrom,
+                    onChange: (selectedDates, dateStr) => {
+                        this.newPatDateFrom = dateStr;
+                        const minTo = this.addDays(dateStr, 1);
+                        this.patToPicker?.set('minDate', minTo);
+                        if (!this.newPatDateTo || this.newPatDateTo < minTo) {
+                            this.newPatDateTo = minTo;
+                            this.patToPicker?.setDate(minTo, true);
+                        }
+                    }
+                });
+                this.patToPicker = flatpickr(this.$refs.patDateToInput, {
+                    dateFormat: 'Y-m-d',
+                    minDate: this.addDays(this.newPatDateFrom, 1),
+                    defaultDate: this.newPatDateTo,
+                    onChange: (selectedDates, dateStr) => {
+                        this.newPatDateTo = dateStr;
+                    }
+                });
+                this.syncPatDateState();
+            },
+            syncPatDateState() {
+                const disabled = this.newPatNoExpire;
+                this.patFromPicker?.set('clickOpens', !disabled);
+                this.patToPicker?.set('clickOpens', !disabled);
+                if (this.$refs.patDateFromInput) this.$refs.patDateFromInput.disabled = disabled;
+                if (this.$refs.patDateToInput) this.$refs.patDateToInput.disabled = disabled;
+                if (!disabled) {
+                    const minTo = this.addDays(this.newPatDateFrom, 1);
+                    this.patToPicker?.set('minDate', minTo);
+                    if (!this.newPatDateTo || this.newPatDateTo < minTo) {
+                        this.newPatDateTo = minTo;
+                        this.patToPicker?.setDate(minTo, true);
+                    }
+                }
+            },
+            formatPatExpires(pt) {
+                if (!pt) return 'N/A';
+                if (pt.no_expire) return 'No expiry';
+                if (!pt.expires_at) return 'N/A';
+                const d = new Date(pt.expires_at);
+                if (Number.isNaN(d.getTime())) return pt.expires_at;
+                return d.toLocaleString();
+            },
+            async createPersonalToken() {
+                this.error = '';
+                this.createdPatToken = '';
+                const name = (this.newPatName || '').trim();
+                if (name.length < 3) {
+                    this.error = 'Token name must be at least 3 characters';
+                    return;
+                }
+                try {
+                    const response = await fetch('/account/pats', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            name,
+                            date_from: this.newPatDateFrom,
+                            date_to: this.newPatDateTo,
+                            no_expire: this.newPatNoExpire
+                        })
+                    });
+                    const data = await response.json();
+                    if (!response.ok) {
+                        throw new Error(data.detail || 'Failed to create token');
+                    }
+                    this.createdPatToken = data.access_token || '';
+                    this.newPatName = '';
+                    this.newPatNoExpire = false;
+                    this.resetPatDates();
+                    this.closePatCreateModal();
+                    await this.loadPersonalTokens();
+                    showToast('API key created. Copy it now — it will not be shown again.');
+                } catch (err) {
+                    this.error = err.message || 'Failed to create token';
+                }
+            },
+            async copyCreatedPatToken() {
+                if (!this.createdPatToken) return;
+                await navigator.clipboard.writeText(this.createdPatToken);
+            },
+            async revokePersonalToken(pt) {
+                if (!pt || !pt.id) return;
+                this.error = '';
+                try {
+                    const response = await fetch(`/account/pats/${pt.id}/revoke`, { method: 'POST' });
+                    const data = await response.json();
+                    if (!response.ok) {
+                        throw new Error(data.detail || 'Failed to revoke token');
+                    }
+                    await this.loadPersonalTokens();
+                } catch (err) {
+                    this.error = err.message || 'Failed to revoke token';
+                }
+            },
+            async rotatePersonalToken(pt) {
+                if (!pt || !pt.id) return;
+                this.error = '';
+                this.createdPatToken = '';
+                try {
+                    const response = await fetch(`/account/pats/${pt.id}/rotate`, { method: 'POST' });
+                    const data = await response.json();
+                    if (!response.ok) {
+                        throw new Error(data.detail || 'Failed to rotate token');
+                    }
+                    this.createdPatToken = data.access_token || '';
+                    await this.loadPersonalTokens();
+                } catch (err) {
+                    this.error = err.message || 'Failed to rotate token';
                 }
             },
             async copyEndpoint(value) {

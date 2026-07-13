@@ -243,8 +243,6 @@ def _maybe_start_server_in_background(args, tray_available: bool, server_url: st
     if choice == "background":
         _launch_background_server(args, tray_available, server_url)
         return True
-    if choice == "foreground":
-        args.no_tray = True
 
     return False
 
@@ -299,12 +297,20 @@ def _launch_background_server(args, tray_available: bool, server_url: str) -> No
     log_file = _background_log_file_path()
     log_file.parent.mkdir(parents=True, exist_ok=True)
 
+    child_env = os.environ.copy()
+    # Force UTF-8 stdio in the child: redirected to a file (no console), Python
+    # falls back to the OS ANSI codepage (cp1252 on most Windows installs) for
+    # print()'s encoding, which can't encode the ✓/⚠/✗ glyphs used in output
+    # and crashes the child on its first print — before uvicorn/tray start.
+    child_env["PYTHONIOENCODING"] = "utf-8"
+    child_env["PYTHONUTF8"] = "1"
+
     with log_file.open("a", encoding="utf-8") as log_stream:
         try:
             process = subprocess.Popen(
                 _build_background_start_command(args),
                 cwd=os.getcwd(),
-                env=os.environ.copy(),
+                env=child_env,
                 stdin=subprocess.DEVNULL,
                 stdout=log_stream,
                 stderr=log_stream,
@@ -327,9 +333,25 @@ def _launch_background_server(args, tray_available: bool, server_url: str) -> No
     )
 
 
+def _get_background_executable() -> str:
+    """Return the Python executable to use for the detached background child.
+
+    On Windows the GUI-subsystem interpreter ``pythonw.exe`` is preferred over
+    ``python.exe`` because it has no console window and remains fully
+    associated with the desktop, which is a requirement for system-tray icons
+    to initialise correctly.  Falls back to :data:`sys.executable` when
+    ``pythonw.exe`` cannot be found (e.g. virtualenvs that only ship
+    ``python.exe``).
+    """
+    if os.name != "nt":
+        return sys.executable
+    pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    return pythonw if os.path.isfile(pythonw) else sys.executable
+
+
 def _build_background_start_command(args) -> list[str]:
     """Build the child process command for detached startup."""
-    command = [sys.executable, "-m", "authmcp_gateway.cli", "start", "--background-child"]
+    command = [_get_background_executable(), "-m", "authmcp_gateway.cli", "start", "--background-child"]
 
     if args.host is not None:
         command.extend(["--host", args.host])
@@ -365,13 +387,26 @@ def _should_start_new_session(args, tray_available: bool) -> bool:
 
 
 def _windows_background_creationflags() -> int:
-    """Return detached-process flags on Windows."""
+    """Return process-creation flags for a background child on Windows.
+
+    ``CREATE_NEW_PROCESS_GROUP`` isolates the child from Ctrl+C signals sent
+    to the parent terminal so it continues running after the terminal closes.
+
+    ``CREATE_NO_WINDOW`` suppresses any console window that ``python.exe``
+    would otherwise open (harmless when ``pythonw.exe`` is used instead).
+
+    ``DETACHED_PROCESS`` and ``CREATE_BREAKAWAY_FROM_JOB`` are intentionally
+    omitted: ``DETACHED_PROCESS`` can prevent the Win32 message-loop required
+    by system-tray icons from initialising, and ``CREATE_BREAKAWAY_FROM_JOB``
+    raises ``PermissionError`` in many terminal environments that do not grant
+    the breakaway privilege.
+    """
     if os.name != "nt":
         return 0
 
-    detached_process = getattr(subprocess, "DETACHED_PROCESS", 0)
     new_process_group = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    return detached_process | new_process_group
+    create_no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    return new_process_group | create_no_window
 
 
 def _start_server_with_tray(app, args, whitelist_token: str | None = None) -> None:

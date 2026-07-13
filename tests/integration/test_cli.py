@@ -179,7 +179,7 @@ def test_start_server_sets_log_level_env(tmp_path, monkeypatch):
 
 
 def test_start_server_interactive_foreground_disables_tray(tmp_path, monkeypatch):
-    """Choosing foreground keeps logs attached even when tray support exists."""
+    """Choosing foreground keeps logs attached without disabling tray mode."""
     monkeypatch.setitem(sys.modules, "uvicorn", MagicMock())
     fake_app_module = MagicMock()
     fake_app_module.app = "APP"
@@ -190,17 +190,19 @@ def test_start_server_interactive_foreground_disables_tray(tmp_path, monkeypatch
     monkeypatch.setattr(cli, "_supports_interactive_start_prompt", lambda: True)
     monkeypatch.setattr(cli, "_prompt_start_mode", lambda _args, _tray_available: "foreground")
     monkeypatch.setattr("authmcp_gateway.tray.is_tray_available", lambda: True)
-    tray_started = {"value": False}
+    tray_started = {"value": False, "whitelist_token": None}
     monkeypatch.setattr(
-        cli, "_start_server_with_tray", lambda *_args: tray_started.__setitem__("value", True)
+        cli,
+        "_start_server_with_tray",
+        lambda _app, _args, whitelist_token=None: tray_started.update(
+            {"value": True, "whitelist_token": whitelist_token}
+        ),
     )
 
     cli.start_server(_start_args(tmp_path, no_tray=False))
 
-    sys.modules["uvicorn"].run.assert_called_once_with(
-        "APP", host="0.0.0.0", port=8000, log_level="info", reload=False
-    )
-    assert tray_started["value"] is False
+    sys.modules["uvicorn"].run.assert_not_called()
+    assert tray_started == {"value": True, "whitelist_token": None}
 
 
 def test_start_server_background_mode_relaunches_and_returns(tmp_path, monkeypatch):
@@ -293,6 +295,57 @@ def test_background_log_only_mode_starts_new_session_on_non_windows(tmp_path, mo
         cli._should_start_new_session(_start_args(tmp_path, no_tray=False), tray_available=False)
         is True
     )
+
+
+def test_windows_background_creationflags_uses_new_process_group_and_no_window(monkeypatch):
+    """Windows background launch uses CREATE_NEW_PROCESS_GROUP and CREATE_NO_WINDOW.
+
+    DETACHED_PROCESS is excluded because it prevents the Win32 message loop
+    required by system-tray icons.  CREATE_BREAKAWAY_FROM_JOB is excluded
+    because it raises PermissionError in terminals that disallow breakaway.
+    """
+    monkeypatch.setattr(cli.os, "name", "nt")
+    monkeypatch.setattr(cli.subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200, raising=False)
+    monkeypatch.setattr(cli.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
+
+    flags = cli._windows_background_creationflags()
+
+    assert flags & 0x00000200, "CREATE_NEW_PROCESS_GROUP must be set"
+    assert flags & 0x08000000, "CREATE_NO_WINDOW must be set"
+    assert not (flags & 0x00000008), "DETACHED_PROCESS must NOT be set"
+    assert not (flags & 0x01000000), "CREATE_BREAKAWAY_FROM_JOB must NOT be set"
+
+
+def test_get_background_executable_returns_pythonw_when_present(monkeypatch, tmp_path):
+    """On Windows, pythonw.exe is preferred over python.exe for tray support."""
+    fake_python = tmp_path / "python.exe"
+    fake_pythonw = tmp_path / "pythonw.exe"
+    fake_python.touch()
+    fake_pythonw.touch()
+
+    monkeypatch.setattr(cli.os, "name", "nt")
+    monkeypatch.setattr(cli.sys, "executable", str(fake_python))
+    # os.path.isfile uses the real filesystem; both files exist in tmp_path.
+
+    assert cli._get_background_executable() == str(fake_pythonw)
+
+
+def test_get_background_executable_falls_back_when_pythonw_missing(monkeypatch, tmp_path):
+    """Falls back to sys.executable when pythonw.exe is not alongside python.exe."""
+    fake_python = tmp_path / "python.exe"
+    fake_python.touch()
+
+    monkeypatch.setattr(cli.os, "name", "nt")
+    monkeypatch.setattr(cli.sys, "executable", str(fake_python))
+
+    assert cli._get_background_executable() == str(fake_python)
+
+
+def test_get_background_executable_returns_sys_executable_on_non_windows(monkeypatch):
+    """On non-Windows platforms, sys.executable is returned unchanged."""
+    monkeypatch.setattr(cli.os, "name", "posix")
+
+    assert cli._get_background_executable() == sys.executable
 
 
 # ---------------------------------------------------------------------------

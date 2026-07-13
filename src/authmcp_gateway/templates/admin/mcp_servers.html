@@ -355,22 +355,28 @@
     </div>
 
     <!-- Tools List Modal (tag/chip view) -->
-    <div x-show="showToolsModal" x-cloak class="fixed inset-0 z-50 overflow-y-auto" @keydown.escape.window="showToolsModal = false">
+    <div x-show="showToolsModal" x-cloak
+         role="dialog" aria-modal="true" aria-label="Server Tools"
+         class="fixed inset-0 z-50 overflow-y-auto" @keydown.escape.window="showToolsModal = false">
         <div class="flex items-end sm:items-center justify-center min-h-screen">
-            <div class="fixed inset-0 bg-black/50" @click="showToolsModal = false"></div>
-            <div class="bg-white rounded-xl shadow-2xl z-10 w-full sm:max-w-3xl relative sm:my-8 max-h-[85vh] overflow-hidden border border-gray-200">
-                <div class="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
+            <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" @click="showToolsModal = false"></div>
+            <div class="bg-white sm:rounded-xl rounded-t-2xl shadow-2xl z-10 w-full sm:max-w-3xl relative sm:my-8 max-h-[85vh] overflow-hidden border-t-2 sm:border-2 border-blue-100 animate-slide-up">
+                <!-- Modal Header with Gradient -->
+                <div class="bg-gradient-to-r from-blue-600 via-cyan-600 to-cyan-700 px-4 sm:px-6 py-4 flex items-center justify-between sticky top-0 z-10">
                     <div>
-                        <h3 class="text-lg font-bold text-gray-900">Tools</h3>
-                        <p class="text-xs text-gray-500 mt-0.5">Click a tool tag to view details</p>
+                        <h3 class="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
+                            <i data-lucide="wrench" class="w-5 sm:w-6 h-5 sm:h-6"></i>
+                            Tools
+                        </h3>
+                        <p class="text-xs text-white/70 mt-0.5">Click a tool tag to view details</p>
                     </div>
                     <div class="flex items-center gap-2">
-                        <button x-show="toolsModalServerId" @click="showAddVirtualToolModal = true"
-                                class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold rounded-lg transition-colors">
+                        <button x-show="toolsModalServerId" @click="showToolsModal = false; showAddVirtualToolModal = true; $nextTick(() => lucide.createIcons())"
+                                class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white/20 hover:bg-white/30 text-white text-sm font-semibold rounded-lg transition-colors">
                             <i data-lucide="plus" class="w-4 h-4"></i>
                             Add Virtual Tool
                         </button>
-                        <button @click="showToolsModal = false" class="text-gray-500 hover:text-gray-800">
+                        <button @click="showToolsModal = false" class="text-white/80 hover:text-white hover:bg-white/10 rounded-lg p-2 transition-all touch-manipulation">
                             <i data-lucide="x" class="w-5 h-5"></i>
                         </button>
                     </div>
@@ -400,32 +406,34 @@
     </div>
 
     <!-- Tool Detail Modal -->
-    <div x-show="showToolDetailModal" x-cloak class="fixed inset-0 overflow-y-auto" style="z-index: 60;" @keydown.escape.window="showToolDetailModal = false">
+    <div x-show="showToolDetailModal" x-cloak
+         role="dialog" aria-modal="true" aria-label="Tool Details"
+         class="fixed inset-0 overflow-y-auto" style="z-index: 60;" @keydown.escape.window="showToolDetailModal = false">
         <div class="flex items-end sm:items-center justify-center min-h-screen">
-            <div class="fixed inset-0 bg-black/60" @click="showToolDetailModal = false"></div>
-            <div class="bg-white rounded-xl shadow-2xl z-10 w-full sm:max-w-2xl relative sm:my-8 max-h-[90vh] overflow-hidden border border-gray-200">
-                <!-- Header -->
-                <div class="px-5 py-4 border-b border-gray-200 flex items-start justify-between gap-3">
+            <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" @click="showToolDetailModal = false"></div>
+            <div class="bg-white sm:rounded-xl rounded-t-2xl shadow-2xl z-10 w-full sm:max-w-2xl relative sm:my-8 max-h-[90vh] overflow-hidden border-t-2 sm:border-2 border-blue-100 animate-slide-up">
+                <!-- Header with Gradient -->
+                <div class="bg-gradient-to-r from-blue-600 via-cyan-600 to-cyan-700 px-4 sm:px-6 py-4 flex items-start justify-between gap-3 sticky top-0 z-10">
                     <div class="min-w-0 flex-1">
                         <div class="flex items-center gap-2 flex-wrap">
-                            <code class="text-base font-bold text-gray-900" x-text="selectedTool && selectedTool.name"></code>
-                            <span x-show="selectedTool && selectedTool.tool_type === 'virtual'" class="px-2 py-0.5 text-xs rounded-full bg-violet-100 text-violet-700 font-semibold">virtual</span>
-                            <span x-show="selectedTool && selectedTool.tool_type !== 'virtual'" class="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-600 font-semibold">native</span>
-                            <span x-show="selectedTool && selectedTool.approval_state === 'pending'" class="px-2 py-0.5 text-xs rounded-full bg-amber-100 text-amber-700 font-semibold">pending</span>
-                            <span x-show="selectedTool && selectedTool.approval_state === 'approved'" class="px-2 py-0.5 text-xs rounded-full bg-green-100 text-green-700 font-semibold">approved</span>
+                            <code class="text-base font-bold text-white" x-text="selectedTool && selectedTool.name"></code>
+                            <span x-show="selectedTool && selectedTool.tool_type === 'virtual'" class="px-2 py-0.5 text-xs rounded-full bg-white/20 text-white font-semibold">virtual</span>
+                            <span x-show="selectedTool && selectedTool.tool_type !== 'virtual'" class="px-2 py-0.5 text-xs rounded-full bg-white/20 text-white font-semibold">native</span>
+                            <span x-show="selectedTool && selectedTool.approval_state === 'pending'" class="px-2 py-0.5 text-xs rounded-full bg-amber-400/80 text-white font-semibold">pending</span>
+                            <span x-show="selectedTool && selectedTool.approval_state === 'approved'" class="px-2 py-0.5 text-xs rounded-full bg-green-400/80 text-white font-semibold">approved</span>
                         </div>
-                        <p class="text-xs text-gray-500 mt-1">Source: <span x-text="selectedTool && selectedTool.source_server"></span></p>
+                        <p class="text-xs text-white/70 mt-1">Source: <span x-text="selectedTool && selectedTool.source_server"></span></p>
                     </div>
                     <div class="flex items-center gap-2 flex-shrink-0">
                         <!-- Delete Virtual Tool (only for virtual tools) -->
                         <button x-show="selectedTool && selectedTool.tool_type === 'virtual'"
                                 @click="deleteVirtualTool(selectedTool)"
-                                class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg transition-colors"
+                                class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-500/80 hover:bg-red-600 text-white text-xs font-semibold rounded-lg transition-colors"
                                 title="Delete this virtual tool">
                             <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                             <span>Delete</span>
                         </button>
-                        <button @click="showToolDetailModal = false" class="flex-shrink-0 text-gray-500 hover:text-gray-800 p-1">
+                        <button @click="showToolDetailModal = false" class="flex-shrink-0 text-white/80 hover:text-white hover:bg-white/10 rounded-lg p-2 transition-all">
                             <i data-lucide="x" class="w-5 h-5"></i>
                         </button>
                     </div>
@@ -520,18 +528,18 @@
     <!-- Add Virtual Tool Modal -->
     <div x-show="showAddVirtualToolModal" x-cloak
          role="dialog" aria-modal="true" aria-labelledby="addVirtualToolTitle"
-         class="fixed inset-0 z-[70] overflow-y-auto" @keydown.escape.window="if (!savingVirtualTool) { showAddVirtualToolModal = false; vtoolPrefill = null; }">
+         class="fixed inset-0 z-[70] overflow-y-auto" @keydown.escape.window="if (!savingVirtualTool) { showAddVirtualToolModal = false; showToolsModal = true; vtoolPrefill = null; }">
         <div class="flex items-end sm:items-center justify-center min-h-screen">
-            <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" @click="if (!savingVirtualTool) { showAddVirtualToolModal = false; vtoolPrefill = null; }"></div>
+            <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" @click="if (!savingVirtualTool) { showAddVirtualToolModal = false; showToolsModal = true; vtoolPrefill = null; }"></div>
 
             <div class="bg-white sm:rounded-xl rounded-t-2xl shadow-2xl z-10 w-full sm:max-w-lg relative sm:my-8 max-h-[95vh] sm:max-h-[90vh] overflow-hidden border-t-2 sm:border-2 border-violet-100 animate-slide-up">
                 <!-- Modal Header -->
-                <div class="bg-gradient-to-r from-violet-600 via-purple-600 to-purple-700 px-4 sm:px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+                <div class="bg-gradient-to-r from-blue-600 via-cyan-600 to-cyan-700 px-4 sm:px-6 py-4 flex items-center justify-between sticky top-0 z-10">
                     <h3 id="addVirtualToolTitle" class="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
                        <i data-lucide="sparkles" class="w-5 sm:w-6 h-5 sm:h-6"></i>
                        Add Virtual Tool
                     </h3>
-                    <button @click="showAddVirtualToolModal = false; vtoolPrefill = null;" :disabled="savingVirtualTool"
+                    <button @click="showAddVirtualToolModal = false; showToolsModal = true; vtoolPrefill = null;" :disabled="savingVirtualTool"
                            class="text-white/80 hover:text-white hover:bg-white/10 rounded-lg p-2 transition-all touch-manipulation disabled:opacity-60 disabled:cursor-not-allowed">
                        <i data-lucide="x" class="w-5 h-5"></i>
                     </button>
@@ -666,12 +674,12 @@
                        </div>
 
                        <div class="flex gap-3 mt-6 pt-4 border-t border-gray-200 sticky bottom-0 bg-white -mx-4 sm:-mx-0 px-4 sm:px-0 pb-4 sm:pb-0">
-                           <button type="button" @click="showAddVirtualToolModal = false; vtoolPrefill = null;" :disabled="savingVirtualTool"
+                           <button type="button" @click="showAddVirtualToolModal = false; showToolsModal = true; vtoolPrefill = null;" :disabled="savingVirtualTool"
                                    class="flex-1 px-4 py-3 sm:py-2.5 border-2 border-gray-400 text-gray-700 font-bold rounded-lg hover:bg-gray-100 hover:border-gray-600 transition-all touch-manipulation disabled:opacity-60 disabled:cursor-not-allowed">
                                Cancel
                            </button>
                            <button type="submit" :disabled="savingVirtualTool"
-                                   class="flex-1 px-4 py-3 sm:py-2.5 bg-gradient-to-r from-violet-600 via-purple-600 to-purple-700 hover:from-violet-700 hover:via-purple-700 hover:to-purple-800 text-white font-bold rounded-lg shadow-lg hover:shadow-xl transition-all touch-manipulation disabled:opacity-70 disabled:cursor-not-allowed">
+                                   class="flex-1 px-4 py-3 sm:py-2.5 bg-gradient-to-r from-blue-600 via-cyan-600 to-cyan-700 hover:from-blue-700 hover:via-cyan-700 hover:to-cyan-800 text-white font-bold rounded-lg shadow-lg hover:shadow-xl transition-all touch-manipulation disabled:opacity-70 disabled:cursor-not-allowed">
                                <span x-show="!savingVirtualTool" class="flex items-center justify-center gap-2">
                                    <i data-lucide="sparkles" class="w-4 h-4"></i>
                                    Add Virtual Tool

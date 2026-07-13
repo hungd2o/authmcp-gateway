@@ -34,6 +34,7 @@ __all__ = [
     "api_whitelist_servers_action",
     "api_whitelist_virtual_tools_action",
     "api_create_virtual_tool",
+    "api_delete_virtual_tool",
 ]
 
 
@@ -465,12 +466,14 @@ async def api_get_mcp_server_tools(request: Request) -> JSONResponse:
     for tool in virtual_tools:
         result_tools.append(
             {
+                "id": tool.get("id"),
                 "name": tool.get("name"),
                 "description": tool.get("description"),
                 "input_schema": (tool.get("config") or {}).get("input_schema", {}),
                 "source_server": tool.get("source_server_name") or server.get("name"),
                 "approval_state": tool.get("approval_state", "pending"),
                 "tool_type": "virtual",
+                "execution_type": tool.get("execution_type"),
             }
         )
 
@@ -681,3 +684,24 @@ async def api_create_virtual_tool(request: Request) -> JSONResponse:
         return JSONResponse({"error": str(exc)}, status_code=500)
 
     return JSONResponse({"tool_id": tool_id}, status_code=201)
+
+
+@api_error_handler
+async def api_delete_virtual_tool(request: Request) -> JSONResponse:
+    """API: Delete a virtual tool."""
+    from authmcp_gateway.mcp.store import delete_virtual_tool, get_virtual_tool
+
+    _config = get_config(request)
+    server_id = int(request.path_params["server_id"])
+    tool_id = int(request.path_params["tool_id"])
+
+    tool = get_virtual_tool(_config.auth.sqlite_path, tool_id)
+    if not tool:
+        return JSONResponse({"error": "Virtual tool not found"}, status_code=404)
+    if tool.get("mcp_server_id") != server_id:
+        return JSONResponse({"error": "Virtual tool does not belong to this server"}, status_code=404)
+
+    success = delete_virtual_tool(_config.auth.sqlite_path, tool_id)
+    if success:
+        return JSONResponse({"message": "Virtual tool deleted"})
+    return JSONResponse({"error": "Failed to delete virtual tool"}, status_code=500)

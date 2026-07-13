@@ -33,6 +33,7 @@ __all__ = [
     "api_whitelist_pending",
     "api_whitelist_servers_action",
     "api_whitelist_virtual_tools_action",
+    "api_create_virtual_tool",
 ]
 
 
@@ -622,3 +623,61 @@ async def api_whitelist_virtual_tools_action(request: Request) -> JSONResponse:
     ):
         return JSONResponse({"error": "Virtual tool not found"}, status_code=404)
     return JSONResponse({"message": f"Virtual tool {approval_state}"})
+
+
+@api_error_handler
+async def api_create_virtual_tool(request: Request) -> JSONResponse:
+    """API: Create a virtual tool for an MCP server."""
+    from authmcp_gateway.mcp.store import create_virtual_tool, get_mcp_server
+
+    _config = get_config(request)
+    server_id = int(request.path_params["server_id"])
+
+    server = get_mcp_server(_config.auth.sqlite_path, server_id)
+    if not server:
+        return JSONResponse({"error": "Server not found"}, status_code=404)
+
+    payload = await request.json()
+    name = (payload.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"error": "Tool name is required"}, status_code=400)
+
+    execution_type = (payload.get("execution_type") or "").strip().lower()
+    if execution_type not in ("mcp_wrapper", "http_call"):
+        return JSONResponse(
+            {"error": "execution_type must be 'mcp_wrapper' or 'http_call'"},
+            status_code=400,
+        )
+
+    description = (payload.get("description") or "").strip() or None
+    config = payload.get("config") or {}
+
+    if execution_type == "mcp_wrapper":
+        if not (config.get("target_tool") or "").strip():
+            return JSONResponse(
+                {"error": "config.target_tool is required for mcp_wrapper"},
+                status_code=400,
+            )
+    elif execution_type == "http_call":
+        request_cfg = config.get("request") or {}
+        if not (request_cfg.get("url") or "").strip():
+            return JSONResponse(
+                {"error": "config.request.url is required for http_call"},
+                status_code=400,
+            )
+
+    try:
+        tool_id = create_virtual_tool(
+            db_path=_config.auth.sqlite_path,
+            mcp_server_id=server_id,
+            name=name,
+            description=description,
+            execution_type=execution_type,
+            config=config,
+            enabled=True,
+        )
+    except Exception as exc:
+        logger.error("Failed to create virtual tool: %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+    return JSONResponse({"tool_id": tool_id}, status_code=201)

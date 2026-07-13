@@ -364,9 +364,16 @@
                         <h3 class="text-lg font-bold text-gray-900">Tools</h3>
                         <p class="text-xs text-gray-500 mt-0.5">Click a tool tag to view details</p>
                     </div>
-                    <button @click="showToolsModal = false" class="text-gray-500 hover:text-gray-800">
-                        <i data-lucide="x" class="w-5 h-5"></i>
-                    </button>
+                    <div class="flex items-center gap-2">
+                        <button x-show="toolsModalServerId" @click="showAddVirtualToolModal = true"
+                                class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold rounded-lg transition-colors">
+                            <i data-lucide="plus" class="w-4 h-4"></i>
+                            Add Virtual Tool
+                        </button>
+                        <button @click="showToolsModal = false" class="text-gray-500 hover:text-gray-800">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
                 </div>
                 <div class="p-5 overflow-auto" style="max-height: calc(85vh - 80px);">
                     <p x-show="toolsModalLoading" class="text-sm text-gray-600">Loading tools...</p>
@@ -423,7 +430,7 @@
                             class="px-4 py-2.5 text-sm transition-colors">Raw JSON</button>
                 </div>
                 <!-- Body -->
-                <div class="p-5 overflow-auto" style="max-height: calc(90vh - 130px);">
+                <div class="p-5 overflow-y-auto" style="max-height: calc(90vh - 140px);">
                     <!-- Details tab -->
                     <div x-show="toolDetailTab === 'details'" class="space-y-5">
                         <!-- Description -->
@@ -467,14 +474,142 @@
                         <!-- Example request -->
                         <div x-show="selectedTool && toolDetailParams().length > 0">
                             <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Example Request</h4>
-                            <pre class="text-xs bg-gray-900 text-green-300 rounded-lg p-4 overflow-auto" x-text="toolDetailExample()"></pre>
+                            <pre class="text-xs bg-gray-900 text-green-300 rounded-lg p-4 overflow-x-auto max-w-full whitespace-pre-wrap break-all" x-text="toolDetailExample()"></pre>
                         </div>
                     </div>
                     <!-- Raw JSON tab -->
                     <div x-show="toolDetailTab === 'raw'">
                         <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Input Schema (JSON)</h4>
-                        <pre class="text-xs bg-gray-50 border border-gray-200 rounded-lg p-4 overflow-auto" x-text="selectedTool ? JSON.stringify(selectedTool.input_schema || {}, null, 2) : ''"></pre>
+                        <pre class="text-xs bg-gray-50 border border-gray-200 rounded-lg p-4 overflow-x-auto max-w-full whitespace-pre-wrap break-all" x-text="selectedTool ? JSON.stringify(selectedTool.input_schema || {}, null, 2) : ''"></pre>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Virtual Tool Modal -->
+    <div x-show="showAddVirtualToolModal" x-cloak
+         role="dialog" aria-modal="true" aria-labelledby="addVirtualToolTitle"
+         class="fixed inset-0 z-[70] overflow-y-auto" @keydown.escape.window="if (!savingVirtualTool) showAddVirtualToolModal = false">
+        <div class="flex items-end sm:items-center justify-center min-h-screen">
+            <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" @click="if (!savingVirtualTool) showAddVirtualToolModal = false"></div>
+
+            <div class="bg-white sm:rounded-xl rounded-t-2xl shadow-2xl z-10 w-full sm:max-w-lg relative sm:my-8 max-h-[95vh] sm:max-h-[90vh] overflow-hidden border-t-2 sm:border-2 border-violet-100 animate-slide-up">
+                <!-- Modal Header -->
+                <div class="bg-gradient-to-r from-violet-600 via-purple-600 to-purple-700 px-4 sm:px-6 py-4 flex items-center justify-between sticky top-0 z-10">
+                    <h3 id="addVirtualToolTitle" class="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
+                       <i data-lucide="sparkles" class="w-5 sm:w-6 h-5 sm:h-6"></i>
+                       Add Virtual Tool
+                    </h3>
+                    <button @click="showAddVirtualToolModal = false" :disabled="savingVirtualTool"
+                           class="text-white/80 hover:text-white hover:bg-white/10 rounded-lg p-2 transition-all touch-manipulation disabled:opacity-60 disabled:cursor-not-allowed">
+                       <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+
+                <!-- Modal Body -->
+                <div class="p-4 sm:p-6 overflow-y-auto" style="max-height: calc(90vh - 140px);">
+                    <form id="addVirtualToolForm" @submit.prevent="addVirtualTool">
+                       <div class="space-y-4">
+                           <div>
+                               <label class="block text-sm font-bold text-gray-800 mb-2">Tool Name <span class="text-red-600">*</span></label>
+                               <input type="text" id="vtoolName" required
+                                      class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm">
+                               <p class="text-xs text-gray-500 mt-1">Unique name for this tool within the server.</p>
+                           </div>
+                           <div>
+                               <label class="block text-sm font-bold text-gray-800 mb-2">Description</label>
+                               <textarea id="vtoolDescription" rows="3"
+                                         class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all text-sm resize-none"></textarea>
+                           </div>
+                           <div>
+                               <label class="block text-sm font-bold text-gray-800 mb-2">Execution Type <span class="text-red-600">*</span></label>
+                               <select id="vtoolExecType" x-model="virtualToolExecType"
+                                       class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-medium text-base">
+                                   <option value="mcp_wrapper">mcp_wrapper — wraps a native MCP tool</option>
+                                   <option value="http_call">http_call — calls an external HTTP endpoint</option>
+                               </select>
+                           </div>
+
+                           <!-- mcp_wrapper fields -->
+                           <div x-show="virtualToolExecType === 'mcp_wrapper'" class="space-y-4 p-4 bg-violet-50 rounded-lg border border-violet-200">
+                               <p class="text-xs font-semibold text-violet-700 uppercase tracking-wide">MCP Wrapper Config</p>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Target Tool Name <span class="text-red-600">*</span></label>
+                                   <input type="text" id="vtoolTargetTool"
+                                          class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm"
+                                          placeholder="native_tool_name">
+                                   <p class="text-xs text-gray-500 mt-1">The native MCP tool this virtual tool wraps.</p>
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Static Arguments (JSON)</label>
+                                   <textarea id="vtoolStaticArgs" rows="3"
+                                             placeholder="{}"
+                                             class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
+                                   <p class="text-xs text-gray-500 mt-1">Fixed arguments merged before caller-supplied arguments.</p>
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Input Schema (JSON)</label>
+                                   <textarea id="vtoolInputSchemaMcpWrapper" rows="4"
+                                             placeholder='{"type":"object","properties":{}}'
+                                             class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
+                                   <p class="text-xs text-gray-500 mt-1">JSON Schema for this tool's input parameters (optional).</p>
+                               </div>
+                           </div>
+
+                           <!-- http_call fields -->
+                           <div x-show="virtualToolExecType === 'http_call'" class="space-y-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                               <p class="text-xs font-semibold text-blue-700 uppercase tracking-wide">HTTP Call Config</p>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">HTTP Method</label>
+                                   <select id="vtoolHttpMethod"
+                                           class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-medium text-base">
+                                       <option value="GET">GET</option>
+                                       <option value="POST" selected>POST</option>
+                                       <option value="PUT">PUT</option>
+                                       <option value="PATCH">PATCH</option>
+                                       <option value="DELETE">DELETE</option>
+                                   </select>
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">URL <span class="text-red-600">*</span></label>
+                                   <input type="url" id="vtoolUrl"
+                                          placeholder="https://api.example.com/endpoint"
+                                          class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm">
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Input Schema (JSON)</label>
+                                   <textarea id="vtoolInputSchemaHttpCall" rows="4"
+                                             placeholder='{"type":"object","properties":{}}'
+                                             class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
+                                   <p class="text-xs text-gray-500 mt-1">JSON Schema for this tool's input parameters (optional).</p>
+                               </div>
+                           </div>
+
+                           <div class="flex items-start gap-2 p-3 bg-amber-50 rounded-lg border border-amber-200">
+                               <i data-lucide="info" class="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0"></i>
+                               <p class="text-xs text-amber-800 leading-relaxed">Virtual tools are created with <strong>pending</strong> approval state and must be whitelisted before they become active.</p>
+                           </div>
+                       </div>
+
+                       <div class="flex gap-3 mt-6 pt-4 border-t border-gray-200 sticky bottom-0 bg-white -mx-4 sm:-mx-0 px-4 sm:px-0 pb-4 sm:pb-0">
+                           <button type="button" @click="showAddVirtualToolModal = false" :disabled="savingVirtualTool"
+                                   class="flex-1 px-4 py-3 sm:py-2.5 border-2 border-gray-400 text-gray-700 font-bold rounded-lg hover:bg-gray-100 hover:border-gray-600 transition-all touch-manipulation disabled:opacity-60 disabled:cursor-not-allowed">
+                               Cancel
+                           </button>
+                           <button type="submit" :disabled="savingVirtualTool"
+                                   class="flex-1 px-4 py-3 sm:py-2.5 bg-gradient-to-r from-violet-600 via-purple-600 to-purple-700 hover:from-violet-700 hover:via-purple-700 hover:to-purple-800 text-white font-bold rounded-lg shadow-lg hover:shadow-xl transition-all touch-manipulation disabled:opacity-70 disabled:cursor-not-allowed">
+                               <span x-show="!savingVirtualTool" class="flex items-center justify-center gap-2">
+                                   <i data-lucide="sparkles" class="w-4 h-4"></i>
+                                   Add Virtual Tool
+                               </span>
+                               <span x-show="savingVirtualTool" class="flex items-center justify-center gap-2">
+                                   <i data-lucide="refresh-cw" class="w-4 h-4 animate-spin"></i>
+                                   Saving...
+                               </span>
+                           </button>
+                       </div>
+                    </form>
                 </div>
             </div>
         </div>
@@ -500,11 +635,15 @@
             showToolsModal: false,
             toolsModalLoading: false,
             toolsMetadata: [],
+            toolsModalServerId: null,
             showToolDetailModal: false,
             selectedTool: null,
             toolDetailTab: 'details',
             savingAdd: false,
             savingEdit: false,
+            showAddVirtualToolModal: false,
+            savingVirtualTool: false,
+            virtualToolExecType: 'mcp_wrapper',
             pendingServerActions: {},
 
             init() {
@@ -897,6 +1036,7 @@
 
             async openToolsModal(serverId) {
                 this.showToolsModal = true;
+                this.toolsModalServerId = serverId;
                 this.toolsModalLoading = true;
                 this.toolsMetadata = [];
                 try {
@@ -916,6 +1056,70 @@
                 this.selectedTool = tool;
                 this.toolDetailTab = 'details';
                 this.showToolDetailModal = true;
+            },
+
+            async addVirtualTool() {
+                if (this.savingVirtualTool) return;
+
+                const name = (document.getElementById('vtoolName').value || '').trim();
+                if (!name) { showToast('Tool name is required', 'error'); return; }
+
+                const execType = this.virtualToolExecType;
+                const description = (document.getElementById('vtoolDescription').value || '').trim() || null;
+
+                let config = {};
+
+                if (execType === 'mcp_wrapper') {
+                    const targetTool = (document.getElementById('vtoolTargetTool').value || '').trim();
+                    if (!targetTool) { showToast('Target tool name is required for mcp_wrapper', 'error'); return; }
+
+                    let staticArgs = {};
+                    const rawStatic = (document.getElementById('vtoolStaticArgs').value || '').trim();
+                    if (rawStatic) {
+                        try { staticArgs = JSON.parse(rawStatic); } catch { showToast('Static Arguments is not valid JSON', 'error'); return; }
+                    }
+
+                    let inputSchema = {};
+                    const rawSchema = (document.getElementById('vtoolInputSchemaMcpWrapper').value || '').trim();
+                    if (rawSchema) {
+                        try { inputSchema = JSON.parse(rawSchema); } catch { showToast('Input Schema is not valid JSON', 'error'); return; }
+                    }
+
+                    config = { target_tool: targetTool, static_arguments: staticArgs, input_schema: inputSchema };
+
+                } else if (execType === 'http_call') {
+                    const method = document.getElementById('vtoolHttpMethod').value || 'POST';
+                    const url = (document.getElementById('vtoolUrl').value || '').trim();
+                    if (!url) { showToast('URL is required for http_call', 'error'); return; }
+
+                    let inputSchema = {};
+                    const rawSchema = (document.getElementById('vtoolInputSchemaHttpCall').value || '').trim();
+                    if (rawSchema) {
+                        try { inputSchema = JSON.parse(rawSchema); } catch { showToast('Input Schema is not valid JSON', 'error'); return; }
+                    }
+
+                    config = { request: { method, url }, input_schema: inputSchema };
+                }
+
+                this.savingVirtualTool = true;
+                try {
+                    const response = await fetch(`/admin/api/mcp-servers/${this.toolsModalServerId}/virtual-tools`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name, description, execution_type: execType, config }),
+                    });
+                    const payload = await response.json();
+                    if (!response.ok) throw new Error(payload.error || 'Failed to create virtual tool');
+                    showToast('Virtual tool created — pending whitelist approval', 'success');
+                    this.showAddVirtualToolModal = false;
+                    document.getElementById('addVirtualToolForm').reset();
+                    this.virtualToolExecType = 'mcp_wrapper';
+                    await this.openToolsModal(this.toolsModalServerId);
+                } catch (error) {
+                    showToast(error.message, 'error');
+                } finally {
+                    this.savingVirtualTool = false;
+                }
             },
 
             toolDetailParams() {

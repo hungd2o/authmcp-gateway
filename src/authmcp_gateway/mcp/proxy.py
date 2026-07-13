@@ -999,7 +999,9 @@ class McpProxy:
         parts = urlsplit(url)
         resolved_path = resolve_template_string(parts.path, context, mode="url")
         resolved_query = resolve_template_string(parts.query, context, mode="text")
-        return urlunsplit((parts.scheme, parts.netloc, resolved_path, resolved_query, parts.fragment))
+        return urlunsplit(
+            (parts.scheme, parts.netloc, resolved_path, resolved_query, parts.fragment)
+        )
 
     def _resolve_virtual_http_query(
         self,
@@ -1039,8 +1041,12 @@ class McpProxy:
         if mode == "none":
             return ""
         if mode == "template":
-            resolved = resolve_templated_value((stdin_config or {}).get("template"), context, mode="raw")
-            return resolved if isinstance(resolved, str) else json.dumps(resolved, ensure_ascii=False)
+            resolved = resolve_templated_value(
+                (stdin_config or {}).get("template"), context, mode="raw"
+            )
+            return (
+                resolved if isinstance(resolved, str) else json.dumps(resolved, ensure_ascii=False)
+            )
         return json.dumps(payload, ensure_ascii=False)
 
     def _coerce_http_query_value(self, value: Any) -> Any:
@@ -1088,8 +1094,12 @@ class McpProxy:
         )
         return {
             "returncode": process.returncode or 0,
-            "stdout": stdout[:VIRTUAL_TOOL_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace").strip(),
-            "stderr": stderr[:VIRTUAL_TOOL_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace").strip(),
+            "stdout": stdout[:VIRTUAL_TOOL_MAX_OUTPUT_BYTES]
+            .decode("utf-8", errors="replace")
+            .strip(),
+            "stderr": stderr[:VIRTUAL_TOOL_MAX_OUTPUT_BYTES]
+            .decode("utf-8", errors="replace")
+            .strip(),
             "truncated": truncated,
         }
 

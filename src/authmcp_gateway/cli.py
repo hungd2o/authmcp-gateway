@@ -194,7 +194,7 @@ Starting server...
         print(
             "⚠ MCP_WHITELIST_TOKEN was not set. Generated temporary token for this run:\n"
             f"  {runtime_config.whitelist_token}\n"
-            f"  Hidden whitelist URL: {server_url}/{runtime_config.whitelist_token}/whitelist\n"
+            "  Open Admin > Whitelist and enter this token to approve pending items.\n"
         )
 
     tray_available = is_tray_available()

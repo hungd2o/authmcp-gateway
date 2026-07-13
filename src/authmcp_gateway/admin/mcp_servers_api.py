@@ -1,6 +1,7 @@
 """Admin API: MCP server management."""
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "admin_mcp_servers",
+    "admin_whitelist",
     "parse_jwt_expiration",
     "api_list_mcp_servers",
     "api_mcp_servers_token_status",
@@ -28,7 +30,6 @@ __all__ = [
     "api_test_mcp_server",
     "api_get_mcp_server_tools",
     "api_mcp_server_process_action",
-    "hidden_whitelist_page",
     "api_whitelist_pending",
     "api_whitelist_servers_action",
     "api_whitelist_virtual_tools_action",
@@ -50,6 +51,11 @@ async def admin_mcp_servers(_: Request) -> HTMLResponse:
         active_page="mcp-servers",
         default_timeout=default_timeout,
     )
+
+
+async def admin_whitelist(_: Request) -> HTMLResponse:
+    """Whitelist approval page."""
+    return render_template("admin/whitelist.html", active_page="whitelist")
 
 
 def parse_jwt_expiration(token: str) -> dict:
@@ -512,22 +518,24 @@ async def api_mcp_server_process_action(request: Request) -> JSONResponse:
     )
 
 
-async def hidden_whitelist_page(request: Request) -> HTMLResponse:
+def _has_valid_whitelist_token(request: Request) -> bool:
     expected_token = (os.getenv("MCP_WHITELIST_TOKEN") or "").strip()
-    token = request.path_params.get("token", "")
-    if not expected_token or token != expected_token:
-        return HTMLResponse("Not found", status_code=404)
-    return render_template("admin/whitelist.html", token=token, active_page="mcp-servers")
+    provided_token = (request.headers.get("x-whitelist-token") or "").strip()
+    return bool(
+        expected_token and provided_token and hmac.compare_digest(provided_token, expected_token)
+    )
+
+
+def _whitelist_token_error() -> JSONResponse:
+    return JSONResponse({"error": "Valid whitelist token required"}, status_code=401)
 
 
 @api_error_handler
 async def api_whitelist_pending(request: Request) -> JSONResponse:
     from authmcp_gateway.mcp.store import list_pending_mcp_servers, list_pending_virtual_tools
 
-    expected_token = (os.getenv("MCP_WHITELIST_TOKEN") or "").strip()
-    token = request.path_params.get("token", "")
-    if not expected_token or token != expected_token:
-        return JSONResponse({"error": "Not found"}, status_code=404)
+    if not _has_valid_whitelist_token(request):
+        return _whitelist_token_error()
 
     db_path = get_config(request).auth.sqlite_path
     return JSONResponse(
@@ -542,10 +550,8 @@ async def api_whitelist_pending(request: Request) -> JSONResponse:
 async def api_whitelist_servers_action(request: Request) -> JSONResponse:
     from authmcp_gateway.mcp.store import update_server_approval
 
-    expected_token = (os.getenv("MCP_WHITELIST_TOKEN") or "").strip()
-    token = request.path_params.get("token", "")
-    if not expected_token or token != expected_token:
-        return JSONResponse({"error": "Not found"}, status_code=404)
+    if not _has_valid_whitelist_token(request):
+        return _whitelist_token_error()
 
     server_id = int(request.path_params["server_id"])
     payload = await request.json()
@@ -577,10 +583,8 @@ async def api_whitelist_servers_action(request: Request) -> JSONResponse:
 async def api_whitelist_virtual_tools_action(request: Request) -> JSONResponse:
     from authmcp_gateway.mcp.store import update_virtual_tool_approval
 
-    expected_token = (os.getenv("MCP_WHITELIST_TOKEN") or "").strip()
-    token = request.path_params.get("token", "")
-    if not expected_token or token != expected_token:
-        return JSONResponse({"error": "Not found"}, status_code=404)
+    if not _has_valid_whitelist_token(request):
+        return _whitelist_token_error()
 
     tool_id = int(request.path_params["tool_id"])
     payload = await request.json()

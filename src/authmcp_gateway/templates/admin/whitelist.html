@@ -5,11 +5,39 @@
 {% block content %}
 <div class="max-w-6xl mx-auto" x-data="whitelistManager()">
     <div class="mb-6">
-        <h1 class="text-3xl font-bold text-gray-900">Whitelist Approval Queue</h1>
-        <p class="text-gray-600 mt-1">Approve or block pending MCP servers and virtual tools.</p>
+        <h1 class="text-3xl font-bold text-gray-900">Whitelist</h1>
+        <p class="text-gray-600 mt-1">Enter the whitelist token to unlock pending approval actions for this tab only.</p>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <section class="bg-white rounded-lg border border-gray-200 p-4 mb-6">
+        <div class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div class="flex-1">
+                <label for="whitelist-token" class="block text-sm font-medium text-gray-700 mb-2">Whitelist token</label>
+                <input
+                    id="whitelist-token"
+                    x-model="inputToken"
+                    type="password"
+                    autocomplete="off"
+                    spellcheck="false"
+                    class="w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    placeholder="Enter whitelist token"
+                    @keydown.enter.prevent="unlock()"
+                >
+                <p class="mt-2 text-xs text-gray-500">The token is not stored in cookies or browser storage. Refreshing the page locks it again.</p>
+            </div>
+            <div class="flex gap-2">
+                <button @click="unlock()" class="px-4 py-2 rounded bg-indigo-600 text-white font-medium" :disabled="loading">
+                    <span x-show="!loading">Unlock</span>
+                    <span x-show="loading">Unlocking...</span>
+                </button>
+                <button @click="lock()" x-show="isUnlocked" class="px-4 py-2 rounded border border-gray-300 text-gray-700 font-medium">Lock</button>
+            </div>
+        </div>
+        <p x-show="errorMessage" x-text="errorMessage" class="mt-3 text-sm text-red-600"></p>
+        <p x-show="isUnlocked && !errorMessage" class="mt-3 text-sm text-green-600">Whitelist unlocked for this tab.</p>
+    </section>
+
+    <div x-show="isUnlocked" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <section class="bg-white rounded-lg border border-gray-200 p-4">
             <h2 class="text-lg font-semibold mb-3">Pending MCP Servers</h2>
             <template x-if="servers.length === 0"><p class="text-sm text-gray-500">No pending servers.</p></template>
@@ -57,30 +85,91 @@
 <script>
 function whitelistManager() {
     return {
-        token: "{{ token|e }}",
+        token: '',
+        inputToken: '',
+        isUnlocked: false,
+        loading: false,
+        errorMessage: '',
         servers: [],
         virtualTools: [],
-        init() { this.load(); },
+        _headers(extra = {}) {
+            return {...extra, 'X-Whitelist-Token': this.token};
+        },
+        lock(message = '') {
+            this.token = '';
+            this.inputToken = '';
+            this.isUnlocked = false;
+            this.loading = false;
+            this.errorMessage = message;
+            this.servers = [];
+            this.virtualTools = [];
+        },
+        async unlock() {
+            const token = this.inputToken.trim();
+            if (!token) {
+                this.lock('Whitelist token is required.');
+                return;
+            }
+            this.loading = true;
+            this.errorMessage = '';
+            this.token = token;
+            const ok = await this.load();
+            this.loading = false;
+            if (!ok) {
+                return;
+            }
+            this.isUnlocked = true;
+            this.inputToken = '';
+            showToast('Whitelist unlocked.');
+        },
         async load() {
-            const res = await fetch(`/${this.token}/api/whitelist/pending`);
+            const res = await fetch('/admin/api/whitelist/pending', {
+                headers: this._headers()
+            });
+            if (res.status === 401) {
+                this.lock('Invalid whitelist token.');
+                return false;
+            }
+            if (!res.ok) {
+                this.lock('Failed to load whitelist queue.');
+                showToast('Failed to load whitelist queue.', 'error');
+                return false;
+            }
             const data = await res.json();
             this.servers = data.servers || [];
             this.virtualTools = data.virtual_tools || [];
+            return true;
         },
         async actionServer(serverId, action) {
-            await fetch(`/${this.token}/api/whitelist/servers/${serverId}`, {
+            const res = await fetch(`/admin/api/whitelist/servers/${serverId}`, {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: this._headers({'Content-Type': 'application/json'}),
                 body: JSON.stringify({action})
             });
+            if (res.status === 401) {
+                this.lock('Whitelist token expired for this tab. Enter it again.');
+                return;
+            }
+            if (!res.ok) {
+                showToast('Failed to update whitelist entry.', 'error');
+                return;
+            }
             await this.load();
         },
         async actionVirtual(toolId, action) {
-            await fetch(`/${this.token}/api/whitelist/virtual-tools/${toolId}`, {
+            const res = await fetch(`/admin/api/whitelist/virtual-tools/${toolId}`, {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: this._headers({'Content-Type': 'application/json'}),
                 body: JSON.stringify({action})
             });
+            if (res.status === 401) {
+                this.lock('Whitelist token expired for this tab. Enter it again.');
+                return;
+            }
+            if (!res.ok) {
+                showToast('Failed to update whitelist entry.', 'error');
+                return;
+            }
             await this.load();
         }
     }

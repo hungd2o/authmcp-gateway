@@ -371,7 +371,7 @@
                         <p class="text-xs text-white/70 mt-0.5">Click a tool tag to view details</p>
                     </div>
                     <div class="flex items-center gap-2">
-                        <button x-show="toolsModalServerId" @click="showToolsModal = false; showAddVirtualToolModal = true; $nextTick(() => lucide.createIcons())"
+                        <button x-show="toolsModalServerId" @click="openAddVirtualToolModal()"
                                 class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white/20 hover:bg-white/30 text-white text-sm font-semibold rounded-lg transition-colors">
                             <i data-lucide="plus" class="w-4 h-4"></i>
                             Add Virtual Tool
@@ -528,9 +528,9 @@
     <!-- Add Virtual Tool Modal -->
     <div x-show="showAddVirtualToolModal" x-cloak
          role="dialog" aria-modal="true" aria-labelledby="addVirtualToolTitle"
-         class="fixed inset-0 z-[70] overflow-y-auto" @keydown.escape.window="if (!savingVirtualTool) { showAddVirtualToolModal = false; showToolsModal = true; vtoolPrefill = null; }">
+         class="fixed inset-0 z-[70] overflow-y-auto" @keydown.escape.window="if (!savingVirtualTool) closeAddVirtualToolModal()">
         <div class="flex items-end sm:items-center justify-center min-h-screen">
-            <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" @click="if (!savingVirtualTool) { showAddVirtualToolModal = false; showToolsModal = true; vtoolPrefill = null; }"></div>
+            <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" @click="if (!savingVirtualTool) closeAddVirtualToolModal()"></div>
 
             <div class="bg-white sm:rounded-xl rounded-t-2xl shadow-2xl z-10 w-full sm:max-w-lg relative sm:my-8 max-h-[95vh] sm:max-h-[90vh] overflow-hidden border-t-2 sm:border-2 border-violet-100 animate-slide-up">
                 <!-- Modal Header -->
@@ -539,7 +539,7 @@
                        <i data-lucide="sparkles" class="w-5 sm:w-6 h-5 sm:h-6"></i>
                        Add Virtual Tool
                     </h3>
-                    <button @click="showAddVirtualToolModal = false; showToolsModal = true; vtoolPrefill = null;" :disabled="savingVirtualTool"
+                    <button @click="closeAddVirtualToolModal()" :disabled="savingVirtualTool"
                            class="text-white/80 hover:text-white hover:bg-white/10 rounded-lg p-2 transition-all touch-manipulation disabled:opacity-60 disabled:cursor-not-allowed">
                        <i data-lucide="x" class="w-5 h-5"></i>
                     </button>
@@ -563,6 +563,7 @@
                            <div>
                                <label class="block text-sm font-bold text-gray-800 mb-2">Execution Type <span class="text-red-600">*</span></label>
                                <select id="vtoolExecType" x-model="virtualToolExecType"
+                                       @change="if (virtualToolExecType === 'pipeline_call') virtualToolBuilderMode = 'advanced'"
                                        class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-medium text-base">
                                    <option value="http_call">http_call — calls an external HTTP endpoint</option>
                                    <option value="stdio_call">stdio_call — runs a local command via stdin/stdout</option>
@@ -570,8 +571,145 @@
                                </select>
                            </div>
 
-                           <!-- http_call fields -->
-                           <div x-show="virtualToolExecType === 'http_call'" class="space-y-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                           <div x-show="virtualToolExecType !== 'pipeline_call'">
+                               <label class="block text-sm font-bold text-gray-800 mb-2">Builder Mode</label>
+                               <select x-model="virtualToolBuilderMode"
+                                       class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-medium text-base">
+                                   <option value="simple">simple — guided schema + mapping builder</option>
+                                   <option value="advanced">advanced — raw JSON/templates</option>
+                               </select>
+                               <p class="text-xs text-gray-500 mt-1">Simple mode generates the MCP input schema and mapping templates for common cases. Advanced mode exposes raw JSON/template fields.</p>
+                           </div>
+
+                           <div x-show="virtualToolBuilderMode === 'simple' && virtualToolExecType !== 'pipeline_call'" class="space-y-4 p-4 bg-slate-50 rounded-lg border border-slate-200">
+                               <div class="flex items-center justify-between gap-3">
+                                   <div>
+                                       <p class="text-xs font-semibold text-slate-700 uppercase tracking-wide">Simple Input Schema Builder</p>
+                                       <p class="text-xs text-slate-500 mt-1">Define top-level input fields, then map them below.</p>
+                                   </div>
+                                   <button type="button" @click="addVirtualToolSchemaField()"
+                                           class="px-3 py-2 text-xs font-bold rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100">
+                                       Add Field
+                                   </button>
+                               </div>
+                               <div class="space-y-3" x-show="virtualToolSchemaFields.length > 0">
+                                   <template x-for="field in virtualToolSchemaFields" :key="field.id">
+                                       <div class="grid grid-cols-1 sm:grid-cols-12 gap-3 p-3 bg-white rounded-lg border border-slate-200">
+                                           <div class="sm:col-span-3">
+                                               <label class="block text-xs font-bold text-gray-700 mb-1">Name</label>
+                                               <input type="text" x-model="field.name" placeholder="user_id"
+                                                      class="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-xs">
+                                           </div>
+                                           <div class="sm:col-span-3">
+                                               <label class="block text-xs font-bold text-gray-700 mb-1">Type</label>
+                                               <select x-model="field.type" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs">
+                                                   <option value="string">string</option>
+                                                   <option value="number">number</option>
+                                                   <option value="integer">integer</option>
+                                                   <option value="boolean">boolean</option>
+                                               </select>
+                                           </div>
+                                           <div class="sm:col-span-4">
+                                               <label class="block text-xs font-bold text-gray-700 mb-1">Description</label>
+                                               <input type="text" x-model="field.description" placeholder="Optional help text"
+                                                      class="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs">
+                                           </div>
+                                           <div class="sm:col-span-1 flex items-end">
+                                               <label class="inline-flex items-center gap-2 text-xs font-medium text-gray-700">
+                                                   <input type="checkbox" x-model="field.required" class="rounded border-gray-300">
+                                                   Req
+                                               </label>
+                                           </div>
+                                           <div class="sm:col-span-1 flex items-end justify-end">
+                                               <button type="button" @click="removeVirtualToolSchemaField(field.id)"
+                                                       class="px-2.5 py-2 text-xs font-bold rounded-lg border border-red-300 text-red-700 hover:bg-red-50">
+                                                   Remove
+                                               </button>
+                                           </div>
+                                       </div>
+                                   </template>
+                               </div>
+                               <p x-show="virtualToolSchemaFields.length === 0" class="text-xs text-slate-500">No fields yet. Add one or more fields to generate the input schema.</p>
+                           </div>
+
+                           <!-- http_call simple fields -->
+                           <div x-show="virtualToolExecType === 'http_call' && virtualToolBuilderMode === 'simple'" class="space-y-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                               <p class="text-xs font-semibold text-blue-700 uppercase tracking-wide">HTTP Call Config — Simple Mode</p>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">HTTP Method</label>
+                                   <select id="vtoolHttpMethodSimple"
+                                           class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-medium text-base">
+                                       <option value="GET">GET</option>
+                                       <option value="POST" selected>POST</option>
+                                       <option value="PUT">PUT</option>
+                                       <option value="PATCH">PATCH</option>
+                                       <option value="DELETE">DELETE</option>
+                                   </select>
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">URL <span class="text-red-600">*</span></label>
+                                   <input type="url" id="vtoolUrlSimple"
+                                          placeholder="https://api.example.com/users/{user_id}"
+                                          class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm">
+                                   <p class="text-xs text-gray-500 mt-1">Use <code class="font-mono">{field_name}</code> for URL path placeholders. Example: <code class="font-mono">/users/{id}</code>.</p>
+                               </div>
+                               <div>
+                                   <div class="flex items-center justify-between gap-3 mb-2">
+                                       <label class="block text-sm font-bold text-gray-800">Header Mappings</label>
+                                       <button type="button" @click="addVirtualToolHttpHeaderMapping()"
+                                               class="px-3 py-2 text-xs font-bold rounded-lg border border-blue-300 text-blue-700 hover:bg-blue-100">
+                                           Add Header
+                                       </button>
+                                   </div>
+                                   <div class="space-y-2" x-show="virtualToolHttpHeaderMappings.length > 0">
+                                       <template x-for="row in virtualToolHttpHeaderMappings" :key="row.id">
+                                           <div class="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                                               <input type="text" x-model="row.key" placeholder="X-Token"
+                                                      class="sm:col-span-5 px-3 py-2 border border-gray-300 rounded-lg font-mono text-xs">
+                                               <select x-model="row.field" class="sm:col-span-5 px-3 py-2 border border-gray-300 rounded-lg text-xs">
+                                                   <option value="">Select field…</option>
+                                                   <template x-for="fieldName in availableVirtualToolFieldNames()" :key="fieldName">
+                                                       <option :value="fieldName" x-text="fieldName"></option>
+                                                   </template>
+                                               </select>
+                                               <button type="button" @click="removeVirtualToolHttpHeaderMapping(row.id)"
+                                                       class="sm:col-span-2 px-3 py-2 text-xs font-bold rounded-lg border border-red-300 text-red-700 hover:bg-red-50">
+                                                   Remove
+                                               </button>
+                                           </div>
+                                       </template>
+                                   </div>
+                               </div>
+                               <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                   <div>
+                                       <label class="block text-sm font-bold text-gray-800 mb-2">Query Fields</label>
+                                       <div class="space-y-2 max-h-40 overflow-y-auto p-3 bg-white border border-blue-200 rounded-lg">
+                                           <template x-for="fieldName in availableVirtualToolFieldNames()" :key="'query-' + fieldName">
+                                               <label class="flex items-center gap-2 text-sm text-gray-700">
+                                                   <input type="checkbox" :value="fieldName" x-model="virtualToolHttpQueryFields" class="rounded border-gray-300">
+                                                   <span x-text="fieldName"></span>
+                                               </label>
+                                           </template>
+                                           <p x-show="availableVirtualToolFieldNames().length === 0" class="text-xs text-gray-500">Add schema fields first.</p>
+                                       </div>
+                                   </div>
+                                   <div>
+                                       <label class="block text-sm font-bold text-gray-800 mb-2">JSON Body Fields</label>
+                                       <div class="space-y-2 max-h-40 overflow-y-auto p-3 bg-white border border-blue-200 rounded-lg">
+                                           <template x-for="fieldName in availableVirtualToolFieldNames()" :key="'body-' + fieldName">
+                                               <label class="flex items-center gap-2 text-sm text-gray-700">
+                                                   <input type="checkbox" :value="fieldName" x-model="virtualToolHttpBodyFields" class="rounded border-gray-300">
+                                                   <span x-text="fieldName"></span>
+                                               </label>
+                                           </template>
+                                           <p x-show="availableVirtualToolFieldNames().length === 0" class="text-xs text-gray-500">Add schema fields first.</p>
+                                       </div>
+                                   </div>
+                               </div>
+                           </div>
+
+                           <!-- http_call advanced fields -->
+                           <div x-show="virtualToolExecType === 'http_call' && virtualToolBuilderMode === 'advanced'" class="space-y-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
                                <p class="text-xs font-semibold text-blue-700 uppercase tracking-wide">HTTP Call Config</p>
                                <div>
                                    <label class="block text-sm font-bold text-gray-800 mb-2">HTTP Method</label>
@@ -587,8 +725,27 @@
                                <div>
                                    <label class="block text-sm font-bold text-gray-800 mb-2">URL <span class="text-red-600">*</span></label>
                                    <input type="url" id="vtoolUrl"
-                                          placeholder="https://api.example.com/endpoint"
+                                          placeholder="https://api.example.com/users/&#123;&#123;arguments.user_id&#125;&#125;"
                                           class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm">
+                                   <p class="text-xs text-gray-500 mt-1">Supports placeholders like <code class="font-mono">&#123;&#123;arguments.user_id&#125;&#125;</code> in the path.</p>
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Headers (JSON)</label>
+                                   <textarea id="vtoolHttpHeaders" rows="3"
+                                             placeholder='{"X-Token":"&#123;&#123;arguments.token&#125;&#125;"}'
+                                             class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Query Params (JSON)</label>
+                                   <textarea id="vtoolHttpQuery" rows="3"
+                                             placeholder='{"limit":"&#123;&#123;arguments.limit&#125;&#125;"}'
+                                             class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">JSON Body (JSON)</label>
+                                   <textarea id="vtoolHttpBody" rows="4"
+                                             placeholder='{"message":"&#123;&#123;arguments.text&#125;&#125;","meta":"&#123;&#123;arguments.meta&#125;&#125;"}'
+                                             class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
                                </div>
                                <div>
                                    <label class="block text-sm font-bold text-gray-800 mb-2">Input Schema (JSON)</label>
@@ -599,8 +756,106 @@
                                </div>
                            </div>
 
-                           <!-- stdio_call fields -->
-                           <div x-show="virtualToolExecType === 'stdio_call'" class="space-y-4 p-4 bg-violet-50 rounded-lg border border-violet-200">
+                           <!-- stdio_call simple fields -->
+                           <div x-show="virtualToolExecType === 'stdio_call' && virtualToolBuilderMode === 'simple'" class="space-y-4 p-4 bg-violet-50 rounded-lg border border-violet-200">
+                               <p class="text-xs font-semibold text-violet-700 uppercase tracking-wide">STDIO Call Config — Simple Mode</p>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Command <span class="text-red-600">*</span></label>
+                                   <input type="text" id="vtoolStdioCommandSimple"
+                                          placeholder="npx"
+                                          class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm">
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Working Directory</label>
+                                   <input type="text" id="vtoolStdioWorkingDirSimple"
+                                          placeholder="/app"
+                                          class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm">
+                               </div>
+                               <div>
+                                   <div class="flex items-center justify-between gap-3 mb-2">
+                                       <label class="block text-sm font-bold text-gray-800">Command Args Builder</label>
+                                       <button type="button" @click="addVirtualToolStdioArgMapping()"
+                                               class="px-3 py-2 text-xs font-bold rounded-lg border border-violet-300 text-violet-700 hover:bg-violet-100">
+                                           Add Arg
+                                       </button>
+                                   </div>
+                                   <div class="space-y-2" x-show="virtualToolStdioArgMappings.length > 0">
+                                       <template x-for="row in virtualToolStdioArgMappings" :key="row.id">
+                                           <div class="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                                               <select x-model="row.kind" class="sm:col-span-3 px-3 py-2 border border-gray-300 rounded-lg text-xs">
+                                                   <option value="flag">flag + field</option>
+                                                   <option value="field">field only</option>
+                                                   <option value="static">static arg</option>
+                                               </select>
+                                               <input type="text" x-model="row.value"
+                                                      :placeholder="row.kind === 'static' ? 'static value' : '--token'"
+                                                      class="sm:col-span-4 px-3 py-2 border border-gray-300 rounded-lg font-mono text-xs">
+                                               <select x-model="row.field" class="sm:col-span-3 px-3 py-2 border border-gray-300 rounded-lg text-xs">
+                                                   <option value="">Select field…</option>
+                                                   <template x-for="fieldName in availableVirtualToolFieldNames()" :key="'stdio-arg-' + fieldName">
+                                                       <option :value="fieldName" x-text="fieldName"></option>
+                                                   </template>
+                                               </select>
+                                               <button type="button" @click="removeVirtualToolStdioArgMapping(row.id)"
+                                                       class="sm:col-span-2 px-3 py-2 text-xs font-bold rounded-lg border border-red-300 text-red-700 hover:bg-red-50">
+                                                   Remove
+                                               </button>
+                                           </div>
+                                       </template>
+                                   </div>
+                               </div>
+                               <div>
+                                   <div class="flex items-center justify-between gap-3 mb-2">
+                                       <label class="block text-sm font-bold text-gray-800">Environment Mappings</label>
+                                       <button type="button" @click="addVirtualToolStdioEnvMapping()"
+                                               class="px-3 py-2 text-xs font-bold rounded-lg border border-violet-300 text-violet-700 hover:bg-violet-100">
+                                           Add Env
+                                       </button>
+                                   </div>
+                                   <div class="space-y-2" x-show="virtualToolStdioEnvMappings.length > 0">
+                                       <template x-for="row in virtualToolStdioEnvMappings" :key="row.id">
+                                           <div class="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                                               <input type="text" x-model="row.key" placeholder="AUTH_TOKEN"
+                                                      class="sm:col-span-5 px-3 py-2 border border-gray-300 rounded-lg font-mono text-xs">
+                                               <select x-model="row.field" class="sm:col-span-5 px-3 py-2 border border-gray-300 rounded-lg text-xs">
+                                                   <option value="">Select field…</option>
+                                                   <template x-for="fieldName in availableVirtualToolFieldNames()" :key="'stdio-env-' + fieldName">
+                                                       <option :value="fieldName" x-text="fieldName"></option>
+                                                   </template>
+                                               </select>
+                                               <button type="button" @click="removeVirtualToolStdioEnvMapping(row.id)"
+                                                       class="sm:col-span-2 px-3 py-2 text-xs font-bold rounded-lg border border-red-300 text-red-700 hover:bg-red-50">
+                                                   Remove
+                                               </button>
+                                           </div>
+                                       </template>
+                                   </div>
+                               </div>
+                               <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                   <div>
+                                       <label class="block text-sm font-bold text-gray-800 mb-2">STDIN Mode</label>
+                                       <select x-model="virtualToolStdioStdinMode"
+                                               class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+                                           <option value="json">Full JSON arguments</option>
+                                           <option value="field">Single mapped field</option>
+                                           <option value="none">Disable stdin</option>
+                                       </select>
+                                   </div>
+                                   <div x-show="virtualToolStdioStdinMode === 'field'">
+                                       <label class="block text-sm font-bold text-gray-800 mb-2">STDIN Field</label>
+                                       <select x-model="virtualToolStdioStdinField"
+                                               class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+                                           <option value="">Select field…</option>
+                                           <template x-for="fieldName in availableVirtualToolFieldNames()" :key="'stdin-' + fieldName">
+                                               <option :value="fieldName" x-text="fieldName"></option>
+                                           </template>
+                                       </select>
+                                   </div>
+                               </div>
+                           </div>
+
+                           <!-- stdio_call advanced fields -->
+                           <div x-show="virtualToolExecType === 'stdio_call' && virtualToolBuilderMode === 'advanced'" class="space-y-4 p-4 bg-violet-50 rounded-lg border border-violet-200">
                                <p class="text-xs font-semibold text-violet-700 uppercase tracking-wide">STDIO Call Config</p>
                                <div>
                                    <label class="block text-sm font-bold text-gray-800 mb-2">Command <span class="text-red-600">*</span></label>
@@ -632,7 +887,22 @@
                                    <textarea id="vtoolInputSchemaStdioCall" rows="4"
                                              placeholder='{"type":"object","properties":{}}'
                                              class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
-                                   <p class="text-xs text-gray-500 mt-1">Arguments matching this schema are JSON-encoded and piped to the process's stdin — e.g. schema <code class="font-mono">{"query":{"type":"string"}}</code> sends <code class="font-mono">{"query":"..."}</code> on stdin; your script reads/parses it (<code class="font-mono">json.load(sys.stdin)</code> in Python). Command and args below are static — schema fields are NOT substituted into them.</p>
+                                   <p class="text-xs text-gray-500 mt-1">Arguments matching this schema can be substituted into args/env/stdin via <code class="font-mono">&#123;&#123;arguments.field&#125;&#125;</code>.</p>
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">STDIN Mode</label>
+                                   <select id="vtoolStdioStdinMode"
+                                           class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-medium text-base">
+                                       <option value="json">json — pass full arguments JSON</option>
+                                       <option value="template">template — resolve custom JSON template</option>
+                                       <option value="none">none — do not send stdin</option>
+                                   </select>
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">STDIN Template (JSON)</label>
+                                   <textarea id="vtoolStdioStdinTemplate" rows="4"
+                                             placeholder='{"query":"&#123;&#123;arguments.query&#125;&#125;"}'
+                                             class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
                                    <p class="text-xs text-amber-700 mt-1 flex items-start gap-1"><i data-lucide="shield-alert" class="w-3.5 h-3.5 mt-0.5 flex-shrink-0"></i> Stdout/stderr are capped at 256KB and truncated beyond that; non-zero exit codes are returned as tool errors.</p>
                                </div>
                            </div>
@@ -669,6 +939,25 @@
                                </div>
                            </div>
 
+                           <div class="space-y-3 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                               <div class="flex items-center justify-between gap-3">
+                                   <div>
+                                       <p class="text-xs font-semibold text-gray-700 uppercase tracking-wide">Preview</p>
+                                       <p class="text-xs text-gray-500 mt-1">Paste sample arguments to verify the generated request/argv.</p>
+                                   </div>
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Sample Arguments (JSON)</label>
+                                   <textarea x-model="virtualToolSampleArguments" rows="4"
+                                             placeholder='{"user_id":"123","token":"abc"}'
+                                             class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all font-mono text-sm resize-y"></textarea>
+                               </div>
+                               <div>
+                                   <label class="block text-sm font-bold text-gray-800 mb-2">Generated Preview</label>
+                                   <pre class="text-xs bg-white border border-gray-200 rounded-lg p-4 overflow-x-auto max-w-full whitespace-pre-wrap break-all" x-text="virtualToolPreview()"></pre>
+                               </div>
+                           </div>
+
                            <div class="flex items-start gap-2 p-3 bg-amber-50 rounded-lg border border-amber-200">
                                <i data-lucide="info" class="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0"></i>
                                <p class="text-xs text-amber-800 leading-relaxed">Virtual tools are created with <strong>pending</strong> approval state and must be whitelisted before they become active.</p>
@@ -676,7 +965,7 @@
                        </div>
 
                        <div class="flex gap-3 mt-6 pt-4 border-t border-gray-200 sticky bottom-0 bg-white -mx-4 sm:-mx-0 px-4 sm:px-0 pb-4 sm:pb-0">
-                           <button type="button" @click="showAddVirtualToolModal = false; showToolsModal = true; vtoolPrefill = null;" :disabled="savingVirtualTool"
+                           <button type="button" @click="closeAddVirtualToolModal()" :disabled="savingVirtualTool"
                                    class="flex-1 px-4 py-3 sm:py-2.5 border-2 border-gray-400 text-gray-700 font-bold rounded-lg hover:bg-gray-100 hover:border-gray-600 transition-all touch-manipulation disabled:opacity-60 disabled:cursor-not-allowed">
                                Cancel
                            </button>
@@ -727,14 +1016,137 @@
             showAddVirtualToolModal: false,
             savingVirtualTool: false,
             virtualToolExecType: 'http_call',
+            virtualToolBuilderMode: 'simple',
             vtoolPrefill: null,
             pendingServerActions: {},
             toolDetailRows: [],
             expandedToolParamPaths: {},
+            virtualToolSchemaFields: [],
+            virtualToolHttpQueryFields: [],
+            virtualToolHttpBodyFields: [],
+            virtualToolHttpHeaderMappings: [],
+            virtualToolStdioArgMappings: [],
+            virtualToolStdioEnvMappings: [],
+            virtualToolStdioStdinMode: 'json',
+            virtualToolStdioStdinField: '',
+            virtualToolSampleArguments: '{\n  \n}',
 
             init() {
+                this.resetVirtualToolBuilder();
                 document.getElementById('aggregatedEndpoint').textContent = window.location.origin + '/mcp';
                 this.loadServers();
+            },
+
+            resetVirtualToolBuilder() {
+                this.virtualToolBuilderMode = 'simple';
+                this.virtualToolSchemaFields = [];
+                this.virtualToolHttpQueryFields = [];
+                this.virtualToolHttpBodyFields = [];
+                this.virtualToolHttpHeaderMappings = [];
+                this.virtualToolStdioArgMappings = [];
+                this.virtualToolStdioEnvMappings = [];
+                this.virtualToolStdioStdinMode = 'json';
+                this.virtualToolStdioStdinField = '';
+                this.virtualToolSampleArguments = '{\n  \n}';
+            },
+
+            openAddVirtualToolModal() {
+                this.showToolsModal = false;
+                this.showAddVirtualToolModal = true;
+                this.vtoolPrefill = null;
+                document.getElementById('addVirtualToolForm')?.reset();
+                this.virtualToolExecType = 'http_call';
+                this.resetVirtualToolBuilder();
+                this.$nextTick(() => lucide.createIcons());
+            },
+
+            closeAddVirtualToolModal() {
+                this.showAddVirtualToolModal = false;
+                this.showToolsModal = true;
+                this.vtoolPrefill = null;
+                document.getElementById('addVirtualToolForm')?.reset();
+                this.virtualToolExecType = 'http_call';
+                this.resetVirtualToolBuilder();
+            },
+
+            _newVirtualToolRowId(prefix) {
+                return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+            },
+
+            addVirtualToolSchemaField() {
+                this.virtualToolSchemaFields.push({
+                    id: this._newVirtualToolRowId('schema'),
+                    name: '',
+                    type: 'string',
+                    required: false,
+                    description: '',
+                });
+            },
+
+            removeVirtualToolSchemaField(id) {
+                this.virtualToolSchemaFields = this.virtualToolSchemaFields.filter(field => field.id !== id);
+                const validNames = new Set(this.availableVirtualToolFieldNames());
+                this.virtualToolHttpQueryFields = this.virtualToolHttpQueryFields.filter(name => validNames.has(name));
+                this.virtualToolHttpBodyFields = this.virtualToolHttpBodyFields.filter(name => validNames.has(name));
+                this.virtualToolHttpHeaderMappings = this.virtualToolHttpHeaderMappings.map(row => (
+                    validNames.has(row.field) ? row : { ...row, field: '' }
+                ));
+                this.virtualToolStdioArgMappings = this.virtualToolStdioArgMappings.map(row => (
+                    validNames.has(row.field) || !row.field ? row : { ...row, field: '' }
+                ));
+                this.virtualToolStdioEnvMappings = this.virtualToolStdioEnvMappings.map(row => (
+                    validNames.has(row.field) || !row.field ? row : { ...row, field: '' }
+                ));
+                if (!validNames.has(this.virtualToolStdioStdinField)) this.virtualToolStdioStdinField = '';
+            },
+
+            addVirtualToolHttpHeaderMapping() {
+                this.virtualToolHttpHeaderMappings.push({
+                    id: this._newVirtualToolRowId('http-header'),
+                    key: '',
+                    field: '',
+                });
+            },
+
+            removeVirtualToolHttpHeaderMapping(id) {
+                this.virtualToolHttpHeaderMappings = this.virtualToolHttpHeaderMappings.filter(row => row.id !== id);
+            },
+
+            addVirtualToolStdioArgMapping() {
+                this.virtualToolStdioArgMappings.push({
+                    id: this._newVirtualToolRowId('stdio-arg'),
+                    kind: 'flag',
+                    value: '',
+                    field: '',
+                });
+            },
+
+            removeVirtualToolStdioArgMapping(id) {
+                this.virtualToolStdioArgMappings = this.virtualToolStdioArgMappings.filter(row => row.id !== id);
+            },
+
+            addVirtualToolStdioEnvMapping() {
+                this.virtualToolStdioEnvMappings.push({
+                    id: this._newVirtualToolRowId('stdio-env'),
+                    key: '',
+                    field: '',
+                });
+            },
+
+            removeVirtualToolStdioEnvMapping(id) {
+                this.virtualToolStdioEnvMappings = this.virtualToolStdioEnvMappings.filter(row => row.id !== id);
+            },
+
+            availableVirtualToolFieldNames() {
+                const seen = new Set();
+                const names = [];
+                for (const field of this.virtualToolSchemaFields) {
+                    const name = (field?.name || '').trim();
+                    if (!name || seen.has(name)) continue;
+                    seen.add(name);
+                    names.push(name);
+                }
+                return names;
             },
 
             _scheduleServersReload(delayMs = 1500) {
@@ -888,16 +1300,18 @@
                 }
             },
 
-            _parseVirtualToolArgsOrToast(fieldId) {
+            _parseVirtualToolArgsOrToast(fieldId, options = {}) {
+                const { toast = true } = options;
                 try {
                     return this._parseCommandArgs(document.getElementById(fieldId)?.value || '', 'lines');
                 } catch (error) {
-                    showToast(error.message, 'error');
+                    if (toast) showToast(error.message, 'error');
                     return null;
                 }
             },
 
-            _parseVirtualToolEnvVarsOrToast(fieldId) {
+            _parseVirtualToolEnvVarsOrToast(fieldId, options = {}) {
+                const { toast = true } = options;
                 const raw = (document.getElementById(fieldId)?.value || '').trim();
                 if (!raw) return {};
                 const envVars = {};
@@ -906,7 +1320,7 @@
                     if (!trimmed || trimmed.startsWith('#')) continue;
                     const idx = trimmed.indexOf('=');
                     if (idx <= 0) {
-                        showToast('Environment variables must use KEY=VALUE format', 'error');
+                        if (toast) showToast('Environment variables must use KEY=VALUE format', 'error');
                         return null;
                     }
                     const key = trimmed.slice(0, idx).trim();
@@ -914,6 +1328,317 @@
                     envVars[key] = value;
                 }
                 return envVars;
+            },
+
+            _parseVirtualToolJsonFieldOrToast(fieldId, emptyValue = {}, options = {}) {
+                const { toast = true } = options;
+                const raw = (document.getElementById(fieldId)?.value || '').trim();
+                if (!raw) return emptyValue;
+                try {
+                    return JSON.parse(raw);
+                } catch {
+                    if (toast) showToast('One of the JSON fields is invalid', 'error');
+                    return null;
+                }
+            },
+
+            _virtualToolTemplate(fieldName) {
+                return `${String.fromCharCode(123, 123)}arguments.${fieldName}${String.fromCharCode(125, 125)}`;
+            },
+
+            _normalizeSimpleVirtualToolUrl(url) {
+                return String(url || '').replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, fieldName) => (
+                    this._virtualToolTemplate(fieldName)
+                ));
+            },
+
+            _buildSimpleVirtualToolSchemaOrThrow() {
+                const properties = {};
+                const required = [];
+                const usedNames = new Set();
+                for (const field of this.virtualToolSchemaFields) {
+                    const name = (field?.name || '').trim();
+                    if (!name) throw new Error('Each schema field needs a name');
+                    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+                        throw new Error(`Schema field "${name}" must be a simple identifier`);
+                    }
+                    if (usedNames.has(name)) throw new Error(`Schema field "${name}" is duplicated`);
+                    usedNames.add(name);
+                    properties[name] = { type: field.type || 'string' };
+                    if ((field.description || '').trim()) {
+                        properties[name].description = field.description.trim();
+                    }
+                    if (field.required) required.push(name);
+                }
+                const schema = { type: 'object', properties };
+                if (required.length > 0) schema.required = required;
+                return schema;
+            },
+
+            _buildSimpleHttpConfigOrThrow() {
+                const method = document.getElementById('vtoolHttpMethodSimple').value || 'POST';
+                const url = (document.getElementById('vtoolUrlSimple').value || '').trim();
+                if (!url) throw new Error('URL is required for http_call');
+                const headers = {};
+                for (const row of this.virtualToolHttpHeaderMappings) {
+                    const key = (row.key || '').trim();
+                    const field = (row.field || '').trim();
+                    if (!key && !field) continue;
+                    if (!key || !field) throw new Error('HTTP header mappings need both header name and field');
+                    headers[key] = this._virtualToolTemplate(field);
+                }
+                const query = {};
+                for (const field of this.virtualToolHttpQueryFields) {
+                    query[field] = this._virtualToolTemplate(field);
+                }
+                const body = {};
+                for (const field of this.virtualToolHttpBodyFields) {
+                    body[field] = this._virtualToolTemplate(field);
+                }
+                return {
+                    editor_mode: 'simple',
+                    request: {
+                        method,
+                        url: this._normalizeSimpleVirtualToolUrl(url),
+                        headers,
+                        query,
+                        body,
+                    },
+                    input_schema: this._buildSimpleVirtualToolSchemaOrThrow(),
+                };
+            },
+
+            _buildSimpleStdioConfigOrThrow() {
+                const command = (document.getElementById('vtoolStdioCommandSimple').value || '').trim();
+                if (!command) throw new Error('Command is required for stdio_call');
+                const commandArgs = [];
+                for (const row of this.virtualToolStdioArgMappings) {
+                    const kind = row.kind || 'flag';
+                    const value = (row.value || '').trim();
+                    const field = (row.field || '').trim();
+                    if (kind === 'static') {
+                        if (!value) continue;
+                        commandArgs.push(value);
+                        continue;
+                    }
+                    if (kind === 'field') {
+                        if (!field) throw new Error('Command arg field mappings need a field');
+                        commandArgs.push(this._virtualToolTemplate(field));
+                        continue;
+                    }
+                    if (!value || !field) throw new Error('Flag mappings need both a flag and a field');
+                    commandArgs.push(value, this._virtualToolTemplate(field));
+                }
+                const envVars = {};
+                for (const row of this.virtualToolStdioEnvMappings) {
+                    const key = (row.key || '').trim();
+                    const field = (row.field || '').trim();
+                    if (!key && !field) continue;
+                    if (!key || !field) throw new Error('Environment mappings need both key and field');
+                    envVars[key] = this._virtualToolTemplate(field);
+                }
+                let stdin = { mode: 'json' };
+                if (this.virtualToolStdioStdinMode === 'none') {
+                    stdin = { mode: 'none' };
+                } else if (this.virtualToolStdioStdinMode === 'field') {
+                    if (!this.virtualToolStdioStdinField) throw new Error('Select a field for stdin template mode');
+                    stdin = { mode: 'template', template: this._virtualToolTemplate(this.virtualToolStdioStdinField) };
+                }
+                return {
+                    editor_mode: 'simple',
+                    command,
+                    command_args: commandArgs,
+                    working_dir: (document.getElementById('vtoolStdioWorkingDirSimple').value || '').trim() || null,
+                    env_vars: envVars,
+                    stdin,
+                    input_schema: this._buildSimpleVirtualToolSchemaOrThrow(),
+                };
+            },
+
+            _buildVirtualToolConfigOrThrow(options = {}) {
+                const execType = this.virtualToolExecType;
+                if (execType === 'pipeline_call') {
+                    return this._buildAdvancedPipelineConfigOrThrow(options);
+                }
+                if (this.virtualToolBuilderMode === 'simple') {
+                    if (execType === 'http_call') return this._buildSimpleHttpConfigOrThrow();
+                    if (execType === 'stdio_call') return this._buildSimpleStdioConfigOrThrow();
+                }
+                if (execType === 'http_call') return this._buildAdvancedHttpConfigOrThrow(options);
+                if (execType === 'stdio_call') return this._buildAdvancedStdioConfigOrThrow(options);
+                return {};
+            },
+
+            _buildAdvancedHttpConfigOrThrow(options = {}) {
+                const method = document.getElementById('vtoolHttpMethod').value || 'POST';
+                const url = (document.getElementById('vtoolUrl').value || '').trim();
+                if (!url) throw new Error('URL is required for http_call');
+                const inputSchema = this._parseVirtualToolJsonFieldOrToast('vtoolInputSchemaHttpCall', {}, options);
+                if (inputSchema === null) throw new Error('Input Schema is not valid JSON');
+                const headers = this._parseVirtualToolJsonFieldOrToast('vtoolHttpHeaders', {}, options);
+                if (headers === null || typeof headers !== 'object' || Array.isArray(headers)) {
+                    throw new Error('HTTP headers must be a JSON object');
+                }
+                let query = null;
+                const rawQuery = (document.getElementById('vtoolHttpQuery')?.value || '').trim();
+                if (rawQuery) {
+                    try {
+                        query = JSON.parse(rawQuery);
+                    } catch {
+                        if (options.toast !== false) showToast('HTTP query JSON is invalid', 'error');
+                        throw new Error('HTTP query JSON is invalid');
+                    }
+                }
+                if (query !== null && (typeof query !== 'object' || Array.isArray(query))) {
+                    throw new Error('HTTP query must be a JSON object');
+                }
+                let body = null;
+                const rawBody = (document.getElementById('vtoolHttpBody')?.value || '').trim();
+                if (rawBody) {
+                    try {
+                        body = JSON.parse(rawBody);
+                    } catch {
+                        if (options.toast !== false) showToast('HTTP body JSON is invalid', 'error');
+                        throw new Error('HTTP body JSON is invalid');
+                    }
+                }
+                return {
+                    editor_mode: 'advanced',
+                    request: { method, url, headers, query, body },
+                    input_schema: inputSchema,
+                };
+            },
+
+            _buildAdvancedStdioConfigOrThrow(options = {}) {
+                const command = (document.getElementById('vtoolStdioCommand').value || '').trim();
+                if (!command) throw new Error('Command is required for stdio_call');
+                const commandArgs = this._parseVirtualToolArgsOrToast('vtoolStdioArgs', options);
+                if (commandArgs === null) throw new Error('Command args are invalid');
+                const envVars = this._parseVirtualToolEnvVarsOrToast('vtoolStdioEnvVars', options);
+                if (envVars === null) throw new Error('Environment variables are invalid');
+                const inputSchema = this._parseVirtualToolJsonFieldOrToast('vtoolInputSchemaStdioCall', {}, options);
+                if (inputSchema === null) throw new Error('Input Schema is not valid JSON');
+                const stdinMode = document.getElementById('vtoolStdioStdinMode').value || 'json';
+                let stdin = { mode: stdinMode };
+                if (stdinMode === 'template') {
+                    const template = this._parseVirtualToolJsonFieldOrToast('vtoolStdioStdinTemplate', null, options);
+                    if (template === null) throw new Error('STDIN template JSON is invalid');
+                    stdin = { mode: 'template', template };
+                }
+                return {
+                    editor_mode: 'advanced',
+                    command,
+                    command_args: commandArgs,
+                    working_dir: (document.getElementById('vtoolStdioWorkingDir').value || '').trim() || null,
+                    env_vars: envVars,
+                    stdin,
+                    input_schema: inputSchema,
+                };
+            },
+
+            _buildAdvancedPipelineConfigOrThrow(options = {}) {
+                const rawSteps = (document.getElementById('vtoolPipelineSteps').value || '').trim();
+                if (!rawSteps) throw new Error('Pipeline steps are required for pipeline_call');
+                let steps = [];
+                try {
+                    steps = JSON.parse(rawSteps);
+                } catch {
+                    throw new Error('Pipeline steps must be valid JSON');
+                }
+                if (!Array.isArray(steps) || steps.length === 0) {
+                    throw new Error('Pipeline steps must be a non-empty JSON array');
+                }
+                const envVars = this._parseVirtualToolEnvVarsOrToast('vtoolPipelineEnvVars', options);
+                if (envVars === null) throw new Error('Environment variables are invalid');
+                const inputSchema = this._parseVirtualToolJsonFieldOrToast('vtoolInputSchemaPipelineCall', {}, options);
+                if (inputSchema === null) throw new Error('Input Schema is not valid JSON');
+                return {
+                    editor_mode: 'advanced',
+                    steps,
+                    working_dir: (document.getElementById('vtoolPipelineWorkingDir').value || '').trim() || null,
+                    env_vars: envVars,
+                    input_schema: inputSchema,
+                };
+            },
+
+            _parseVirtualToolSampleArguments() {
+                const raw = (this.virtualToolSampleArguments || '').trim();
+                if (!raw) return {};
+                return JSON.parse(raw);
+            },
+
+            _resolveVirtualToolPreviewValue(value, args, { urlMode = false, rawMode = true } = {}) {
+                if (typeof value === 'string') {
+                    const open = `\\${String.fromCharCode(123)}\\${String.fromCharCode(123)}`;
+                    const close = `\\${String.fromCharCode(125)}\\${String.fromCharCode(125)}`;
+                    const tokenRegex = new RegExp(`${open}\\s*arguments((?:\\.[A-Za-z_][A-Za-z0-9_]*)*)\\s*${close}`, 'g');
+                    const exactMatch = value.match(new RegExp(`^\\s*${open}\\s*arguments(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*${close}\\s*$`));
+                    if (exactMatch && rawMode) {
+                        return this._lookupVirtualToolPreviewPath(value, args);
+                    }
+                    return value.replace(tokenRegex, (match) => {
+                        const resolved = this._lookupVirtualToolPreviewPath(match, args);
+                        const text = typeof resolved === 'object' ? JSON.stringify(resolved) : String(resolved ?? '');
+                        return urlMode ? encodeURIComponent(text) : text;
+                    });
+                }
+                if (Array.isArray(value)) {
+                    return value.map(item => this._resolveVirtualToolPreviewValue(item, args, { urlMode, rawMode }));
+                }
+                if (value && typeof value === 'object') {
+                    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+                        key,
+                        this._resolveVirtualToolPreviewValue(item, args, { urlMode, rawMode }),
+                    ]));
+                }
+                return value;
+            },
+
+            _lookupVirtualToolPreviewPath(template, args) {
+                const open = `\\${String.fromCharCode(123)}\\${String.fromCharCode(123)}`;
+                const close = `\\${String.fromCharCode(125)}\\${String.fromCharCode(125)}`;
+                const match = String(template).match(new RegExp(`${open}\\s*(arguments(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)\\s*${close}`));
+                if (!match) return '';
+                const path = match[1].split('.').slice(1);
+                let current = args;
+                for (const segment of path) {
+                    if (!current || typeof current !== 'object' || !(segment in current)) {
+                        throw new Error(`Missing sample value for ${match[1]}`);
+                    }
+                    current = current[segment];
+                }
+                return current;
+            },
+
+            virtualToolPreview() {
+                try {
+                    const config = this._buildVirtualToolConfigOrThrow({ toast: false });
+                    const args = this._parseVirtualToolSampleArguments();
+                    if (this.virtualToolExecType === 'http_call') {
+                        const request = config.request || {};
+                        return JSON.stringify({
+                            method: request.method,
+                            url: this._resolveVirtualToolPreviewValue(request.url || '', args, { urlMode: true, rawMode: false }),
+                            headers: this._resolveVirtualToolPreviewValue(request.headers || {}, args),
+                            query: this._resolveVirtualToolPreviewValue(request.query || {}, args),
+                            body: this._resolveVirtualToolPreviewValue(request.body || {}, args),
+                        }, null, 2);
+                    }
+                    if (this.virtualToolExecType === 'stdio_call') {
+                        const stdin = config.stdin?.mode === 'template'
+                            ? this._resolveVirtualToolPreviewValue(config.stdin.template, args)
+                            : (config.stdin?.mode === 'none' ? '' : args);
+                        return JSON.stringify({
+                            command: config.command,
+                            command_args: this._resolveVirtualToolPreviewValue(config.command_args || [], args, { rawMode: false }),
+                            env_vars: this._resolveVirtualToolPreviewValue(config.env_vars || {}, args, { rawMode: false }),
+                            stdin,
+                        }, null, 2);
+                    }
+                    return JSON.stringify(config, null, 2);
+                } catch (error) {
+                    return `Preview unavailable: ${error.message}`;
+                }
             },
 
             async loadServers() {
@@ -1205,73 +1930,11 @@
                 const description = (document.getElementById('vtoolDescription').value || '').trim() || null;
 
                 let config = {};
-
-                if (execType === 'http_call') {
-                    const method = document.getElementById('vtoolHttpMethod').value || 'POST';
-                    const url = (document.getElementById('vtoolUrl').value || '').trim();
-                    if (!url) { showToast('URL is required for http_call', 'error'); return; }
-
-                    let inputSchema = {};
-                    const rawSchema = (document.getElementById('vtoolInputSchemaHttpCall').value || '').trim();
-                    if (rawSchema) {
-                        try { inputSchema = JSON.parse(rawSchema); } catch { showToast('Input Schema is not valid JSON', 'error'); return; }
-                    }
-
-                    config = { request: { method, url }, input_schema: inputSchema };
-                } else if (execType === 'stdio_call') {
-                    const command = (document.getElementById('vtoolStdioCommand').value || '').trim();
-                    if (!command) { showToast('Command is required for stdio_call', 'error'); return; }
-
-                    const commandArgs = this._parseVirtualToolArgsOrToast('vtoolStdioArgs');
-                    if (commandArgs === null) return;
-
-                    const envVars = this._parseVirtualToolEnvVarsOrToast('vtoolStdioEnvVars');
-                    if (envVars === null) return;
-
-                    let inputSchema = {};
-                    const rawSchema = (document.getElementById('vtoolInputSchemaStdioCall').value || '').trim();
-                    if (rawSchema) {
-                        try { inputSchema = JSON.parse(rawSchema); } catch { showToast('Input Schema is not valid JSON', 'error'); return; }
-                    }
-
-                    config = {
-                        command,
-                        command_args: commandArgs,
-                        working_dir: (document.getElementById('vtoolStdioWorkingDir').value || '').trim() || null,
-                        env_vars: envVars,
-                        input_schema: inputSchema
-                    };
-                } else if (execType === 'pipeline_call') {
-                    const rawSteps = (document.getElementById('vtoolPipelineSteps').value || '').trim();
-                    if (!rawSteps) { showToast('Pipeline steps are required for pipeline_call', 'error'); return; }
-
-                    let steps = [];
-                    try {
-                        steps = JSON.parse(rawSteps);
-                    } catch {
-                        showToast('Pipeline steps must be valid JSON', 'error');
-                        return;
-                    }
-                    if (!Array.isArray(steps) || steps.length === 0) {
-                        showToast('Pipeline steps must be a non-empty JSON array', 'error');
-                        return;
-                    }
-
-                    const envVars = this._parseVirtualToolEnvVarsOrToast('vtoolPipelineEnvVars');
-                    if (envVars === null) return;
-
-                    let inputSchema = {};
-                    const rawSchema = (document.getElementById('vtoolInputSchemaPipelineCall').value || '').trim();
-                    if (rawSchema) {
-                        try { inputSchema = JSON.parse(rawSchema); } catch { showToast('Input Schema is not valid JSON', 'error'); return; }
-                    }
-
-                    config = {
-                        steps,
-                        working_dir: (document.getElementById('vtoolPipelineWorkingDir').value || '').trim() || null,
-                        env_vars: envVars,
-                        input_schema: inputSchema
-                    };
+                try {
+                    config = this._buildVirtualToolConfigOrThrow();
+                } catch (error) {
+                    showToast(error.message, 'error');
+                    return;
                 }
 
                 this.savingVirtualTool = true;
@@ -1288,6 +1951,7 @@
                     this.vtoolPrefill = null;
                     document.getElementById('addVirtualToolForm').reset();
                     this.virtualToolExecType = 'http_call';
+                    this.resetVirtualToolBuilder();
                     await this.openToolsModal(this.toolsModalServerId);
                 } catch (error) {
                     showToast(error.message, 'error');

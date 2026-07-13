@@ -2,6 +2,7 @@ import json
 import sys
 from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
 
 from authmcp_gateway.mcp import proxy as proxy_module
@@ -437,6 +438,127 @@ def test_get_servers_filters_unapproved(monkeypatch, db_path):
 
 
 @pytest.mark.asyncio
+async def test_execute_virtual_tool_http_call_supports_path_query_and_headers(monkeypatch, db_path):
+    proxy = McpProxy(db_path)
+    virtual_tool = {
+        "name": "virt_http",
+        "approval_state": "approved",
+        "mcp_server_id": 7,
+        "execution_type": "http_call",
+        "config": {
+            "request": {
+                "method": "GET",
+                "url": "https://api.example.com/users/{{arguments.user_id}}",
+                "headers": {"X-Token": "{{arguments.token}}"},
+                "query": {"limit": "{{arguments.limit}}", "active": "{{arguments.active}}"},
+            }
+        },
+    }
+    source_server = {"id": 7, "name": "srv", "approval_state": "approved", "timeout": 9}
+    captured = {}
+
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.proxy.get_mcp_server", lambda *_args, **_kwargs: source_server
+    )
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def request(self, method, url, json=None, params=None, headers=None):
+            captured["method"] = method
+            captured["url"] = url
+            captured["json"] = json
+            captured["params"] = params
+            captured["headers"] = headers
+            return httpx.Response(
+                200,
+                json={"ok": True},
+                headers={"content-type": "application/json"},
+                request=httpx.Request(method, url),
+            )
+
+    monkeypatch.setattr(proxy_module.httpx, "AsyncClient", FakeAsyncClient)
+
+    result = await proxy._execute_virtual_tool(
+        virtual_tool,
+        {"user_id": "abc/123", "token": "secret", "limit": 25, "active": True},
+        None,
+        None,
+    )
+
+    assert captured["method"] == "GET"
+    assert captured["url"] == "https://api.example.com/users/abc%2F123"
+    assert captured["json"] is None
+    assert captured["params"] == {"limit": "25", "active": "true"}
+    assert captured["headers"]["X-Token"] == "secret"
+    assert result["result"]["isError"] is False
+
+
+@pytest.mark.asyncio
+async def test_execute_virtual_tool_http_call_uses_body_template(monkeypatch, db_path):
+    proxy = McpProxy(db_path)
+    virtual_tool = {
+        "name": "virt_http_post",
+        "approval_state": "approved",
+        "mcp_server_id": 7,
+        "execution_type": "http_call",
+        "config": {
+            "request": {
+                "method": "POST",
+                "url": "https://api.example.com/messages",
+                "body": {"message": "{{arguments.text}}", "meta": "{{arguments.meta}}"},
+            }
+        },
+    }
+    source_server = {"id": 7, "name": "srv", "approval_state": "approved", "timeout": 9}
+    captured = {}
+
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.proxy.get_mcp_server", lambda *_args, **_kwargs: source_server
+    )
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def request(self, method, url, json=None, params=None, headers=None):
+            captured["json"] = json
+            captured["params"] = params
+            return httpx.Response(
+                200,
+                text="ok",
+                headers={"content-type": "text/plain"},
+                request=httpx.Request(method, url),
+            )
+
+    monkeypatch.setattr(proxy_module.httpx, "AsyncClient", FakeAsyncClient)
+
+    result = await proxy._execute_virtual_tool(
+        virtual_tool,
+        {"text": "hello", "meta": {"source": "ui"}},
+        None,
+        None,
+    )
+
+    assert captured["params"] is None
+    assert captured["json"] == {"message": "hello", "meta": {"source": "ui"}}
+    assert result["result"]["content"][0]["text"] == "ok"
+
+
+@pytest.mark.asyncio
 async def test_execute_virtual_tool_stdio_call_uses_simple_command(monkeypatch, db_path):
     proxy = McpProxy(db_path)
     virtual_tool = {
@@ -475,6 +597,74 @@ async def test_execute_virtual_tool_stdio_call_uses_simple_command(monkeypatch, 
     assert captured["timeout"] == 9
     assert result["result"]["isError"] is False
     assert result["result"]["_meta"]["execution_type"] == "stdio_call"
+
+
+@pytest.mark.asyncio
+async def test_execute_virtual_tool_stdio_call_resolves_args_env_and_stdin(monkeypatch, db_path):
+    proxy = McpProxy(db_path)
+    virtual_tool = {
+        "name": "virt_stdio_template",
+        "approval_state": "approved",
+        "mcp_server_id": 7,
+        "execution_type": "stdio_call",
+        "config": {
+            "command": "node",
+            "command_args": ["cli.js", "--token", "{{arguments.token}}", "{{arguments.position}}"],
+            "working_dir": "/tmp/tool",
+            "env_vars": {"AUTH_TOKEN": "{{arguments.token}}"},
+            "stdin": {"mode": "template", "template": {"query": "{{arguments.query}}"}},
+        },
+    }
+    source_server = {"id": 7, "name": "srv", "approval_state": "approved", "timeout": 9}
+
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.proxy.get_mcp_server", lambda *_args, **_kwargs: source_server
+    )
+
+    captured = {}
+
+    async def fake_run_virtual_process_command(command_config, *, stdin_text, timeout):
+        captured["command_config"] = command_config
+        captured["stdin_text"] = stdin_text
+        captured["timeout"] = timeout
+        return {"returncode": 0, "stdout": json.dumps({"ok": True}), "stderr": ""}
+
+    monkeypatch.setattr(proxy, "_run_virtual_process_command", fake_run_virtual_process_command)
+
+    await proxy._execute_virtual_tool(
+        virtual_tool,
+        {"token": "abc123", "position": "first", "query": "hello"},
+        None,
+        None,
+    )
+
+    assert captured["command_config"]["command_args"] == ["cli.js", "--token", "abc123", "first"]
+    assert captured["command_config"]["env_vars"] == {"AUTH_TOKEN": "abc123"}
+    assert captured["stdin_text"] == json.dumps({"query": "hello"}, ensure_ascii=False)
+    assert captured["timeout"] == 9
+
+
+@pytest.mark.asyncio
+async def test_execute_virtual_tool_rejects_missing_template_values(monkeypatch, db_path):
+    proxy = McpProxy(db_path)
+    virtual_tool = {
+        "name": "virt_missing",
+        "approval_state": "approved",
+        "mcp_server_id": 7,
+        "execution_type": "stdio_call",
+        "config": {
+            "command": "python",
+            "command_args": ["script.py", "{{arguments.token}}"],
+        },
+    }
+    source_server = {"id": 7, "name": "srv", "approval_state": "approved", "timeout": 9}
+
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.proxy.get_mcp_server", lambda *_args, **_kwargs: source_server
+    )
+
+    with pytest.raises(ValueError, match="Template references missing value"):
+        await proxy._execute_virtual_tool(virtual_tool, {"query": "hello"}, None, None)
 
 
 @pytest.mark.asyncio

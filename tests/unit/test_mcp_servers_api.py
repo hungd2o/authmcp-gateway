@@ -97,16 +97,51 @@ def test_normalize_virtual_tool_config_accepts_stdio_call():
         "stdio_call",
         {
             "command": "python",
-            "command_args": "--flag value",
+            "command_args": ["--flag", "{{ arguments.query }}"],
             "env_vars": "MODE=test",
             "working_dir": "/tmp/tool",
             "input_schema": {"type": "object"},
+            "stdin": {"mode": "template", "template": {"query": "{{arguments.query}}"}},
+            "editor_mode": "simple",
         },
     )
     assert payload["command"] == "python"
-    assert payload["command_args"] == ["--flag", "value"]
+    assert payload["command_args"] == ["--flag", "{{ arguments.query }}"]
     assert payload["env_vars"] == {"MODE": "test"}
     assert payload["working_dir"] == "/tmp/tool"
+    assert payload["stdin"] == {"mode": "template", "template": {"query": "{{arguments.query}}"}}
+    assert payload["editor_mode"] == "simple"
+
+
+def test_normalize_virtual_tool_config_accepts_http_mappings():
+    payload = _normalize_virtual_tool_config(
+        "http_call",
+        {
+            "editor_mode": "simple",
+            "input_schema": {"type": "object"},
+            "request": {
+                "method": "GET",
+                "url": "https://api.example.com/users/{{arguments.user_id}}",
+                "headers": {"X-Token": "{{arguments.token}}"},
+                "query": {"limit": "{{arguments.limit}}"},
+            },
+        },
+    )
+    assert payload["request"]["query"] == {"limit": "{{arguments.limit}}"}
+    assert payload["request"]["headers"]["X-Token"] == "{{arguments.token}}"
+
+
+def test_normalize_virtual_tool_config_rejects_invalid_templates():
+    with pytest.raises(ValueError, match="Invalid template syntax"):
+        _normalize_virtual_tool_config(
+            "http_call",
+            {
+                "request": {
+                    "method": "GET",
+                    "url": "https://api.example.com/users/{{arguments.user_id}",
+                }
+            },
+        )
 
 
 def test_normalize_virtual_tool_config_accepts_pipeline_call():

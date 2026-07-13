@@ -14,6 +14,7 @@ import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union, cast
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -32,6 +33,7 @@ from .store import (
     list_virtual_tools,
     update_server_health,
 )
+from .templating import resolve_template_string, resolve_templated_value
 from .transports import HttpTransport, McpTransport, PipeTransport
 from .trust import approval_is_active
 
@@ -851,25 +853,42 @@ class McpProxy:
 
         execution_type = str(virtual_tool.get("execution_type") or "").lower()
         config = deepcopy(virtual_tool.get("config") or {})
+        context = {"arguments": arguments or {}}
         if execution_type == "http_call":
             request_cfg = config.get("request") or {}
             method = str(request_cfg.get("method") or "GET").upper()
-            url = str(request_cfg.get("url") or "")
+            url = self._resolve_virtual_http_url(str(request_cfg.get("url") or ""), context=context)
             headers = {
-                str(key): str(value) for key, value in (request_cfg.get("headers") or {}).items()
+                str(key): str(resolve_template_string(str(value), context, mode="text"))
+                for key, value in (request_cfg.get("headers") or {}).items()
             }
             if not url:
                 raise ToolNotFoundError(
                     f"Virtual tool '{virtual_tool['name']}' has no URL configured"
                 )
             payload = arguments or {}
+            query_params = self._resolve_virtual_http_query(
+                method=method,
+                query_template=request_cfg.get("query"),
+                payload=payload,
+                context=context,
+            )
+            json_body = self._resolve_virtual_http_body(
+                method=method,
+                body_template=request_cfg.get("body"),
+                payload=payload,
+                context=context,
+            )
             async with httpx.AsyncClient(
                 timeout=float(source_server.get("timeout") or self.timeout)
             ) as client:
-                if method in {"POST", "PUT", "PATCH"}:
-                    resp = await client.request(method, url, json=payload, headers=headers)
-                else:
-                    resp = await client.request(method, url, params=payload, headers=headers)
+                resp = await client.request(
+                    method,
+                    url,
+                    json=json_body,
+                    params=query_params,
+                    headers=headers,
+                )
             content_type = resp.headers.get("content-type", "")
             body: Any
             if "application/json" in content_type:
@@ -900,13 +919,23 @@ class McpProxy:
                 raise ToolNotFoundError(
                     f"Virtual tool '{virtual_tool['name']}' has no command configured"
                 )
-            payload = json.dumps(arguments or {}, ensure_ascii=False)
+            payload = self._resolve_virtual_stdin(
+                config.get("stdin"),
+                payload=arguments or {},
+                context=context,
+            )
             result = await self._run_virtual_process_command(
                 {
                     "command": command,
-                    "command_args": list(config.get("command_args") or []),
+                    "command_args": [
+                        resolve_template_string(str(arg), context, mode="text")
+                        for arg in list(config.get("command_args") or [])
+                    ],
                     "working_dir": config.get("working_dir"),
-                    "env_vars": config.get("env_vars") or {},
+                    "env_vars": {
+                        str(key): resolve_template_string(str(value), context, mode="text")
+                        for key, value in (config.get("env_vars") or {}).items()
+                    },
                 },
                 stdin_text=payload,
                 timeout=float(
@@ -940,6 +969,14 @@ class McpProxy:
                     merged_step["env_vars"] = env_overrides
                 if working_dir and not merged_step.get("working_dir"):
                     merged_step["working_dir"] = working_dir
+                merged_step["command_args"] = [
+                    resolve_template_string(str(arg), context, mode="text")
+                    for arg in list(merged_step.get("command_args") or [])
+                ]
+                merged_step["env_vars"] = {
+                    str(key): resolve_template_string(str(value), context, mode="text")
+                    for key, value in (merged_step.get("env_vars") or {}).items()
+                }
                 last_result = await self._run_virtual_process_command(
                     merged_step,
                     stdin_text=current_input,
@@ -955,6 +992,73 @@ class McpProxy:
             )
 
         raise ToolNotFoundError(f"Unsupported virtual tool execution_type '{execution_type}'")
+
+    def _resolve_virtual_http_url(self, url: str, *, context: Dict[str, Any]) -> str:
+        if not url:
+            return ""
+        parts = urlsplit(url)
+        resolved_path = resolve_template_string(parts.path, context, mode="url")
+        resolved_query = resolve_template_string(parts.query, context, mode="text")
+        return urlunsplit(
+            (parts.scheme, parts.netloc, resolved_path, resolved_query, parts.fragment)
+        )
+
+    def _resolve_virtual_http_query(
+        self,
+        *,
+        method: str,
+        query_template: Any,
+        payload: Dict[str, Any],
+        context: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        if query_template is None:
+            if method not in {"GET", "DELETE"}:
+                return None
+            return payload if payload else None
+        resolved = resolve_templated_value(query_template, context, mode="raw")
+        if not isinstance(resolved, dict):
+            raise ToolNotFoundError("Virtual tool http query template must resolve to an object")
+        return {str(key): self._coerce_http_query_value(value) for key, value in resolved.items()}
+
+    def _resolve_virtual_http_body(
+        self,
+        *,
+        method: str,
+        body_template: Any,
+        payload: Dict[str, Any],
+        context: Dict[str, Any],
+    ) -> Any:
+        if body_template is not None:
+            return resolve_templated_value(body_template, context, mode="raw")
+        if method in {"POST", "PUT", "PATCH"}:
+            return payload
+        return None
+
+    def _resolve_virtual_stdin(
+        self, stdin_config: Any, *, payload: Dict[str, Any], context: Dict[str, Any]
+    ) -> str:
+        mode = str((stdin_config or {}).get("mode") or "json").lower()
+        if mode == "none":
+            return ""
+        if mode == "template":
+            resolved = resolve_templated_value(
+                (stdin_config or {}).get("template"), context, mode="raw"
+            )
+            return (
+                resolved if isinstance(resolved, str) else json.dumps(resolved, ensure_ascii=False)
+            )
+        return json.dumps(payload, ensure_ascii=False)
+
+    def _coerce_http_query_value(self, value: Any) -> Any:
+        if isinstance(value, list):
+            return [self._coerce_http_query_value(item) for item in value]
+        if value is None:
+            return ""
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False)
+        return str(value)
 
     async def _run_virtual_process_command(
         self,
@@ -990,8 +1094,12 @@ class McpProxy:
         )
         return {
             "returncode": process.returncode or 0,
-            "stdout": stdout[:VIRTUAL_TOOL_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace").strip(),
-            "stderr": stderr[:VIRTUAL_TOOL_MAX_OUTPUT_BYTES].decode("utf-8", errors="replace").strip(),
+            "stdout": stdout[:VIRTUAL_TOOL_MAX_OUTPUT_BYTES]
+            .decode("utf-8", errors="replace")
+            .strip(),
+            "stderr": stderr[:VIRTUAL_TOOL_MAX_OUTPUT_BYTES]
+            .decode("utf-8", errors="replace")
+            .strip(),
             "truncated": truncated,
         }
 

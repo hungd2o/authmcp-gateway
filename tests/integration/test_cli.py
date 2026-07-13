@@ -420,8 +420,10 @@ def test_show_version_prints_installed_version(capsys):
 
 
 def test_show_version_falls_back_when_package_not_found(monkeypatch, capsys):
-    """If importlib.metadata raises PackageNotFoundError, prints 'unknown'."""
+    """If package metadata is missing, falls back to the source version."""
     from importlib.metadata import PackageNotFoundError
+
+    from authmcp_gateway import __version__
 
     def boom(_name):
         raise PackageNotFoundError("authmcp-gateway")
@@ -429,4 +431,4 @@ def test_show_version_falls_back_when_package_not_found(monkeypatch, capsys):
     monkeypatch.setattr("importlib.metadata.version", boom)
     cli.show_version()
     captured = capsys.readouterr()
-    assert "Version: unknown" in captured.out
+    assert f"Version: {__version__}" in captured.out

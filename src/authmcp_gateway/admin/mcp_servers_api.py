@@ -4,8 +4,10 @@ import json
 import logging
 import shlex
 from datetime import datetime
+from io import StringIO
 
 import jwt
+from dotenv import dotenv_values
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
 
@@ -117,18 +119,19 @@ def _normalize_transport_payload(data: dict) -> dict:
     data["transport_type"] = transport_type
 
     if isinstance(data.get("command_args"), str):
-        raw = data.get("command_args", "").strip()
-        if not raw:
+        raw = data.get("command_args", "")
+        normalized_raw = _strip_hash_comments(raw)
+        if not normalized_raw.strip():
             data["command_args"] = []
         else:
             try:
-                parsed = json.loads(raw)
+                parsed = json.loads(normalized_raw)
                 data["command_args"] = (
                     [str(part) for part in parsed] if isinstance(parsed, list) else []
                 )
             except json.JSONDecodeError:
                 try:
-                    data["command_args"] = shlex.split(raw)
+                    data["command_args"] = shlex.split(normalized_raw)
                 except ValueError as exc:
                     raise ValueError(f"Invalid command_args: {exc}") from exc
     elif isinstance(data.get("command_args"), list):
@@ -138,15 +141,24 @@ def _normalize_transport_payload(data: dict) -> dict:
     else:
         raise ValueError("command_args must be a JSON array, list, or string")
     if isinstance(data.get("env_vars"), str):
-        raw_env = data.get("env_vars", "").strip()
-        if not raw_env:
+        raw_env = data.get("env_vars", "")
+        if not raw_env.strip():
             data["env_vars"] = {}
         else:
-            try:
-                parsed_env = json.loads(raw_env)
-                data["env_vars"] = parsed_env if isinstance(parsed_env, dict) else {}
-            except json.JSONDecodeError:
-                data["env_vars"] = {}
+            parsed_env = dotenv_values(stream=StringIO(raw_env))
+            invalid_keys = [key for key, value in parsed_env.items() if value is None]
+            if invalid_keys:
+                raise ValueError(
+                    "Invalid env_vars line(s): expected KEY=VALUE for "
+                    + ", ".join(sorted(invalid_keys))
+                )
+            data["env_vars"] = {str(key): str(value) for key, value in parsed_env.items()}
+    elif isinstance(data.get("env_vars"), dict):
+        data["env_vars"] = {str(key): str(value) for key, value in data["env_vars"].items()}
+    elif data.get("env_vars") is None:
+        data["env_vars"] = {}
+    else:
+        raise ValueError("env_vars must be a mapping or KEY=VALUE lines")
 
     if "expose_port" in data:
         try:
@@ -162,6 +174,46 @@ def _normalize_transport_payload(data: dict) -> dict:
         raise ValueError("pipe_path is required for pipe transport")
 
     return data
+
+
+def _strip_hash_comments(raw: str) -> str:
+    """Strip shell-style # comments outside quoted strings."""
+    cleaned_lines = []
+    for line in raw.splitlines():
+        cleaned_line = _strip_hash_comment_from_line(line).strip()
+        if cleaned_line:
+            cleaned_lines.append(cleaned_line)
+    return "\n".join(cleaned_lines)
+
+
+def _strip_hash_comment_from_line(line: str) -> str:
+    """Strip inline # comments when they begin a comment region."""
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+
+    for idx, char in enumerate(line):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and (in_single_quote or in_double_quote):
+            escaped = True
+            continue
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            continue
+        if char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            continue
+        if (
+            char == "#"
+            and not in_single_quote
+            and not in_double_quote
+            and (idx == 0 or line[idx - 1].isspace())
+        ):
+            return line[:idx].rstrip()
+
+    return line
 
 
 async def api_mcp_servers_token_status(request: Request) -> JSONResponse:

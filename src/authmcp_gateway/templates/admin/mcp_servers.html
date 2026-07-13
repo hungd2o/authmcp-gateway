@@ -114,15 +114,17 @@
                                           placeholder="@modelcontextprotocol/server-filesystem&#10;/tmp"
                                           class="w-full mt-2 px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-mono text-sm break-all resize-y"></textarea>
                                 <textarea id="serverCommandArgsJson" rows="3" x-show="commandArgsMode === 'json'"
-                                          placeholder='["@modelcontextprotocol/server-filesystem","/tmp"]'
+                                          placeholder='[&#10;  "@modelcontextprotocol/server-filesystem",&#10;  "/tmp"&#10;]'
                                           class="w-full mt-2 px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-mono text-sm break-all resize-y"></textarea>
                                 <p class="text-xs text-gray-600 mt-2">Preview: <code class="font-mono" x-text="getCommandArgsPreview(false)"></code></p>
+                                <p class="text-xs text-gray-600 mt-1">Lines or trailing segments starting with <code class="font-mono">#</code> are ignored.</p>
                                 <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2 mt-3">Working Directory</label>
                                 <input type="text" id="serverWorkingDir" placeholder="/path/to/workdir"
                                        class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-mono text-sm break-all">
-                                <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2 mt-3">Environment Variables (JSON object)</label>
-                                <textarea id="serverEnvVars" rows="2" placeholder='{\"NODE_ENV\":\"production\"}'
+                                <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2 mt-3">Environment Variables (one per line)</label>
+                                <textarea id="serverEnvVars" rows="3" placeholder='NODE_ENV=production&#10;API_BASE_URL=https://example.com&#10;# DEBUG=true'
                                           class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-mono text-sm break-all resize-none"></textarea>
+                                <p class="text-xs text-gray-600 mt-1">Use <code class="font-mono">KEY=VALUE</code>. Commented lines or trailing <code class="font-mono">#</code> comments are ignored.</p>
                             </div>
                             <div x-show="transportType === 'pipe'">
                                 <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2">Pipe Path <span class="text-red-600">*</span></label>
@@ -264,12 +266,14 @@
                                 <textarea id="editServerCommandArgsJson" rows="3" x-show="editCommandArgsMode === 'json'"
                                           class="w-full mt-2 px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all font-mono text-sm break-all resize-y"></textarea>
                                 <p class="text-xs text-gray-600 mt-2">Preview: <code class="font-mono" x-text="getCommandArgsPreview(true)"></code></p>
+                                <p class="text-xs text-gray-600 mt-1">Lines or trailing segments starting with <code class="font-mono">#</code> are ignored.</p>
                                 <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2 mt-3">Working Directory</label>
                                 <input type="text" id="editServerWorkingDir"
                                        class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all font-mono text-sm break-all">
-                                <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2 mt-3">Environment Variables (JSON object)</label>
-                                <textarea id="editServerEnvVars" rows="2"
+                                <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2 mt-3">Environment Variables (one per line)</label>
+                                <textarea id="editServerEnvVars" rows="3"
                                           class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all font-mono text-sm break-all resize-none"></textarea>
+                                <p class="text-xs text-gray-600 mt-1">Use <code class="font-mono">KEY=VALUE</code>. Commented lines or trailing <code class="font-mono">#</code> comments are ignored.</p>
                             </div>
                             <div x-show="editTransportType === 'pipe'">
                                 <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2">Pipe Path <span class="text-red-600">*</span></label>
@@ -382,12 +386,52 @@
                 else if (action === 'process-restart') this.processAction(id, 'restart');
             },
 
+            _stripHashComment(line) {
+                let inSingleQuote = false;
+                let inDoubleQuote = false;
+                let escaped = false;
+
+                for (let idx = 0; idx < line.length; idx += 1) {
+                    const char = line[idx];
+                    if (escaped) {
+                        escaped = false;
+                        continue;
+                    }
+                    if (char === '\\' && (inSingleQuote || inDoubleQuote)) {
+                        escaped = true;
+                        continue;
+                    }
+                    if (char === '\'' && !inDoubleQuote) {
+                        inSingleQuote = !inSingleQuote;
+                        continue;
+                    }
+                    if (char === '"' && !inSingleQuote) {
+                        inDoubleQuote = !inDoubleQuote;
+                        continue;
+                    }
+                    if (char === '#' && !inSingleQuote && !inDoubleQuote && (idx === 0 || /\s/.test(line[idx - 1]))) {
+                        return line.slice(0, idx).trimEnd();
+                    }
+                }
+
+                return line;
+            },
+
+            _stripHashComments(raw) {
+                return raw
+                    .split(/\r?\n/)
+                    .map(line => this._stripHashComment(line).trim())
+                    .filter(Boolean)
+                    .join('\n');
+            },
+
             _parseCommandArgs(raw, mode) {
-                if (!raw || !raw.trim()) return [];
+                const normalized = this._stripHashComments(raw || '');
+                if (!normalized) return [];
                 if (mode === 'json') {
                     let parsed;
                     try {
-                        parsed = JSON.parse(raw);
+                        parsed = JSON.parse(normalized);
                     } catch (error) {
                         throw new Error('Command Args JSON must be a valid array');
                     }
@@ -396,7 +440,14 @@
                     }
                     return parsed.map(arg => String(arg));
                 }
-                return raw.split(/\r?\n/).map(arg => arg.trim()).filter(Boolean);
+                return normalized.split('\n');
+            },
+
+            _formatEnvVars(envVars) {
+                if (!envVars || typeof envVars !== 'object') return '';
+                return Object.entries(envVars)
+                    .map(([key, value]) => `${key}=${value ?? ''}`)
+                    .join('\n');
             },
 
             _readCommandArgs(isEdit) {
@@ -784,7 +835,7 @@
                 document.getElementById('editServerPipePath').value = server.pipe_path || '';
                 document.getElementById('editServerExposePort').value = server.expose_port || '';
                 document.getElementById('editServerWorkingDir').value = server.working_dir || '';
-                document.getElementById('editServerEnvVars').value = server.env_vars ? JSON.stringify(server.env_vars) : '';
+                document.getElementById('editServerEnvVars').value = this._formatEnvVars(server.env_vars);
 
                 this.editAuthType = server.auth_type || 'none';
                 this.editTransportType = server.transport_type || 'http';

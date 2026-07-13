@@ -15,6 +15,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
 
 from authmcp_gateway.admin.routes import api_error_handler, get_config, render_template
+from authmcp_gateway.mcp.templating import validate_template_string, validate_templates_in_value
 
 logger = logging.getLogger(__name__)
 
@@ -230,16 +231,41 @@ def _normalize_virtual_tool_process_config(config: dict, *, require_command: boo
         }
     )
 
-    return {
+    process_config = {
         "command": normalized["command"],
         "command_args": normalized["command_args"],
         "env_vars": normalized["env_vars"],
         "working_dir": (config or {}).get("working_dir") or None,
     }
+    validate_templates_in_value(process_config["command_args"], "config.command_args")
+    validate_templates_in_value(process_config["env_vars"], "config.env_vars")
+    return process_config
+
+
+def _normalize_virtual_tool_stdin_config(config: dict) -> dict:
+    stdin_cfg = dict((config or {}).get("stdin") or {})
+    if not stdin_cfg:
+        return {"mode": "json"}
+
+    mode = str(stdin_cfg.get("mode") or "json").strip().lower()
+    if mode not in {"json", "template", "none"}:
+        raise ValueError("config.stdin.mode must be 'json', 'template', or 'none'")
+
+    normalized = {"mode": mode}
+    if mode == "template":
+        if "template" not in stdin_cfg:
+            raise ValueError("config.stdin.template is required when stdin.mode='template'")
+        validate_templates_in_value(stdin_cfg.get("template"), "config.stdin.template")
+        normalized["template"] = stdin_cfg.get("template")
+    return normalized
 
 
 def _normalize_virtual_tool_config(execution_type: str, config: dict) -> dict:
     normalized = dict(config or {})
+    editor_mode = str(normalized.get("editor_mode") or "advanced").strip().lower()
+    if editor_mode not in {"simple", "advanced"}:
+        raise ValueError("config.editor_mode must be 'simple' or 'advanced'")
+    normalized["editor_mode"] = editor_mode
     input_schema = normalized.get("input_schema")
     if input_schema is None:
         normalized["input_schema"] = {}
@@ -254,19 +280,35 @@ def _normalize_virtual_tool_config(execution_type: str, config: dict) -> dict:
         url = str(request_cfg.get("url") or "").strip()
         if not url:
             raise ValueError("config.request.url is required for http_call")
+        validate_template_string(url)
         headers = request_cfg.get("headers") or {}
         if not isinstance(headers, dict):
             raise ValueError("config.request.headers must be an object for http_call")
-        normalized["request"] = {
+        query = request_cfg.get("query")
+        if query is not None and not isinstance(query, dict):
+            raise ValueError("config.request.query must be an object for http_call")
+        body = request_cfg.get("body")
+        validate_templates_in_value(headers, "config.request.headers")
+        if query is not None:
+            validate_templates_in_value(query, "config.request.query")
+        if body is not None:
+            validate_templates_in_value(body, "config.request.body")
+        normalized_request = {
             "method": method,
             "url": url,
             "headers": {str(key): str(value) for key, value in headers.items()},
         }
+        if query is not None:
+            normalized_request["query"] = {str(key): value for key, value in query.items()}
+        if body is not None:
+            normalized_request["body"] = body
+        normalized["request"] = normalized_request
         return normalized
 
     if execution_type == "stdio_call":
         process_config = _normalize_virtual_tool_process_config(normalized)
         normalized.update(process_config)
+        normalized["stdin"] = _normalize_virtual_tool_stdin_config(normalized)
         return normalized
 
     if execution_type == "pipeline_call":
@@ -288,6 +330,7 @@ def _normalize_virtual_tool_config(execution_type: str, config: dict) -> dict:
             )["env_vars"]
         else:
             normalized["env_vars"] = {}
+        validate_templates_in_value(normalized["env_vars"], "config.env_vars")
         normalized["working_dir"] = normalized.get("working_dir") or None
         return normalized
 

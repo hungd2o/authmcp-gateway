@@ -8,8 +8,7 @@ version = "1.2.70"
 description = "Universal Authentication Gateway for MCP (Model Context Protocol) Servers"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "MIT"
-license-files = ["LICENSE"]
+license = {text = "MIT"}
 authors = [
     {name = "AuthMCP Gateway Contributors"}
 ]

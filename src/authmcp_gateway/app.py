@@ -613,6 +613,11 @@ def create_app(config=None):
             Route("/admin/api/api-keys", admin_routes.api_list_all_api_keys, methods=["GET"]),
             Route("/admin/api/api-keys", admin_routes.api_create_api_key, methods=["POST"]),
             Route(
+                "/admin/api/api-keys/{token_id:int}/secret",
+                admin_routes.api_get_api_key_secret,
+                methods=["GET"],
+            ),
+            Route(
                 "/admin/api/api-keys/{token_id:int}/revoke",
                 admin_routes.api_revoke_api_key,
                 methods=["POST"],

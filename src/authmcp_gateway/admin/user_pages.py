@@ -2,7 +2,7 @@
 
 import logging
 import sqlite3
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
 
 import jwt
@@ -29,6 +29,7 @@ PAT_LIFETIME_OPTIONS_MINUTES = {
     "very_long": 60 * 24 * 365,
     "lifetime": 60 * 24 * 365 * 10,
 }
+PAT_NO_EXPIRY_MINUTES = PAT_LIFETIME_OPTIONS_MINUTES["lifetime"]
 
 __all__ = [
     "user_portal",
@@ -395,12 +396,14 @@ def _serialize_pat_row(row: Dict[str, Any]) -> Dict[str, Any]:
     expires_in_seconds = None
     if exp_dt:
         expires_in_seconds = int((exp_dt - datetime.now(timezone.utc)).total_seconds())
+    no_expire = bool(row.get("no_expire"))
     return {
         "id": row.get("id"),
         "name": row.get("token_name"),
         "expires_at": exp_dt.isoformat() if exp_dt else row.get("expires_at"),
         "expires_in_seconds": expires_in_seconds,
         "lifetime_minutes": row.get("lifetime_minutes"),
+        "no_expire": no_expire,
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "last_used_at": row.get("last_used_at"),
@@ -416,6 +419,33 @@ def _get_user_identity(payload: Dict[str, Any]) -> tuple[int, str]:
         raise ValueError("Invalid token: missing sub")
     user_id = int(sub)
     return user_id, (payload.get("username") or "")
+
+
+def _parse_pat_date(value: Any, field_name: str) -> Optional[date]:
+    if value in (None, ""):
+        return None
+    try:
+        return date.fromisoformat(str(value))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid {field_name}") from exc
+
+
+def parse_pat_create_window(body: Dict[str, Any]) -> tuple[int, bool]:
+    no_expire = bool(body.get("no_expire"))
+    if no_expire:
+        return PAT_NO_EXPIRY_MINUTES, True
+
+    date_from = _parse_pat_date(body.get("date_from"), "date_from")
+    date_to = _parse_pat_date(body.get("date_to"), "date_to")
+    if not date_from or not date_to:
+        raise ValueError("Date from and date to are required unless no-expire is selected")
+    if date_to < date_from + timedelta(days=1):
+        raise ValueError("Date to must be at least 1 day after date from")
+
+    lifetime_minutes = int((date_to - date_from).total_seconds() // 60)
+    if lifetime_minutes < 60 * 24:
+        raise ValueError("Date to must be at least 1 day after date from")
+    return lifetime_minutes, False
 
 
 async def user_account_pat_list(request: Request) -> JSONResponse:
@@ -435,14 +465,7 @@ async def user_account_pat_list(request: Request) -> JSONResponse:
         return JSONResponse({"detail": "Invalid token: missing sub"}, status_code=401)
 
     rows = list_user_personal_access_tokens(_config.auth.sqlite_path, user_id)
-    return JSONResponse(
-        {
-            "tokens": [_serialize_pat_row(row) for row in rows],
-            "lifetime_options": {
-                key: int(minutes) for key, minutes in PAT_LIFETIME_OPTIONS_MINUTES.items()
-            },
-        }
-    )
+    return JSONResponse({"tokens": [_serialize_pat_row(row) for row in rows]})
 
 
 async def user_account_pat_create(request: Request) -> JSONResponse:
@@ -463,15 +486,15 @@ async def user_account_pat_create(request: Request) -> JSONResponse:
 
     body = await request.json()
     token_name = str(body.get("name") or "").strip()
-    lifetime_key = str(body.get("lifetime") or "long").strip().lower()
-    lifetime_minutes = PAT_LIFETIME_OPTIONS_MINUTES.get(lifetime_key)
-    if not lifetime_minutes:
-        return JSONResponse({"detail": "Invalid lifetime option"}, status_code=400)
     if not token_name or len(token_name) < 3 or len(token_name) > 64:
         return JSONResponse(
             {"detail": "Token name must be between 3 and 64 characters"},
             status_code=400,
         )
+    try:
+        lifetime_minutes, no_expire = parse_pat_create_window(body)
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
 
     access_token = create_access_token(
         user_id=user_id,
@@ -493,6 +516,7 @@ async def user_account_pat_create(request: Request) -> JSONResponse:
         token_jti=str(jti),
         expires_at=exp_dt,
         lifetime_minutes=lifetime_minutes,
+        no_expire=no_expire,
     )
     return JSONResponse(
         {
@@ -501,6 +525,7 @@ async def user_account_pat_create(request: Request) -> JSONResponse:
             "access_token": access_token,
             "expires_at": exp_dt.isoformat(),
             "lifetime_minutes": lifetime_minutes,
+            "no_expire": no_expire,
         },
         status_code=201,
     )
@@ -576,6 +601,7 @@ async def user_account_pat_rotate(request: Request) -> JSONResponse:
     revoke_user_personal_access_token(_config.auth.sqlite_path, user_id, token_id)
 
     lifetime_minutes = int(pat.get("lifetime_minutes") or PAT_LIFETIME_OPTIONS_MINUTES["long"])
+    no_expire = bool(pat.get("no_expire"))
     new_token = create_access_token(
         user_id=user_id,
         username=username,
@@ -597,6 +623,7 @@ async def user_account_pat_rotate(request: Request) -> JSONResponse:
         token_jti=str(jti),
         expires_at=new_exp_dt,
         lifetime_minutes=lifetime_minutes,
+        no_expire=no_expire,
     )
     return JSONResponse(
         {
@@ -605,5 +632,6 @@ async def user_account_pat_rotate(request: Request) -> JSONResponse:
             "access_token": new_token,
             "expires_at": new_exp_dt.isoformat(),
             "lifetime_minutes": lifetime_minutes,
+            "no_expire": no_expire,
         }
     )

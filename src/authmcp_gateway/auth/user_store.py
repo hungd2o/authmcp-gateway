@@ -94,6 +94,8 @@ def init_database(db_path: str):
                 token_jti TEXT UNIQUE NOT NULL,
                 expires_at TIMESTAMP NOT NULL,
                 lifetime_minutes INTEGER NOT NULL,
+                access_token TEXT,
+                no_expire BOOLEAN DEFAULT 0,
                 last_used_at TIMESTAMP,
                 last_used_ip TEXT,
                 revoked_at TIMESTAMP,
@@ -142,6 +144,15 @@ def init_database(db_path: str):
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
             )
         """)
+
+        cursor.execute("PRAGMA table_info(user_personal_access_tokens)")
+        existing_pat_columns = {row[1] for row in cursor.fetchall()}
+        if "access_token" not in existing_pat_columns:
+            cursor.execute("ALTER TABLE user_personal_access_tokens ADD COLUMN access_token TEXT")
+        if "no_expire" not in existing_pat_columns:
+            cursor.execute(
+                "ALTER TABLE user_personal_access_tokens ADD COLUMN no_expire BOOLEAN DEFAULT 0"
+            )
 
         # Create indexes for performance
         cursor.execute("""
@@ -674,6 +685,8 @@ def create_user_personal_access_token(
     token_jti: str,
     expires_at: datetime,
     lifetime_minutes: int,
+    access_token: Optional[str] = None,
+    no_expire: bool = False,
 ) -> int:
     """Create a user-managed personal access token metadata row."""
     with get_db_connection(db_path) as conn:
@@ -681,10 +694,18 @@ def create_user_personal_access_token(
         cursor.execute(
             """
             INSERT INTO user_personal_access_tokens
-                (user_id, token_name, token_jti, expires_at, lifetime_minutes)
-            VALUES (?, ?, ?, ?, ?)
+                (user_id, token_name, token_jti, expires_at, lifetime_minutes, access_token, no_expire)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (user_id, token_name, token_jti, expires_at.isoformat(), int(lifetime_minutes)),
+            (
+                user_id,
+                token_name,
+                token_jti,
+                expires_at.isoformat(),
+                int(lifetime_minutes),
+                access_token,
+                int(no_expire),
+            ),
         )
         return cast(int, cursor.lastrowid)
 
@@ -696,7 +717,7 @@ def list_user_personal_access_tokens(db_path: str, user_id: int) -> list[Dict[st
         cursor.execute(
             """
             SELECT id, user_id, token_name, token_jti, expires_at, lifetime_minutes,
-                   last_used_at, last_used_ip, revoked_at, created_at, updated_at
+                   last_used_at, last_used_ip, revoked_at, created_at, updated_at, no_expire
             FROM user_personal_access_tokens
             WHERE user_id = ?
             ORDER BY created_at DESC, id DESC
@@ -713,9 +734,13 @@ def list_all_personal_access_tokens(db_path: str) -> list[Dict[str, Any]]:
         cursor.execute(
             """
             SELECT pat.id, pat.user_id, pat.token_name, pat.token_jti,
-                   pat.expires_at, pat.lifetime_minutes,
+                   pat.expires_at, pat.lifetime_minutes, pat.no_expire,
                    pat.last_used_at, pat.last_used_ip, pat.revoked_at,
                    pat.created_at, pat.updated_at,
+                   CASE
+                       WHEN pat.access_token IS NOT NULL AND pat.access_token != '' THEN 1
+                       ELSE 0
+                   END AS can_view_token,
                    u.username
             FROM user_personal_access_tokens pat
             LEFT JOIN users u ON u.id = pat.user_id
@@ -734,7 +759,8 @@ def get_user_personal_access_token(
         cursor.execute(
             """
             SELECT id, user_id, token_name, token_jti, expires_at, lifetime_minutes,
-                   last_used_at, last_used_ip, revoked_at, created_at, updated_at
+                   last_used_at, last_used_ip, revoked_at, created_at, updated_at,
+                   access_token, no_expire
             FROM user_personal_access_tokens
             WHERE id = ? AND user_id = ?
             """,
@@ -751,7 +777,8 @@ def get_personal_access_token_by_id(db_path: str, token_id: int) -> Optional[Dic
         cursor.execute(
             """
             SELECT id, user_id, token_name, token_jti, expires_at, lifetime_minutes,
-                   last_used_at, last_used_ip, revoked_at, created_at, updated_at
+                   last_used_at, last_used_ip, revoked_at, created_at, updated_at,
+                   access_token, no_expire
             FROM user_personal_access_tokens
             WHERE id = ?
             """,
@@ -770,7 +797,8 @@ def get_user_personal_access_token_by_jti(
         cursor.execute(
             """
             SELECT id, user_id, token_name, token_jti, expires_at, lifetime_minutes,
-                   last_used_at, last_used_ip, revoked_at, created_at, updated_at
+                   last_used_at, last_used_ip, revoked_at, created_at, updated_at,
+                   no_expire
             FROM user_personal_access_tokens
             WHERE user_id = ?
               AND token_jti = ?

@@ -8,7 +8,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
 
 from authmcp_gateway.admin.routes import api_error_handler, get_config, render_template
-from authmcp_gateway.admin.user_pages import PAT_LIFETIME_OPTIONS_MINUTES, _parse_pat_expiry
+from authmcp_gateway.admin.user_pages import _parse_pat_expiry, parse_pat_create_window
 from authmcp_gateway.auth.jwt_handler import create_access_token, decode_token_unsafe
 from authmcp_gateway.auth.user_store import (
     admin_revoke_personal_access_token,
@@ -24,6 +24,7 @@ __all__ = [
     "admin_api_keys",
     "api_list_all_api_keys",
     "api_create_api_key",
+    "api_get_api_key_secret",
     "api_revoke_api_key",
 ]
 
@@ -34,11 +35,23 @@ def _serialize_admin_pat_row(row: dict[str, Any]) -> dict[str, Any]:
     if exp_dt:
         expires_in_seconds = int((exp_dt - datetime.now(timezone.utc)).total_seconds())
     revoked = row.get("revoked_at")
+    no_expire = bool(row.get("no_expire"))
     return {
-        **row,
+        "id": row.get("id"),
+        "user_id": row.get("user_id"),
+        "token_name": row.get("token_name"),
         "name": row.get("token_name"),
+        "username": row.get("username"),
         "expires_at": exp_dt.isoformat() if exp_dt else row.get("expires_at"),
         "expires_in_seconds": expires_in_seconds,
+        "lifetime_minutes": row.get("lifetime_minutes"),
+        "no_expire": no_expire,
+        "last_used_at": row.get("last_used_at"),
+        "last_used_ip": row.get("last_used_ip"),
+        "revoked_at": revoked,
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+        "can_view_token": bool(row.get("can_view_token")),
         "is_active": revoked is None and (expires_in_seconds is None or expires_in_seconds > 0),
     }
 
@@ -58,9 +71,6 @@ async def api_list_all_api_keys(request: Request) -> JSONResponse:
         {
             "tokens": [_serialize_admin_pat_row(row) for row in rows],
             "current_user_id": admin_user_id,
-            "lifetime_options": {
-                key: int(minutes) for key, minutes in PAT_LIFETIME_OPTIONS_MINUTES.items()
-            },
         }
     )
 
@@ -74,15 +84,15 @@ async def api_create_api_key(request: Request) -> JSONResponse:
 
     body = await request.json()
     token_name = str(body.get("name") or "").strip()
-    lifetime_key = str(body.get("lifetime") or "long").strip().lower()
-    lifetime_minutes = PAT_LIFETIME_OPTIONS_MINUTES.get(lifetime_key)
-    if not lifetime_minutes:
-        return JSONResponse({"detail": "Invalid lifetime option"}, status_code=400)
     if not token_name or len(token_name) < 3 or len(token_name) > 64:
         return JSONResponse(
             {"detail": "Token name must be between 3 and 64 characters"},
             status_code=400,
         )
+    try:
+        lifetime_minutes, no_expire = parse_pat_create_window(body)
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=400)
 
     access_token = create_access_token(
         user_id=user_id,
@@ -105,6 +115,8 @@ async def api_create_api_key(request: Request) -> JSONResponse:
         token_jti=str(jti),
         expires_at=exp_dt,
         lifetime_minutes=lifetime_minutes,
+        access_token=access_token,
+        no_expire=no_expire,
     )
     return JSONResponse(
         {
@@ -113,9 +125,21 @@ async def api_create_api_key(request: Request) -> JSONResponse:
             "access_token": access_token,
             "expires_at": exp_dt.isoformat(),
             "lifetime_minutes": lifetime_minutes,
+            "no_expire": no_expire,
         },
         status_code=201,
     )
+
+
+@api_error_handler
+async def api_get_api_key_secret(request: Request) -> JSONResponse:
+    """API: Return a stored personal access token secret for admins."""
+    _config = get_config(request)
+    token_id = int(request.path_params["token_id"])
+    token = get_personal_access_token_by_id(_config.auth.sqlite_path, token_id)
+    if not token or not token.get("access_token"):
+        return JSONResponse({"detail": "Token secret not available"}, status_code=404)
+    return JSONResponse({"id": token_id, "access_token": token["access_token"]})
 
 
 @api_error_handler

@@ -656,7 +656,9 @@ def create_app(config=None):
                 admin_routes.api_mcp_server_process_action,
                 methods=["POST"],
             ),
-            Route("/admin/api/whitelist/pending", admin_routes.api_whitelist_pending, methods=["GET"]),
+            Route(
+                "/admin/api/whitelist/pending", admin_routes.api_whitelist_pending, methods=["GET"]
+            ),
             Route(
                 "/admin/api/whitelist/servers/{server_id:int}",
                 admin_routes.api_whitelist_servers_action,

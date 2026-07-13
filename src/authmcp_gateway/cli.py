@@ -40,10 +40,15 @@ For more information, visit: https://github.com/loglux/authmcp-gateway
     # Start command
     start_parser = subparsers.add_parser("start", help="Start the gateway server")
     start_parser.add_argument(
-        "--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)"
+        "--host",
+        default=None,
+        help="Host to bind to (default: HOST env or 0.0.0.0)",
     )
     start_parser.add_argument(
-        "--port", type=int, default=8000, help="Port to bind to (default: 8000)"
+        "--port",
+        type=int,
+        default=None,
+        help="Port to bind to (default: PORT env or 8000)",
     )
     start_parser.add_argument(
         "--config", type=Path, help="Path to configuration file (YAML or JSON)"
@@ -54,8 +59,8 @@ For more information, visit: https://github.com/loglux/authmcp-gateway
     start_parser.add_argument(
         "--log-level",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        default="INFO",
-        help="Logging level (default: INFO)",
+        default=None,
+        help="Logging level (default: LOG_LEVEL env or INFO)",
     )
     start_parser.add_argument(
         "--reload", action="store_true", help="Enable auto-reload for development"
@@ -108,7 +113,7 @@ For more information, visit: https://github.com/loglux/authmcp-gateway
         sys.exit(1)
 
     # Configure logging
-    log_level = getattr(args, "log_level", "INFO")
+    log_level = getattr(args, "log_level", None) or "INFO"
     logging.basicConfig(
         level=getattr(logging, log_level),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -135,12 +140,24 @@ def start_server(args):
         load_dotenv(args.env_file)
         print(f"✓ Loaded environment from {args.env_file}")
 
+    host = args.host or os.getenv("HOST", "0.0.0.0")
+    port = args.port
+    if port is None:
+        try:
+            port = int(os.getenv("PORT", "8000").strip())
+        except ValueError:
+            port = 8000
+    log_level = args.log_level or os.getenv("LOG_LEVEL", "INFO").strip().upper()
+    args.host = host
+    args.port = port
+    args.log_level = log_level
+
     # Set log level in environment
-    os.environ["LOG_LEVEL"] = args.log_level
+    os.environ["LOG_LEVEL"] = log_level
 
     # Display URL - show localhost instead of 0.0.0.0 for user convenience
-    display_host = "localhost" if args.host == "0.0.0.0" else args.host
-    server_url = f"http://{display_host}:{args.port}"
+    display_host = "localhost" if host == "0.0.0.0" else host
+    server_url = f"http://{display_host}:{port}"
 
     print(f"""
 ╔══════════════════════════════════════════════════════════╗
@@ -150,9 +167,9 @@ def start_server(args):
 
 Starting server...
   URL: {server_url}
-  Host: {args.host}
-  Port: {args.port}
-  Log Level: {args.log_level}
+  Host: {host}
+  Port: {port}
+  Log Level: {log_level}
   Reload: {args.reload}
 """)
 
@@ -178,9 +195,9 @@ Starting server...
 
         uvicorn.run(
             app,
-            host=args.host,
-            port=args.port,
-            log_level=args.log_level.lower(),
+            host=host,
+            port=port,
+            log_level=log_level.lower(),
             reload=args.reload,
         )
 

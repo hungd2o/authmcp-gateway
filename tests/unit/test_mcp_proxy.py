@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -431,3 +432,84 @@ def test_get_servers_filters_unapproved(monkeypatch, db_path):
     )
     servers = proxy._get_servers()
     assert [s["id"] for s in servers] == [1]
+
+
+@pytest.mark.asyncio
+async def test_execute_virtual_tool_stdio_call_uses_simple_command(monkeypatch, db_path):
+    proxy = McpProxy(db_path)
+    virtual_tool = {
+        "name": "virt_stdio",
+        "approval_state": "approved",
+        "mcp_server_id": 7,
+        "execution_type": "stdio_call",
+        "config": {
+            "command": "python",
+            "command_args": ["script.py"],
+            "working_dir": "/tmp/tool",
+            "env_vars": {"MODE": "test"},
+        },
+    }
+    source_server = {"id": 7, "name": "srv", "approval_state": "approved", "timeout": 9}
+
+    monkeypatch.setattr("authmcp_gateway.mcp.proxy.get_mcp_server", lambda *_args, **_kwargs: source_server)
+
+    captured = {}
+
+    async def fake_run_virtual_process_command(command_config, *, stdin_text, timeout):
+        captured["command_config"] = command_config
+        captured["stdin_text"] = stdin_text
+        captured["timeout"] = timeout
+        return {"returncode": 0, "stdout": json.dumps({"ok": True}), "stderr": ""}
+
+    monkeypatch.setattr(proxy, "_run_virtual_process_command", fake_run_virtual_process_command)
+
+    result = await proxy._execute_virtual_tool(virtual_tool, {"query": "hello"}, None, None)
+
+    assert captured["command_config"]["command"] == "python"
+    assert captured["command_config"]["command_args"] == ["script.py"]
+    assert captured["stdin_text"] == json.dumps({"query": "hello"}, ensure_ascii=False)
+    assert captured["timeout"] == 9
+    assert result["result"]["isError"] is False
+    assert result["result"]["_meta"]["execution_type"] == "stdio_call"
+
+
+@pytest.mark.asyncio
+async def test_execute_virtual_tool_pipeline_call_chains_step_outputs(monkeypatch, db_path):
+    proxy = McpProxy(db_path)
+    virtual_tool = {
+        "name": "virt_pipeline",
+        "approval_state": "approved",
+        "mcp_server_id": 7,
+        "execution_type": "pipeline_call",
+        "config": {
+            "steps": [
+                {"command": "python", "command_args": ["first.py"]},
+                {"command": "jq", "command_args": [".result"]},
+            ],
+            "working_dir": "/tmp/pipeline",
+            "env_vars": {"MODE": "test"},
+        },
+    }
+    source_server = {"id": 7, "name": "srv", "approval_state": "approved", "timeout": 5}
+
+    monkeypatch.setattr("authmcp_gateway.mcp.proxy.get_mcp_server", lambda *_args, **_kwargs: source_server)
+
+    calls = []
+
+    async def fake_run_virtual_process_command(command_config, *, stdin_text, timeout):
+        calls.append((command_config, stdin_text, timeout))
+        if len(calls) == 1:
+            return {"returncode": 0, "stdout": '{"result":"step-one"}', "stderr": ""}
+        return {"returncode": 0, "stdout": '"step-one"', "stderr": ""}
+
+    monkeypatch.setattr(proxy, "_run_virtual_process_command", fake_run_virtual_process_command)
+
+    result = await proxy._execute_virtual_tool(virtual_tool, {"query": "hello"}, None, None)
+
+    assert len(calls) == 2
+    assert calls[0][0]["working_dir"] == "/tmp/pipeline"
+    assert calls[0][0]["env_vars"] == {"MODE": "test"}
+    assert calls[0][1] == json.dumps({"query": "hello"}, ensure_ascii=False)
+    assert calls[1][1] == '{"result":"step-one"}'
+    assert result["result"]["_meta"]["execution_type"] == "pipeline_call"
+    assert result["result"]["content"][0]["text"] == "step-one"

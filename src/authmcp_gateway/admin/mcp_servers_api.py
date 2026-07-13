@@ -208,6 +208,87 @@ def _normalize_transport_payload(data: dict) -> dict:
     return data
 
 
+def _normalize_virtual_tool_process_config(config: dict, *, require_command: bool = True) -> dict:
+    normalized = dict(config or {})
+    if require_command and not str(normalized.get("command") or "").strip():
+        raise ValueError("config.command is required")
+    normalized["command"] = str(normalized.get("command") or "").strip()
+
+    normalized = _normalize_transport_payload(
+        {
+            "transport_type": "stdio",
+            "command": normalized["command"],
+            "command_args": normalized.get("command_args"),
+            "env_vars": normalized.get("env_vars"),
+        }
+    )
+
+    return {
+        "command": normalized["command"],
+        "command_args": normalized["command_args"],
+        "env_vars": normalized["env_vars"],
+        "working_dir": (config or {}).get("working_dir") or None,
+    }
+
+
+def _normalize_virtual_tool_config(execution_type: str, config: dict) -> dict:
+    normalized = dict(config or {})
+    input_schema = normalized.get("input_schema")
+    if input_schema is None:
+        normalized["input_schema"] = {}
+    elif not isinstance(input_schema, dict):
+        raise ValueError("config.input_schema must be an object")
+
+    if execution_type == "http_call":
+        request_cfg = normalized.get("request") or {}
+        if not isinstance(request_cfg, dict):
+            raise ValueError("config.request must be an object for http_call")
+        method = str(request_cfg.get("method") or "GET").upper()
+        url = str(request_cfg.get("url") or "").strip()
+        if not url:
+            raise ValueError("config.request.url is required for http_call")
+        headers = request_cfg.get("headers") or {}
+        if not isinstance(headers, dict):
+            raise ValueError("config.request.headers must be an object for http_call")
+        normalized["request"] = {
+            "method": method,
+            "url": url,
+            "headers": {str(key): str(value) for key, value in headers.items()},
+        }
+        return normalized
+
+    if execution_type == "stdio_call":
+        process_config = _normalize_virtual_tool_process_config(normalized)
+        normalized.update(process_config)
+        return normalized
+
+    if execution_type == "pipeline_call":
+        steps = normalized.get("steps")
+        if not isinstance(steps, list) or not steps:
+            raise ValueError("config.steps must be a non-empty array for pipeline_call")
+        normalized_steps = []
+        for step in steps:
+            if not isinstance(step, dict):
+                raise ValueError("Each pipeline step must be an object")
+            normalized_steps.append(_normalize_virtual_tool_process_config(step))
+        normalized["steps"] = normalized_steps
+        env_vars = normalized.get("env_vars")
+        if env_vars is not None and not isinstance(env_vars, (dict, str)):
+            raise ValueError("config.env_vars must be a mapping or KEY=VALUE lines")
+        if env_vars is not None:
+            normalized["env_vars"] = _normalize_transport_payload(
+                {"transport_type": "stdio", "command": "pipeline", "env_vars": env_vars}
+            )["env_vars"]
+        else:
+            normalized["env_vars"] = {}
+        normalized["working_dir"] = normalized.get("working_dir") or None
+        return normalized
+
+    raise ValueError(
+        "execution_type must be 'http_call', 'stdio_call', or 'pipeline_call'"
+    )
+
+
 def _strip_hash_comments(raw: str) -> str:
     """Strip shell-style # comments outside quoted strings."""
     cleaned_lines = []
@@ -646,28 +727,12 @@ async def api_create_virtual_tool(request: Request) -> JSONResponse:
         return JSONResponse({"error": "Tool name is required"}, status_code=400)
 
     execution_type = (payload.get("execution_type") or "").strip().lower()
-    if execution_type not in ("mcp_wrapper", "http_call"):
-        return JSONResponse(
-            {"error": "execution_type must be 'mcp_wrapper' or 'http_call'"},
-            status_code=400,
-        )
-
     description = (payload.get("description") or "").strip() or None
-    config = payload.get("config") or {}
 
-    if execution_type == "mcp_wrapper":
-        if not (config.get("target_tool") or "").strip():
-            return JSONResponse(
-                {"error": "config.target_tool is required for mcp_wrapper"},
-                status_code=400,
-            )
-    elif execution_type == "http_call":
-        request_cfg = config.get("request") or {}
-        if not (request_cfg.get("url") or "").strip():
-            return JSONResponse(
-                {"error": "config.request.url is required for http_call"},
-                status_code=400,
-            )
+    try:
+        config = _normalize_virtual_tool_config(execution_type, payload.get("config") or {})
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
 
     try:
         tool_id = create_virtual_tool(

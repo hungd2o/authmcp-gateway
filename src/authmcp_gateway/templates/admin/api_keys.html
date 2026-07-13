@@ -1,0 +1,163 @@
+{% extends "admin/base.html" %}
+
+{% block title %}API Keys - Auth MCP Admin{% endblock %}
+
+{% block content %}
+<div x-data="apiKeysManager()">
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-8">
+        <div>
+            <h1 class="text-3xl font-bold text-gray-900 flex items-center gap-3">
+                <i data-lucide="key" class="w-8 h-8 text-blue-600"></i>
+                API Keys
+            </h1>
+            <p class="text-gray-600 mt-1">Manage personal access tokens for all users</p>
+        </div>
+        <button
+            @click="loadKeys()"
+            class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors flex items-center gap-2"
+        >
+            <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+            Refresh
+        </button>
+    </div>
+
+    <!-- Filter -->
+    <div class="mb-4 flex items-center gap-3">
+        <select x-model="filter" @change="loadKeys()"
+                class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500">
+            <option value="active">Active</option>
+            <option value="revoked">Revoked</option>
+            <option value="all">All</option>
+        </select>
+        <span class="text-sm text-gray-500" x-text="'Showing ' + filteredTokens.length + ' token(s)'"></span>
+    </div>
+
+    <!-- Tokens Table -->
+    <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gradient-to-r from-blue-50 to-cyan-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Expires</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Last Used</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    <template x-if="filteredTokens.length === 0">
+                        <tr>
+                            <td colspan="7" class="px-6 py-8 text-center text-gray-500">
+                                No API keys found.
+                            </td>
+                        </tr>
+                    </template>
+                    <template x-for="token in filteredTokens" :key="token.id">
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="text-sm font-medium text-gray-900" x-text="token.token_name"></span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="text-sm text-gray-700" x-text="token.username || ('User #' + token.user_id)"></span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="formatDate(token.created_at)"></td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="formatDate(token.expires_at)"></td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="token.last_used_at ? formatDate(token.last_used_at) : 'Never'"></td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <template x-if="token.revoked_at">
+                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Revoked</span>
+                                </template>
+                                <template x-if="!token.revoked_at && isExpired(token.expires_at)">
+                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">Expired</span>
+                                </template>
+                                <template x-if="!token.revoked_at && !isExpired(token.expires_at)">
+                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Active</span>
+                                </template>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <template x-if="!token.revoked_at">
+                                    <button @click="revokeKey(token.id)"
+                                            class="text-sm text-red-600 hover:text-red-800 font-medium">
+                                        Revoke
+                                    </button>
+                                </template>
+                                <template x-if="token.revoked_at">
+                                    <span class="text-sm text-gray-400">—</span>
+                                </template>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    function apiKeysManager() {
+        return {
+            tokens: [],
+            filter: 'active',
+
+            init() {
+                this.loadKeys();
+            },
+
+            get filteredTokens() {
+                if (this.filter === 'all') return this.tokens;
+                if (this.filter === 'revoked') return this.tokens.filter(t => t.revoked_at);
+                // active: not revoked
+                return this.tokens.filter(t => !t.revoked_at);
+            },
+
+            async loadKeys() {
+                try {
+                    const resp = await fetch('/admin/api/api-keys');
+                    const data = await resp.json();
+                    this.tokens = data.tokens || [];
+                } catch (e) {
+                    console.error('Failed to load API keys', e);
+                }
+                this.$nextTick(() => lucide.createIcons());
+            },
+
+            async revokeKey(tokenId) {
+                if (!confirm('Are you sure you want to revoke this API key?')) return;
+                try {
+                    const resp = await fetch(`/admin/api/api-keys/${tokenId}/revoke`, { method: 'POST' });
+                    if (resp.ok) {
+                        this.loadKeys();
+                    } else {
+                        const err = await resp.json();
+                        alert(err.detail || 'Failed to revoke');
+                    }
+                } catch (e) {
+                    alert('Error: ' + e.message);
+                }
+            },
+
+            formatDate(dateStr) {
+                if (!dateStr) return '—';
+                const d = new Date(dateStr);
+                return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+            },
+
+            isExpired(expiresAt) {
+                if (!expiresAt) return false;
+                return new Date(expiresAt) < new Date();
+            }
+        };
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        setTimeout(() => lucide.createIcons(), 100);
+    });
+</script>
+{% endblock %}

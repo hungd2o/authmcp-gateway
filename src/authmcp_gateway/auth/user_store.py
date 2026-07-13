@@ -706,7 +706,9 @@ def list_user_personal_access_tokens(db_path: str, user_id: int) -> list[Dict[st
         return [dict(row) for row in cursor.fetchall()]
 
 
-def get_user_personal_access_token(db_path: str, user_id: int, token_id: int) -> Optional[Dict[str, Any]]:
+def get_user_personal_access_token(
+    db_path: str, user_id: int, token_id: int
+) -> Optional[Dict[str, Any]]:
     """Get a specific personal access token for a user."""
     with get_db_connection(db_path) as conn:
         cursor = conn.cursor()

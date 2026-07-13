@@ -14,7 +14,9 @@ from authmcp_gateway.config import AppConfig, AuthConfig, JWTConfig, RateLimitCo
 def _create_test_client(db_path: str) -> TestClient:
     settings_path = Path(db_path).parent / "auth_settings.json"
     settings_path.write_text(
-        json.dumps({"system": {"allow_registration": False, "allow_dcr": False, "auth_required": True}})
+        json.dumps(
+            {"system": {"allow_registration": False, "allow_dcr": False, "auth_required": True}}
+        )
     )
 
     config = AppConfig(
@@ -38,6 +40,13 @@ def _mcp_initialize(token: str) -> dict:
     }
 
 
+def _csrf_headers(client: TestClient) -> dict:
+    client.get("/account")
+    csrf = client.cookies.get("csrf_token")
+    assert csrf
+    return {"X-CSRF-Token": csrf}
+
+
 def test_create_lifetime_personal_access_token_and_use_it(db_path):
     with _create_test_client(db_path) as client:
         create_user(
@@ -54,6 +63,7 @@ def test_create_lifetime_personal_access_token_and_use_it(db_path):
         created = client.post(
             "/account/pats",
             json={"name": "CI Service", "lifetime": "lifetime"},
+            headers=_csrf_headers(client),
         )
         assert created.status_code == 201
         body = created.json()
@@ -84,12 +94,16 @@ def test_rotate_and_revoke_personal_access_token_invalidates_old_tokens(db_path)
         login = client.post("/api/login", json={"username": "bob", "password": "Password123!"})
         assert login.status_code == 200
 
-        created = client.post("/account/pats", json={"name": "Deploy Bot", "lifetime": "very_long"})
+        created = client.post(
+            "/account/pats",
+            json={"name": "Deploy Bot", "lifetime": "very_long"},
+            headers=_csrf_headers(client),
+        )
         assert created.status_code == 201
         old_token = created.json()["access_token"]
         old_id = created.json()["id"]
 
-        rotated = client.post(f"/account/pats/{old_id}/rotate")
+        rotated = client.post(f"/account/pats/{old_id}/rotate", headers=_csrf_headers(client))
         assert rotated.status_code == 200
         new_token = rotated.json()["access_token"]
         new_id = rotated.json()["id"]
@@ -98,6 +112,6 @@ def test_rotate_and_revoke_personal_access_token_invalidates_old_tokens(db_path)
         assert client.post("/mcp", **_mcp_initialize(old_token)).status_code == 401
         assert client.post("/mcp", **_mcp_initialize(new_token)).status_code == 200
 
-        revoked = client.post(f"/account/pats/{new_id}/revoke")
+        revoked = client.post(f"/account/pats/{new_id}/revoke", headers=_csrf_headers(client))
         assert revoked.status_code == 200
         assert client.post("/mcp", **_mcp_initialize(new_token)).status_code == 401

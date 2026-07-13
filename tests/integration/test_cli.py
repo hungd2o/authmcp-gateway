@@ -41,7 +41,7 @@ def test_main_dispatches_to_start(monkeypatch):
     monkeypatch.setattr(cli, "start_server", fake_start)
     monkeypatch.setattr(sys, "argv", ["authmcp-gateway", "start", "--port", "9000"])
     cli.main()
-    assert called["host"] == "0.0.0.0"
+    assert called["host"] is None
     assert called["port"] == 9000
 
 

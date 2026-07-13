@@ -111,16 +111,22 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
 
         except (jwt.PyJWTError, sqlite3.Error, ValueError, KeyError, TypeError) as e:
             logger.warning(f"Admin auth failed: {e}")
-            return self._unauthorized(request, "Invalid or expired token")
+            return self._unauthorized(request, "Invalid or expired token", clear_cookie=True)
 
-    def _unauthorized(self, request: Request, message: str) -> Response:
+    def _unauthorized(self, request: Request, message: str, clear_cookie: bool = False) -> Response:
         """Return unauthorized response."""
         # For API requests, return JSON
         if request.url.path.startswith("/admin/api/"):
-            return JSONResponse({"detail": message}, status_code=401)
+            response: Response = JSONResponse({"detail": message}, status_code=401)
+            if clear_cookie and request.cookies.get("admin_token"):
+                response.delete_cookie("admin_token", path="/")
+            return response
 
         # For HTML requests, redirect to login page
-        return RedirectResponse(url="/admin/login", status_code=302)
+        response = RedirectResponse(url="/admin/login", status_code=302)
+        if clear_cookie and request.cookies.get("admin_token"):
+            response.delete_cookie("admin_token", path="/")
+        return response
 
     def _forbidden(self, request: Request) -> Response:
         """Return forbidden response."""

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import shlex
 from datetime import datetime
 
 import jwt
@@ -122,9 +123,20 @@ def _normalize_transport_payload(data: dict) -> dict:
         else:
             try:
                 parsed = json.loads(raw)
-                data["command_args"] = parsed if isinstance(parsed, list) else []
+                data["command_args"] = (
+                    [str(part) for part in parsed] if isinstance(parsed, list) else []
+                )
             except json.JSONDecodeError:
-                data["command_args"] = [part for part in raw.split(" ") if part]
+                try:
+                    data["command_args"] = shlex.split(raw)
+                except ValueError as exc:
+                    raise ValueError(f"Invalid command_args: {exc}") from exc
+    elif isinstance(data.get("command_args"), list):
+        data["command_args"] = [str(part) for part in data["command_args"]]
+    elif data.get("command_args") is None:
+        data["command_args"] = []
+    else:
+        raise ValueError("command_args must be a JSON array, list, or string")
     if isinstance(data.get("env_vars"), str):
         raw_env = data.get("env_vars", "").strip()
         if not raw_env:

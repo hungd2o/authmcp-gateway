@@ -104,9 +104,19 @@
                                 <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2">Command <span class="text-red-600">*</span></label>
                                 <input type="text" id="serverCommand" placeholder="npx"
                                        class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-mono text-sm break-all">
-                                <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2 mt-3">Command Args (JSON array or space-separated)</label>
-                                <input type="text" id="serverCommandArgs" placeholder='[\"@modelcontextprotocol/server-filesystem\",\"/tmp\"]'
-                                       class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-mono text-sm break-all">
+                                <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2 mt-3">Command Args</label>
+                                <select x-model="commandArgsMode"
+                                        class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-medium text-sm">
+                                    <option value="lines">Simple (one arg per line)</option>
+                                    <option value="json">Advanced (JSON array)</option>
+                                </select>
+                                <textarea id="serverCommandArgsLines" rows="4" x-show="commandArgsMode === 'lines'"
+                                          placeholder="@modelcontextprotocol/server-filesystem&#10;/tmp"
+                                          class="w-full mt-2 px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-mono text-sm break-all resize-y"></textarea>
+                                <textarea id="serverCommandArgsJson" rows="3" x-show="commandArgsMode === 'json'"
+                                          placeholder='["@modelcontextprotocol/server-filesystem","/tmp"]'
+                                          class="w-full mt-2 px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-mono text-sm break-all resize-y"></textarea>
+                                <p class="text-xs text-gray-600 mt-2">Preview: <code class="font-mono" x-text="getCommandArgsPreview(false)"></code></p>
                                 <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2 mt-3">Working Directory</label>
                                 <input type="text" id="serverWorkingDir" placeholder="/path/to/workdir"
                                        class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-mono text-sm break-all">
@@ -243,9 +253,17 @@
                                 <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2">Command <span class="text-red-600">*</span></label>
                                 <input type="text" id="editServerCommand" placeholder="npx"
                                        class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all font-mono text-sm break-all">
-                                <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2 mt-3">Command Args (JSON array or space-separated)</label>
-                                <input type="text" id="editServerCommandArgs"
-                                       class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all font-mono text-sm break-all">
+                                <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2 mt-3">Command Args</label>
+                                <select x-model="editCommandArgsMode"
+                                        class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all font-medium text-sm">
+                                    <option value="lines">Simple (one arg per line)</option>
+                                    <option value="json">Advanced (JSON array)</option>
+                                </select>
+                                <textarea id="editServerCommandArgsLines" rows="4" x-show="editCommandArgsMode === 'lines'"
+                                          class="w-full mt-2 px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all font-mono text-sm break-all resize-y"></textarea>
+                                <textarea id="editServerCommandArgsJson" rows="3" x-show="editCommandArgsMode === 'json'"
+                                          class="w-full mt-2 px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all font-mono text-sm break-all resize-y"></textarea>
+                                <p class="text-xs text-gray-600 mt-2">Preview: <code class="font-mono" x-text="getCommandArgsPreview(true)"></code></p>
                                 <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2 mt-3">Working Directory</label>
                                 <input type="text" id="editServerWorkingDir"
                                        class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all font-mono text-sm break-all">
@@ -338,6 +356,8 @@
             editAuthType: 'none',
             transportType: 'http',
             editTransportType: 'http',
+            commandArgsMode: 'lines',
+            editCommandArgsMode: 'lines',
             currentServers: [],
 
             init() {
@@ -360,6 +380,51 @@
                 else if (action === 'process-start') this.processAction(id, 'start');
                 else if (action === 'process-stop') this.processAction(id, 'stop');
                 else if (action === 'process-restart') this.processAction(id, 'restart');
+            },
+
+            _parseCommandArgs(raw, mode) {
+                if (!raw || !raw.trim()) return [];
+                if (mode === 'json') {
+                    let parsed;
+                    try {
+                        parsed = JSON.parse(raw);
+                    } catch (error) {
+                        throw new Error('Command Args JSON must be a valid array');
+                    }
+                    if (!Array.isArray(parsed)) {
+                        throw new Error('Command Args JSON must be an array');
+                    }
+                    return parsed.map(arg => String(arg));
+                }
+                return raw.split(/\r?\n/).map(arg => arg.trim()).filter(Boolean);
+            },
+
+            _readCommandArgs(isEdit) {
+                const mode = isEdit ? this.editCommandArgsMode : this.commandArgsMode;
+                const fieldId = isEdit
+                    ? (mode === 'json' ? 'editServerCommandArgsJson' : 'editServerCommandArgsLines')
+                    : (mode === 'json' ? 'serverCommandArgsJson' : 'serverCommandArgsLines');
+                const raw = document.getElementById(fieldId)?.value || '';
+                return { mode, raw };
+            },
+
+            parseCommandArgsOrToast(isEdit) {
+                const { mode, raw } = this._readCommandArgs(isEdit);
+                try {
+                    return this._parseCommandArgs(raw, mode);
+                } catch (error) {
+                    showToast(error.message, 'error');
+                    return null;
+                }
+            },
+
+            getCommandArgsPreview(isEdit) {
+                const { mode, raw } = this._readCommandArgs(isEdit);
+                try {
+                    return JSON.stringify(this._parseCommandArgs(raw, mode));
+                } catch {
+                    return 'invalid';
+                }
             },
 
             async loadServers() {
@@ -612,6 +677,8 @@
 
             async addServer() {
                 const timeoutVal = document.getElementById('serverTimeout').value;
+                const commandArgs = this.parseCommandArgsOrToast(false);
+                if (commandArgs === null) return;
                 const data = {
                     name: document.getElementById('serverName').value,
                     url: document.getElementById('serverUrl').value,
@@ -623,7 +690,7 @@
                     enabled: document.getElementById('serverEnabled').checked,
                     timeout: timeoutVal ? parseInt(timeoutVal) : null,
                     command: document.getElementById('serverCommand')?.value || null,
-                    command_args: document.getElementById('serverCommandArgs')?.value || null,
+                    command_args: commandArgs,
                     pipe_path: document.getElementById('serverPipePath')?.value || null,
                     expose_port: document.getElementById('serverExposePort')?.value || null,
                     working_dir: document.getElementById('serverWorkingDir')?.value || null,
@@ -641,6 +708,9 @@
                         document.getElementById('addServerForm').reset();
                         this.authType = 'none';
                         this.transportType = 'http';
+                        this.commandArgsMode = 'lines';
+                        document.getElementById('serverCommandArgsLines').value = '';
+                        document.getElementById('serverCommandArgsJson').value = '';
                         this.showAddModal = false;
                         await this.loadServers();
                     } else {
@@ -708,7 +778,9 @@
                 document.getElementById('editServerTimeout').value = server.timeout || '';
                 document.getElementById('editServerEnabled').checked = server.enabled;
                 document.getElementById('editServerCommand').value = server.command || '';
-                document.getElementById('editServerCommandArgs').value = server.command_args ? JSON.stringify(server.command_args) : '';
+                const commandArgs = Array.isArray(server.command_args) ? server.command_args : [];
+                document.getElementById('editServerCommandArgsLines').value = commandArgs.join('\n');
+                document.getElementById('editServerCommandArgsJson').value = JSON.stringify(commandArgs);
                 document.getElementById('editServerPipePath').value = server.pipe_path || '';
                 document.getElementById('editServerExposePort').value = server.expose_port || '';
                 document.getElementById('editServerWorkingDir').value = server.working_dir || '';
@@ -716,6 +788,7 @@
 
                 this.editAuthType = server.auth_type || 'none';
                 this.editTransportType = server.transport_type || 'http';
+                this.editCommandArgsMode = 'lines';
 
                 document.getElementById('editServerAuthToken').value = '';
 
@@ -726,6 +799,8 @@
             async updateServer() {
                 const serverId = document.getElementById('editServerId').value;
                 const editTimeoutVal = document.getElementById('editServerTimeout').value;
+                const commandArgs = this.parseCommandArgsOrToast(true);
+                if (commandArgs === null) return;
                 const data = {
                     name: document.getElementById('editServerName').value,
                     url: document.getElementById('editServerUrl').value,
@@ -736,7 +811,7 @@
                     enabled: document.getElementById('editServerEnabled').checked,
                     timeout: editTimeoutVal ? parseInt(editTimeoutVal) : null,
                     command: document.getElementById('editServerCommand')?.value || null,
-                    command_args: document.getElementById('editServerCommandArgs')?.value || null,
+                    command_args: commandArgs,
                     pipe_path: document.getElementById('editServerPipePath')?.value || null,
                     expose_port: document.getElementById('editServerExposePort')?.value || null,
                     working_dir: document.getElementById('editServerWorkingDir')?.value || null,

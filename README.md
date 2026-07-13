@@ -150,12 +150,15 @@ authmcp-gateway start                    # Start server (default: 0.0.0.0:8000)
 authmcp-gateway start --port 9000        # Start on custom port
 authmcp-gateway start --host 127.0.0.1   # Bind to localhost only
 authmcp-gateway start --env-file custom.env  # Use custom config file
+authmcp-gateway start --background       # Start in background and return the terminal
 
 authmcp-gateway init-db                  # Initialize database
 authmcp-gateway create-admin             # Create admin user via CLI
 authmcp-gateway version                  # Show version
 authmcp-gateway --help                   # Show all options
 ```
+
+When you run `authmcp-gateway start` from an interactive terminal, the CLI now lets you choose between keeping logs attached in the current terminal or sending the gateway to the background and writing console output to `data/logs/gateway-console.log`.
 
 ### Option 2: Docker Compose
 

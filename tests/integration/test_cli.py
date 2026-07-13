@@ -94,6 +94,8 @@ def _start_args(tmp_path, **overrides):
         reload=False,
         no_tray=True,
         tray_icon=None,
+        background=False,
+        background_child=False,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -174,6 +176,103 @@ def test_start_server_sets_log_level_env(tmp_path, monkeypatch):
     import os
 
     assert os.environ["LOG_LEVEL"] == "WARNING"
+
+
+def test_start_server_interactive_foreground_disables_tray(tmp_path, monkeypatch):
+    """Choosing foreground keeps logs attached even when tray support exists."""
+    monkeypatch.setitem(sys.modules, "uvicorn", MagicMock())
+    fake_app_module = MagicMock()
+    fake_app_module.app = "APP"
+    monkeypatch.setitem(sys.modules, "authmcp_gateway.app", fake_app_module)
+    monkeypatch.delenv("HOST", raising=False)
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    monkeypatch.setattr(cli, "_supports_interactive_start_prompt", lambda: True)
+    monkeypatch.setattr(cli, "_prompt_start_mode", lambda _args, _tray_available: "foreground")
+    monkeypatch.setattr("authmcp_gateway.tray.is_tray_available", lambda: True)
+    tray_started = {"value": False}
+    monkeypatch.setattr(
+        cli, "_start_server_with_tray", lambda *_args: tray_started.__setitem__("value", True)
+    )
+
+    cli.start_server(_start_args(tmp_path, no_tray=False))
+
+    sys.modules["uvicorn"].run.assert_called_once_with(
+        "APP", host="0.0.0.0", port=8000, log_level="info", reload=False
+    )
+    assert tray_started["value"] is False
+
+
+def test_start_server_background_mode_relaunches_and_returns(tmp_path, monkeypatch):
+    """--background relaunches a detached child instead of running uvicorn inline."""
+    monkeypatch.setitem(sys.modules, "uvicorn", MagicMock())
+    fake_app_module = MagicMock()
+    fake_app_module.app = "APP"
+    monkeypatch.setitem(sys.modules, "authmcp_gateway.app", fake_app_module)
+    monkeypatch.delenv("HOST", raising=False)
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    monkeypatch.setattr("authmcp_gateway.tray.is_tray_available", lambda: False)
+    launched = {}
+    monkeypatch.setattr(
+        cli,
+        "_launch_background_server",
+        lambda args, tray_available, server_url: launched.update(
+            {
+                "background": args.background,
+                "tray_available": tray_available,
+                "server_url": server_url,
+            }
+        ),
+    )
+
+    cli.start_server(_start_args(tmp_path, no_tray=False, background=True))
+
+    assert launched == {
+        "background": True,
+        "tray_available": False,
+        "server_url": "http://localhost:8000",
+    }
+    sys.modules["uvicorn"].run.assert_not_called()
+
+
+def test_build_background_start_command_preserves_cli_flags(tmp_path):
+    """Detached restart reuses the caller's explicit start flags."""
+    args = _start_args(
+        tmp_path,
+        host="127.0.0.1",
+        port=9105,
+        config=tmp_path / "config.yaml",
+        env_file=tmp_path / ".env",
+        log_level="ERROR",
+        reload=True,
+        no_tray=True,
+        tray_icon=tmp_path / "icon.png",
+    )
+
+    command = cli._build_background_start_command(args)
+
+    assert command == [
+        sys.executable,
+        "-m",
+        "authmcp_gateway.cli",
+        "start",
+        "--background-child",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "9105",
+        "--config",
+        str(tmp_path / "config.yaml"),
+        "--env-file",
+        str(tmp_path / ".env"),
+        "--log-level",
+        "ERROR",
+        "--reload",
+        "--no-tray",
+        "--tray-icon",
+        str(tmp_path / "icon.png"),
+    ]
 
 
 # ---------------------------------------------------------------------------

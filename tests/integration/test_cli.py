@@ -323,6 +323,7 @@ def test_show_version_prints_installed_version(capsys):
 def test_show_version_falls_back_when_package_not_found(monkeypatch, capsys):
     """If package metadata is missing, falls back to the source version."""
     from importlib.metadata import PackageNotFoundError
+
     from authmcp_gateway import __version__
 
     def boom(_name):

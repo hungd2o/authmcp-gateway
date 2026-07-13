@@ -22,7 +22,7 @@ from .auth import endpoints as auth_endpoints
 from .auth.authorize_endpoint import authorize_page
 from .auth.oauth_code_flow import create_authorization_code_table
 from .auth.user_store import init_database
-from .config import load_config
+from .config import get_config
 from .csrf import CSRFMiddleware
 from .mcp.crypto import initialize_crypto
 from .mcp.handler import McpHandler
@@ -155,7 +155,7 @@ def create_app(config=None):
         Configured Starlette application.
     """
     if config is None:
-        config = load_config()
+        config = get_config()
 
     # Initialize database
     init_database(config.auth.sqlite_path)

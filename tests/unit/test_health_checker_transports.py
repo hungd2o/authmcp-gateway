@@ -33,6 +33,7 @@ async def test_health_checker_stdio_transport_online(db_path, monkeypatch):
             "transport_type": "stdio",
             "command": "python",
             "enabled": 1,
+            "approval_state": "approved",
         }
     )
 
@@ -73,6 +74,7 @@ async def test_health_checker_stdio_transport_timeout_returns_offline(db_path, m
             "transport_type": "stdio",
             "command": "python",
             "enabled": 1,
+            "approval_state": "approved",
         }
     )
 
@@ -81,3 +83,24 @@ async def test_health_checker_stdio_transport_timeout_returns_offline(db_path, m
     server = get_mcp_server(db_path, server_id)
     assert server["status"] == "offline"
     assert server["last_error"] == "Timeout after 10s"
+
+
+@pytest.mark.asyncio
+async def test_health_checker_skips_pending_servers(db_path, monkeypatch):
+    checker = HealthChecker(db_path)
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.health.list_mcp_servers",
+        lambda *_args, **_kwargs: [
+            {"id": 1, "name": "approved", "approval_state": "approved"},
+            {"id": 2, "name": "pending", "approval_state": "pending"},
+        ],
+    )
+    seen = []
+
+    async def fake_check_server(server):
+        seen.append(server["id"])
+        return {"server_id": server["id"], "status": "online"}
+
+    monkeypatch.setattr(checker, "check_server", fake_check_server)
+    await checker.check_all_servers()
+    assert seen == [1]

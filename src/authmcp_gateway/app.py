@@ -32,6 +32,7 @@ from .mcp.proxy import McpProxy
 from .mcp.store import init_mcp_database, list_mcp_servers
 from .mcp.token_manager import initialize_token_manager
 from .mcp.token_refresher import initialize_token_refresher
+from .mcp.trust import ensure_whitelist_token
 from .middleware import (
     ContentTypeFixMiddleware,
     McpAuthMiddleware,
@@ -222,6 +223,10 @@ def create_app(config=None):
     logger.info("✓ AuthMCP Gateway initialized")
     logger.info(f"  - Auth required: {config.auth_required}")
     logger.info(f"  - JWT algorithm: {config.jwt.algorithm}")
+    whitelist_token, generated = ensure_whitelist_token(config.whitelist_token)
+    config.whitelist_token = whitelist_token
+    config.whitelist_token_generated = generated
+    os.environ["MCP_WHITELIST_TOKEN"] = whitelist_token
 
     # ========================================================================
     # ENDPOINT CLOSURES (capture config, mcp_handler, mcp_proxy from scope)
@@ -440,7 +445,9 @@ def create_app(config=None):
         try:
             servers = list_mcp_servers(config.auth.sqlite_path, enabled_only=True)
             for server in servers:
-                if (server.get("transport_type") or "http").lower() == "stdio":
+                if (server.get("transport_type") or "http").lower() == "stdio" and server.get(
+                    "approval_state"
+                ) == "approved":
                     await process_manager.start_server(server["id"], server)
             logger.info("✓ STDIO process manager initialized")
         except Exception as e:
@@ -554,6 +561,7 @@ def create_app(config=None):
             Route("/admin/users", admin_routes.admin_users, methods=["GET"]),
             Route("/admin/mcp-servers", admin_routes.admin_mcp_servers, methods=["GET"]),
             Route("/admin/mcp-tokens", admin_routes.admin_mcp_tokens, methods=["GET"]),
+            Route("/admin/whitelist", admin_routes.admin_whitelist, methods=["GET"]),
             Route("/admin/settings", admin_routes.admin_settings, methods=["GET"]),
             Route("/admin/logs", admin_routes.admin_logs, methods=["GET"]),
             Route("/admin/security-logs", admin_routes.admin_security_logs, methods=["GET"]),
@@ -646,6 +654,19 @@ def create_app(config=None):
             Route(
                 "/admin/api/mcp-servers/{server_id:int}/process/{action:str}",
                 admin_routes.api_mcp_server_process_action,
+                methods=["POST"],
+            ),
+            Route(
+                "/admin/api/whitelist/pending", admin_routes.api_whitelist_pending, methods=["GET"]
+            ),
+            Route(
+                "/admin/api/whitelist/servers/{server_id:int}",
+                admin_routes.api_whitelist_servers_action,
+                methods=["POST"],
+            ),
+            Route(
+                "/admin/api/whitelist/virtual-tools/{tool_id:int}",
+                admin_routes.api_whitelist_virtual_tools_action,
                 methods=["POST"],
             ),
             Route(

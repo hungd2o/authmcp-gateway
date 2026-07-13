@@ -391,3 +391,33 @@ def test_get_servers_needing_refresh_returns_only_expiring(mcp_db):
     needing = store.get_servers_needing_refresh(mcp_db, threshold_minutes=10)
     names = {s["name"] for s in needing}
     assert names == {"soon"}
+
+
+def test_update_mcp_server_resets_approval_when_config_changes(mcp_db):
+    sid = store.create_mcp_server(mcp_db, "risk", "https://risk/mcp")
+    approved = store.update_server_approval(mcp_db, sid, "approved", actor="test")
+    assert approved is True
+    assert store.get_mcp_server(mcp_db, sid)["approval_state"] == "approved"
+
+    store.update_mcp_server(mcp_db, sid, url="https://risk/new")
+    server = store.get_mcp_server(mcp_db, sid)
+    assert server["approval_state"] == "pending"
+
+
+def test_virtual_tools_default_pending_and_filtering(mcp_db):
+    sid = store.create_mcp_server(mcp_db, "with-vtool", "https://srv/mcp")
+    tool_id = store.create_virtual_tool(
+        mcp_db,
+        mcp_server_id=sid,
+        name="v_http",
+        description="vtool",
+        execution_type="http_call",
+        config={"request": {"method": "GET", "url": "https://example.com"}},
+    )
+    tool = store.get_virtual_tool(mcp_db, tool_id)
+    assert tool["approval_state"] == "pending"
+    assert store.list_virtual_tools(mcp_db, approved_only=True) == []
+
+    store.update_virtual_tool_approval(mcp_db, tool_id, "approved", actor="tester")
+    approved = store.list_virtual_tools(mcp_db, approved_only=True)
+    assert len(approved) == 1

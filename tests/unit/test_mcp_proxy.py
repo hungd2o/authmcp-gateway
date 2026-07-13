@@ -418,3 +418,16 @@ async def test_fetch_capabilities_handles_already_initialized_as_non_fatal(db_pa
     caps = await proxy._fetch_capabilities_from_server(server)
 
     assert caps == {"tools": {}}
+
+
+def test_get_servers_filters_unapproved(monkeypatch, db_path):
+    proxy = McpProxy(db_path)
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.proxy.list_mcp_servers",
+        lambda *_args, **_kwargs: [
+            {"id": 1, "name": "approved", "approval_state": "approved"},
+            {"id": 2, "name": "pending", "approval_state": "pending"},
+        ],
+    )
+    servers = proxy._get_servers()
+    assert [s["id"] for s in servers] == [1]

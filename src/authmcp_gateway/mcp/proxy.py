@@ -852,7 +852,9 @@ class McpProxy:
             request_cfg = config.get("request") or {}
             method = str(request_cfg.get("method") or "GET").upper()
             url = str(request_cfg.get("url") or "")
-            headers = {str(key): str(value) for key, value in (request_cfg.get("headers") or {}).items()}
+            headers = {
+                str(key): str(value) for key, value in (request_cfg.get("headers") or {}).items()
+            }
             if not url:
                 raise ToolNotFoundError(
                     f"Virtual tool '{virtual_tool['name']}' has no URL configured"
@@ -904,7 +906,9 @@ class McpProxy:
                     "env_vars": config.get("env_vars") or {},
                 },
                 stdin_text=payload,
-                timeout=float(config.get("timeout") or source_server.get("timeout") or self.timeout),
+                timeout=float(
+                    config.get("timeout") or source_server.get("timeout") or self.timeout
+                ),
             )
             return self._build_virtual_process_response(
                 virtual_tool=virtual_tool,
@@ -961,7 +965,9 @@ class McpProxy:
             raise ToolNotFoundError("Virtual tool command is missing")
         command_args = [str(arg) for arg in (command_config.get("command_args") or [])]
         env = os.environ.copy()
-        env.update({str(key): str(value) for key, value in (command_config.get("env_vars") or {}).items()})
+        env.update(
+            {str(key): str(value) for key, value in (command_config.get("env_vars") or {}).items()}
+        )
         process = await asyncio.create_subprocess_exec(
             command,
             *command_args,

@@ -451,7 +451,9 @@ async def test_execute_virtual_tool_stdio_call_uses_simple_command(monkeypatch, 
     }
     source_server = {"id": 7, "name": "srv", "approval_state": "approved", "timeout": 9}
 
-    monkeypatch.setattr("authmcp_gateway.mcp.proxy.get_mcp_server", lambda *_args, **_kwargs: source_server)
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.proxy.get_mcp_server", lambda *_args, **_kwargs: source_server
+    )
 
     captured = {}
 
@@ -492,7 +494,9 @@ async def test_execute_virtual_tool_pipeline_call_chains_step_outputs(monkeypatc
     }
     source_server = {"id": 7, "name": "srv", "approval_state": "approved", "timeout": 5}
 
-    monkeypatch.setattr("authmcp_gateway.mcp.proxy.get_mcp_server", lambda *_args, **_kwargs: source_server)
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.proxy.get_mcp_server", lambda *_args, **_kwargs: source_server
+    )
 
     calls = []
 

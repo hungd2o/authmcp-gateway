@@ -284,9 +284,7 @@ def _normalize_virtual_tool_config(execution_type: str, config: dict) -> dict:
         normalized["working_dir"] = normalized.get("working_dir") or None
         return normalized
 
-    raise ValueError(
-        "execution_type must be 'http_call', 'stdio_call', or 'pipeline_call'"
-    )
+    raise ValueError("execution_type must be 'http_call', 'stdio_call', or 'pipeline_call'")
 
 
 def _strip_hash_comments(raw: str) -> str:
@@ -764,7 +762,9 @@ async def api_delete_virtual_tool(request: Request) -> JSONResponse:
     if not tool:
         return JSONResponse({"error": "Virtual tool not found"}, status_code=404)
     if tool.get("mcp_server_id") != server_id:
-        return JSONResponse({"error": "Virtual tool does not belong to this server"}, status_code=404)
+        return JSONResponse(
+            {"error": "Virtual tool does not belong to this server"}, status_code=404
+        )
 
     success = delete_virtual_tool(_config.auth.sqlite_path, tool_id)
     if success:

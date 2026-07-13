@@ -44,6 +44,19 @@ from .utils import get_request_ip
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
 logger = logging.getLogger("authmcp-gateway")
 
+_TAILWIND_FALLBACK_CSS = """/* AuthMCP fallback stylesheet (tailwind.css missing) */
+html, body {
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f8fafc;
+    color: #0f172a;
+}
+input, textarea, select, button {
+    font: inherit;
+}
+"""
+
 
 # ============================================================================
 # MODULE-LEVEL HELPERS (pure functions, no side effects)
@@ -737,6 +750,20 @@ def create_app(config=None):
 
         class CachedStaticFiles(StaticFiles):
             """StaticFiles with Cache-Control headers for browser caching."""
+
+            async def get_response(self, path: str, scope):
+                response = await super().get_response(path, scope)
+                if response.status_code == 404 and path == "tailwind.css":
+                    logger.warning(
+                        "tailwind.css missing in static bundle; serving minimal fallback CSS"
+                    )
+                    return Response(
+                        _TAILWIND_FALLBACK_CSS,
+                        media_type="text/css",
+                        status_code=200,
+                        headers={"x-authmcp-fallback-css": "1"},
+                    )
+                return response
 
             async def __call__(self, scope, receive, send):
                 async def send_with_cache(message):

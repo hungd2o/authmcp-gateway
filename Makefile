@@ -59,7 +59,11 @@ test-cov: ## Run full suite with coverage report
 ## ----- Build -----
 
 css: ## Rebuild Tailwind CSS
-	tailwindcss -i $(CSS_IN) -o $(CSS_OUT) --minify
+	@if command -v tailwindcss >/dev/null 2>&1; then \
+		tailwindcss -i $(CSS_IN) -o $(CSS_OUT) --minify; \
+	else \
+		npx --yes tailwindcss@3.4.17 -i $(CSS_IN) -o $(CSS_OUT) --minify; \
+	fi
 
 build: css ## Build Python package (rebuilds CSS first)
 	rm -rf dist/ build/

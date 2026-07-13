@@ -11,8 +11,10 @@ from authmcp_gateway.admin.routes import api_error_handler, get_config, render_t
 from authmcp_gateway.admin.user_pages import PAT_LIFETIME_OPTIONS_MINUTES, _parse_pat_expiry
 from authmcp_gateway.auth.jwt_handler import create_access_token, decode_token_unsafe
 from authmcp_gateway.auth.user_store import (
-    create_user_personal_access_token,
     admin_revoke_personal_access_token,
+    blacklist_token,
+    create_user_personal_access_token,
+    get_personal_access_token_by_id,
     list_all_personal_access_tokens,
 )
 
@@ -121,9 +123,13 @@ async def api_revoke_api_key(request: Request) -> JSONResponse:
     """API: Revoke a personal access token by ID (admin)."""
     _config = get_config(request)
     token_id = int(request.path_params["token_id"])
+    token = get_personal_access_token_by_id(_config.auth.sqlite_path, token_id)
+    if not token:
+        return JSONResponse({"detail": "Token not found or already revoked"}, status_code=404)
     revoked = admin_revoke_personal_access_token(_config.auth.sqlite_path, token_id)
     if not revoked:
-        return JSONResponse(
-            {"detail": "Token not found or already revoked"}, status_code=404
-        )
+        return JSONResponse({"detail": "Token not found or already revoked"}, status_code=404)
+    exp_dt = _parse_pat_expiry(token.get("expires_at"))
+    if exp_dt and token.get("token_jti"):
+        blacklist_token(_config.auth.sqlite_path, str(token["token_jti"]), exp_dt)
     return JSONResponse({"status": "revoked"})

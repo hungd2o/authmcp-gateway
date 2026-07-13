@@ -127,7 +127,9 @@ def test_admin_can_revoke_created_api_key(db_path):
         assert created.status_code == 201
         created_body = created.json()
 
-        assert client.post("/mcp", **_mcp_initialize(created_body["access_token"])).status_code == 200
+        assert (
+            client.post("/mcp", **_mcp_initialize(created_body["access_token"])).status_code == 200
+        )
 
         revoked = client.post(
             f"/admin/api/api-keys/{created_body['id']}/revoke",
@@ -141,4 +143,6 @@ def test_admin_can_revoke_created_api_key(db_path):
         assert len(tokens) == 1
         assert tokens[0]["revoked_at"] is not None
 
-        assert client.post("/mcp", **_mcp_initialize(created_body["access_token"])).status_code == 401
+        assert (
+            client.post("/mcp", **_mcp_initialize(created_body["access_token"])).status_code == 401
+        )

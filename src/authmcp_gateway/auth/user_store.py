@@ -706,6 +706,25 @@ def list_user_personal_access_tokens(db_path: str, user_id: int) -> list[Dict[st
         return [dict(row) for row in cursor.fetchall()]
 
 
+def list_all_personal_access_tokens(db_path: str) -> list[Dict[str, Any]]:
+    """List all personal access tokens across all users (admin view)."""
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT pat.id, pat.user_id, pat.token_name, pat.token_jti,
+                   pat.expires_at, pat.lifetime_minutes,
+                   pat.last_used_at, pat.last_used_ip, pat.revoked_at,
+                   pat.created_at, pat.updated_at,
+                   u.username
+            FROM user_personal_access_tokens pat
+            LEFT JOIN users u ON u.id = pat.user_id
+            ORDER BY pat.created_at DESC, pat.id DESC
+            """,
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
 def get_user_personal_access_token(
     db_path: str, user_id: int, token_id: int
 ) -> Optional[Dict[str, Any]]:
@@ -760,6 +779,23 @@ def revoke_user_personal_access_token(db_path: str, user_id: int, token_id: int)
               AND revoked_at IS NULL
             """,
             (token_id, user_id),
+        )
+        return cursor.rowcount > 0
+
+
+def admin_revoke_personal_access_token(db_path: str, token_id: int) -> bool:
+    """Revoke any personal access token (admin only, no user_id check)."""
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE user_personal_access_tokens
+            SET revoked_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+              AND revoked_at IS NULL
+            """,
+            (token_id,),
         )
         return cursor.rowcount > 0
 

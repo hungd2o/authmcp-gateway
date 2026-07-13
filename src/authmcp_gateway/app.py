@@ -559,6 +559,7 @@ def create_app(config=None):
             Route("/admin/security-logs", admin_routes.admin_security_logs, methods=["GET"]),
             Route("/admin/mcp-activity", admin_routes.admin_mcp_activity, methods=["GET"]),
             Route("/admin/oauth-clients", admin_routes.admin_oauth_clients, methods=["GET"]),
+            Route("/admin/api-keys", admin_routes.admin_api_keys, methods=["GET"]),
             # Admin API
             Route("/admin/api/stats", admin_routes.api_stats, methods=["GET"]),
             Route("/admin/api/users", admin_routes.api_users, methods=["GET"]),
@@ -607,6 +608,12 @@ def create_app(config=None):
             Route(
                 "/admin/api/oauth-clients/{client_id}/rotate",
                 admin_routes.api_rotate_oauth_client_token,
+                methods=["POST"],
+            ),
+            Route("/admin/api/api-keys", admin_routes.api_list_all_api_keys, methods=["GET"]),
+            Route(
+                "/admin/api/api-keys/{token_id:int}/revoke",
+                admin_routes.api_revoke_api_key,
                 methods=["POST"],
             ),
             Route("/admin/api/mcp-servers", admin_routes.api_create_mcp_server, methods=["POST"]),

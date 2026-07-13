@@ -214,6 +214,7 @@ async def admin_security_logs(_: Request) -> HTMLResponse:
 # RE-EXPORTS — keep admin_routes.* API intact for app.py
 # ============================================================================
 
+from .api_keys_api import *  # noqa: E402,F401,F403
 from .logs_api import *  # noqa: E402,F401,F403
 from .mcp_activity_api import *  # noqa: E402,F401,F403
 from .mcp_servers_api import *  # noqa: E402,F401,F403

@@ -12,8 +12,10 @@ from ._exceptions import (
     PROXY_DISCOVERY_ERRORS,
     PROXY_TOKEN_REFRESH_ERRORS,
 )
+from .process_manager import get_process_manager
 from .proxy import get_auth_headers, parse_sse_response
 from .store import list_mcp_servers, update_server_health
+from .transports import PipeTransport
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +61,68 @@ class HealthChecker:
             lock = asyncio.Lock()
             self._recovery_locks[server_id] = lock
         return lock
+
+    async def _check_non_http_server(self, server: Dict[str, Any]) -> Dict[str, Any]:
+        """Health check for stdio/pipe transports."""
+        server_id = server["id"]
+        server_name = server["name"]
+        transport_type = (server.get("transport_type") or "http").lower()
+        start_time = datetime.now(timezone.utc)
+        tools_count = 0
+
+        try:
+            data: Dict[str, Any]
+            if transport_type == "stdio":
+                process_manager = get_process_manager()
+                await process_manager.start_server(server_id, server)
+                transport = process_manager.get_transport(server_id)
+                if transport is None:
+                    raise RuntimeError("STDIO transport unavailable")
+                data = await transport.send_request(
+                    {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+                    timeout=float(server.get("timeout") or self.timeout),
+                )
+            elif transport_type == "pipe":
+                pipe_path = server.get("pipe_path")
+                if not pipe_path:
+                    raise RuntimeError("pipe_path is required for pipe transport")
+                transport = PipeTransport(pipe_path=pipe_path)
+                try:
+                    data = await transport.send_request(
+                        {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+                        timeout=float(server.get("timeout") or self.timeout),
+                    )
+                finally:
+                    await transport.close()
+            else:
+                raise RuntimeError(f"Unsupported transport type: {transport_type}")
+
+            if "result" in data and isinstance(data["result"], dict):
+                tools_count = len(data["result"].get("tools", []) or [])
+
+            response_time = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+            update_server_health(self.db_path, server_id, status="online", tools_count=tools_count)
+            return {
+                "server_id": server_id,
+                "server_name": server_name,
+                "status": "online",
+                "response_time_ms": response_time,
+                "tools_count": tools_count,
+                "error": None,
+                "checked_at": datetime.now(timezone.utc),
+            }
+        except Exception as e:
+            error_msg = str(e)
+            update_server_health(self.db_path, server_id, status="error", error=error_msg)
+            return {
+                "server_id": server_id,
+                "server_name": server_name,
+                "status": "error",
+                "response_time_ms": None,
+                "tools_count": None,
+                "error": error_msg,
+                "checked_at": datetime.now(timezone.utc),
+            }
 
     def start(self):
         """Start health checking background task."""
@@ -142,6 +206,10 @@ class HealthChecker:
         server_id = server["id"]
         server_name = server["name"]
         server_url = server["url"]
+        transport_type = (server.get("transport_type") or "http").lower()
+
+        if transport_type != "http":
+            return await self._check_non_http_server(server)
 
         start_time = datetime.now(timezone.utc)
 

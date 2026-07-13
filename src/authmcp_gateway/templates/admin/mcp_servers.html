@@ -83,13 +83,46 @@
                                           class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-medium text-base resize-none"></textarea>
                             </div>
                             <div>
+                                <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2">Transport Type</label>
+                                <select id="serverTransportType" x-model="transportType"
+                                        class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-medium text-base">
+                                    <option value="http">HTTP</option>
+                                    <option value="stdio">STDIO</option>
+                                    <option value="pipe">Named Pipe</option>
+                                </select>
+                            </div>
+                            <div>
                                 <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2">URL <span class="text-red-600">*</span></label>
-                                <input type="url" id="serverUrl" placeholder="http://localhost:8080/mcp" required
+                                <input type="url" id="serverUrl" placeholder="http://localhost:8080/mcp" x-show="transportType === 'http'"
                                        class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-mono text-sm break-all">
                                 <p class="text-xs text-gray-600 mt-2 flex items-start gap-1.5 leading-relaxed">
                                     <i data-lucide="info" class="w-3.5 h-3.5 mt-0.5 flex-shrink-0"></i>
                                     <span>Full MCP endpoint URL</span>
                                 </p>
+                            </div>
+                            <div x-show="transportType === 'stdio'">
+                                <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2">Command <span class="text-red-600">*</span></label>
+                                <input type="text" id="serverCommand" placeholder="npx"
+                                       class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-mono text-sm break-all">
+                                <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2 mt-3">Command Args (JSON array or space-separated)</label>
+                                <input type="text" id="serverCommandArgs" placeholder='[\"@modelcontextprotocol/server-filesystem\",\"/tmp\"]'
+                                       class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-mono text-sm break-all">
+                                <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2 mt-3">Working Directory</label>
+                                <input type="text" id="serverWorkingDir" placeholder="/path/to/workdir"
+                                       class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-mono text-sm break-all">
+                                <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2 mt-3">Environment Variables (JSON object)</label>
+                                <textarea id="serverEnvVars" rows="2" placeholder='{\"NODE_ENV\":\"production\"}'
+                                          class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-mono text-sm break-all resize-none"></textarea>
+                            </div>
+                            <div x-show="transportType === 'pipe'">
+                                <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2">Pipe Path <span class="text-red-600">*</span></label>
+                                <input type="text" id="serverPipePath" placeholder="/tmp/mcp.sock"
+                                       class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-mono text-sm break-all">
+                            </div>
+                            <div x-show="transportType !== 'http'">
+                                <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2">Expose Port (optional)</label>
+                                <input type="number" id="serverExposePort" min="1" max="65535"
+                                       class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-medium text-base">
                             </div>
                             <div>
                                 <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2">Tool Prefix</label>
@@ -189,13 +222,46 @@
                                           class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all font-medium text-base resize-none"></textarea>
                             </div>
                             <div>
+                                <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2">Transport Type</label>
+                                <select id="editServerTransportType" x-model="editTransportType"
+                                        class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all font-medium text-base">
+                                    <option value="http">HTTP</option>
+                                    <option value="stdio">STDIO</option>
+                                    <option value="pipe">Named Pipe</option>
+                                </select>
+                            </div>
+                            <div>
                                 <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2">URL <span class="text-red-600">*</span></label>
-                                <input type="url" id="editServerUrl" placeholder="http://localhost:8080/mcp" required
+                                <input type="url" id="editServerUrl" placeholder="http://localhost:8080/mcp" x-show="editTransportType === 'http'"
                                        class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all font-mono text-sm break-all">
                                 <p class="text-xs text-gray-600 mt-2 flex items-start gap-1.5 leading-relaxed">
                                     <i data-lucide="info" class="w-3.5 h-3.5 mt-0.5 flex-shrink-0"></i>
                                     <span>Full MCP endpoint URL</span>
                                 </p>
+                            </div>
+                            <div x-show="editTransportType === 'stdio'">
+                                <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2">Command <span class="text-red-600">*</span></label>
+                                <input type="text" id="editServerCommand" placeholder="npx"
+                                       class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all font-mono text-sm break-all">
+                                <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2 mt-3">Command Args (JSON array or space-separated)</label>
+                                <input type="text" id="editServerCommandArgs"
+                                       class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all font-mono text-sm break-all">
+                                <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2 mt-3">Working Directory</label>
+                                <input type="text" id="editServerWorkingDir"
+                                       class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all font-mono text-sm break-all">
+                                <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2 mt-3">Environment Variables (JSON object)</label>
+                                <textarea id="editServerEnvVars" rows="2"
+                                          class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all font-mono text-sm break-all resize-none"></textarea>
+                            </div>
+                            <div x-show="editTransportType === 'pipe'">
+                                <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2">Pipe Path <span class="text-red-600">*</span></label>
+                                <input type="text" id="editServerPipePath"
+                                       class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all font-mono text-sm break-all">
+                            </div>
+                            <div x-show="editTransportType !== 'http'">
+                                <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2">Expose Port (optional)</label>
+                                <input type="number" id="editServerExposePort" min="1" max="65535"
+                                       class="w-full px-3 sm:px-4 py-3 sm:py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 transition-all font-medium text-base">
                             </div>
                             <div>
                                 <label class="block text-sm sm:text-sm font-bold text-gray-800 mb-2">Tool Prefix</label>
@@ -270,6 +336,8 @@
             showEditModal: false,
             authType: 'none',
             editAuthType: 'none',
+            transportType: 'http',
+            editTransportType: 'http',
             currentServers: [],
 
             init() {
@@ -289,6 +357,9 @@
                 else if (action === 'toggle-tools') this.toggleTools(id);
                 else if (action === 'copy-endpoint') this.copyServerEndpoint(btn);
                 else if (action === 'copy-aggregated') this.copyToClipboard(document.getElementById('aggregatedEndpoint').textContent, btn);
+                else if (action === 'process-start') this.processAction(id, 'start');
+                else if (action === 'process-stop') this.processAction(id, 'stop');
+                else if (action === 'process-restart') this.processAction(id, 'restart');
             },
 
             async loadServers() {
@@ -368,9 +439,27 @@
 
                                     <div class="space-y-1.5 text-sm">
                                         <p class="text-gray-700 flex items-center gap-1.5">
-                                            <i data-lucide="link" class="w-3.5 h-3.5 text-gray-500"></i>
-                                            <code class="text-xs bg-gray-200 px-1.5 py-0.5 rounded font-mono text-gray-800">${esc(server.url)}</code>
+                                            <i data-lucide="network" class="w-3.5 h-3.5 text-gray-500"></i>
+                                            <code class="text-xs bg-purple-100 px-1.5 py-0.5 rounded font-mono text-purple-800">${esc((server.transport_type || 'http').toUpperCase())}</code>
                                         </p>
+                                        ${(server.transport_type || 'http') === 'http' ? `
+                                            <p class="text-gray-700 flex items-center gap-1.5">
+                                                <i data-lucide="link" class="w-3.5 h-3.5 text-gray-500"></i>
+                                                <code class="text-xs bg-gray-200 px-1.5 py-0.5 rounded font-mono text-gray-800">${esc(server.url || '')}</code>
+                                            </p>
+                                        ` : ''}
+                                        ${(server.transport_type || 'http') === 'stdio' && server.command ? `
+                                            <p class="text-gray-700 flex items-center gap-1.5">
+                                                <i data-lucide="terminal" class="w-3.5 h-3.5 text-gray-500"></i>
+                                                <code class="text-xs bg-gray-200 px-1.5 py-0.5 rounded font-mono text-gray-800">${esc(server.command)}</code>
+                                            </p>
+                                        ` : ''}
+                                        ${(server.transport_type || 'http') === 'pipe' && server.pipe_path ? `
+                                            <p class="text-gray-700 flex items-center gap-1.5">
+                                                <i data-lucide="git-commit-horizontal" class="w-3.5 h-3.5 text-gray-500"></i>
+                                                <code class="text-xs bg-gray-200 px-1.5 py-0.5 rounded font-mono text-gray-800">${esc(server.pipe_path)}</code>
+                                            </p>
+                                        ` : ''}
                                         ${server.tool_prefix ? `
                                             <p class="text-gray-700 flex items-center gap-1.5">
                                                 <i data-lucide="tag" class="w-3.5 h-3.5 text-gray-500"></i>
@@ -407,6 +496,11 @@
                                         <span class="px-2.5 py-1 text-xs font-bold rounded-full bg-cyan-600 text-white shadow-sm">
                                             ${server.tools_count || 0} tools
                                         </span>
+                                        ${(server.transport_type || 'http') === 'stdio' ? `
+                                            <span class="px-2.5 py-1 text-xs font-bold rounded-full ${(server.process_status || 'stopped') === 'running' ? 'bg-emerald-600' : ((server.process_status || 'stopped') === 'error' ? 'bg-amber-600' : 'bg-gray-600')} text-white shadow-sm">
+                                                PROCESS: ${(server.process_status || 'stopped').toUpperCase()}
+                                            </span>
+                                        ` : ''}
                                         ${server.token_status && server.token_status.status === 'warning' ? `
                                             <span class="px-2.5 py-1 text-xs font-bold rounded-full bg-yellow-500 text-white shadow-sm flex items-center gap-1" title="Expires: ${server.token_status.expires_at_formatted}">
                                                 <i data-lucide="clock" class="w-3 h-3"></i>
@@ -454,6 +548,16 @@
                                             <i data-lucide="wrench" class="w-3.5 h-3.5"></i>
                                             Show Tools (${server.tools_count || 0})
                                         </button>
+                                        ${(server.transport_type || 'http') === 'stdio' ? `
+                                            <div class="mt-2 flex gap-1.5 flex-wrap">
+                                                <button data-action="process-start" data-id="${server.id}"
+                                                        class="text-xs px-2 py-1 border border-green-400 text-green-700 rounded hover:bg-green-50">Start</button>
+                                                <button data-action="process-stop" data-id="${server.id}"
+                                                        class="text-xs px-2 py-1 border border-red-400 text-red-700 rounded hover:bg-red-50">Stop</button>
+                                                <button data-action="process-restart" data-id="${server.id}"
+                                                        class="text-xs px-2 py-1 border border-amber-400 text-amber-700 rounded hover:bg-amber-50">Restart</button>
+                                            </div>
+                                        ` : ''}
                                         <div id="tools${server.id}" class="hidden mt-2 p-2 bg-gray-100 rounded border border-gray-300">
                                             <p class="text-sm text-gray-600">Loading tools...</p>
                                         </div>
@@ -512,11 +616,18 @@
                     name: document.getElementById('serverName').value,
                     url: document.getElementById('serverUrl').value,
                     description: document.getElementById('serverDescription').value,
+                    transport_type: document.getElementById('serverTransportType').value,
                     tool_prefix: document.getElementById('serverPrefix').value,
                     auth_type: document.getElementById('serverAuthType').value,
                     auth_token: document.getElementById('serverAuthToken').value,
                     enabled: document.getElementById('serverEnabled').checked,
-                    timeout: timeoutVal ? parseInt(timeoutVal) : null
+                    timeout: timeoutVal ? parseInt(timeoutVal) : null,
+                    command: document.getElementById('serverCommand')?.value || null,
+                    command_args: document.getElementById('serverCommandArgs')?.value || null,
+                    pipe_path: document.getElementById('serverPipePath')?.value || null,
+                    expose_port: document.getElementById('serverExposePort')?.value || null,
+                    working_dir: document.getElementById('serverWorkingDir')?.value || null,
+                    env_vars: document.getElementById('serverEnvVars')?.value || null
                 };
 
                 try {
@@ -529,6 +640,7 @@
                     if (response.ok) {
                         document.getElementById('addServerForm').reset();
                         this.authType = 'none';
+                        this.transportType = 'http';
                         this.showAddModal = false;
                         await this.loadServers();
                     } else {
@@ -589,13 +701,21 @@
                 document.getElementById('editServerId').value = server.id;
                 document.getElementById('editServerName').value = server.name;
                 document.getElementById('editServerDescription').value = server.description || '';
-                document.getElementById('editServerUrl').value = server.url;
+                document.getElementById('editServerUrl').value = server.url || '';
+                document.getElementById('editServerTransportType').value = server.transport_type || 'http';
                 document.getElementById('editServerPrefix').value = server.tool_prefix || '';
                 document.getElementById('editServerAuthType').value = server.auth_type || 'none';
                 document.getElementById('editServerTimeout').value = server.timeout || '';
                 document.getElementById('editServerEnabled').checked = server.enabled;
+                document.getElementById('editServerCommand').value = server.command || '';
+                document.getElementById('editServerCommandArgs').value = server.command_args ? JSON.stringify(server.command_args) : '';
+                document.getElementById('editServerPipePath').value = server.pipe_path || '';
+                document.getElementById('editServerExposePort').value = server.expose_port || '';
+                document.getElementById('editServerWorkingDir').value = server.working_dir || '';
+                document.getElementById('editServerEnvVars').value = server.env_vars ? JSON.stringify(server.env_vars) : '';
 
                 this.editAuthType = server.auth_type || 'none';
+                this.editTransportType = server.transport_type || 'http';
 
                 document.getElementById('editServerAuthToken').value = '';
 
@@ -610,10 +730,17 @@
                     name: document.getElementById('editServerName').value,
                     url: document.getElementById('editServerUrl').value,
                     description: document.getElementById('editServerDescription').value,
+                    transport_type: document.getElementById('editServerTransportType').value,
                     tool_prefix: document.getElementById('editServerPrefix').value,
                     auth_type: document.getElementById('editServerAuthType').value,
                     enabled: document.getElementById('editServerEnabled').checked,
-                    timeout: editTimeoutVal ? parseInt(editTimeoutVal) : null
+                    timeout: editTimeoutVal ? parseInt(editTimeoutVal) : null,
+                    command: document.getElementById('editServerCommand')?.value || null,
+                    command_args: document.getElementById('editServerCommandArgs')?.value || null,
+                    pipe_path: document.getElementById('editServerPipePath')?.value || null,
+                    expose_port: document.getElementById('editServerExposePort')?.value || null,
+                    working_dir: document.getElementById('editServerWorkingDir')?.value || null,
+                    env_vars: document.getElementById('editServerEnvVars')?.value || null
                 };
 
                 const authToken = document.getElementById('editServerAuthToken').value;
@@ -635,6 +762,23 @@
                         const error = await response.json();
                         showToast('Failed to update server: ' + (error.detail || error.error || 'Unknown error'), 'error');
                     }
+                } catch (error) {
+                    showToast(error.message, 'error');
+                }
+            },
+
+            async processAction(serverId, action) {
+                try {
+                    const response = await fetch(`/admin/api/mcp-servers/${serverId}/process/${action}`, {
+                        method: 'POST'
+                    });
+                    const payload = await response.json();
+                    if (!response.ok) {
+                        showToast(payload.error || `Failed to ${action} process`, 'error');
+                        return;
+                    }
+                    showToast(`Process ${action} requested`);
+                    await this.loadServers();
                 } catch (error) {
                     showToast(error.message, 'error');
                 }

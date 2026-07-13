@@ -27,8 +27,9 @@ from .csrf import CSRFMiddleware
 from .mcp.crypto import initialize_crypto
 from .mcp.handler import McpHandler
 from .mcp.health import initialize_health_checker
+from .mcp.process_manager import initialize_process_manager
 from .mcp.proxy import McpProxy
-from .mcp.store import init_mcp_database
+from .mcp.store import init_mcp_database, list_mcp_servers
 from .mcp.token_manager import initialize_token_manager
 from .mcp.token_refresher import initialize_token_refresher
 from .middleware import (
@@ -170,7 +171,10 @@ def create_app(config=None):
     health_check_interval = settings_manager.get("timeouts", "health_check_interval", default=60)
 
     # Initialize MCP Gateway components
-    mcp_proxy = McpProxy(config.auth.sqlite_path, timeout=proxy_timeout)
+    process_manager = initialize_process_manager()
+    mcp_proxy = McpProxy(
+        config.auth.sqlite_path, timeout=proxy_timeout, process_manager=process_manager
+    )
     mcp_handler = McpHandler(config.auth.sqlite_path, proxy=mcp_proxy)
 
     # Initialize health checker
@@ -419,6 +423,16 @@ def create_app(config=None):
         token_refresher.start()
         logger.info("✓ Token refresher started")
 
+        # Start enabled STDIO servers
+        try:
+            servers = list_mcp_servers(config.auth.sqlite_path, enabled_only=True)
+            for server in servers:
+                if (server.get("transport_type") or "http").lower() == "stdio":
+                    await process_manager.start_server(server["id"], server)
+            logger.info("✓ STDIO process manager initialized")
+        except Exception as e:
+            logger.warning(f"STDIO auto-start skipped: {e}")
+
         # Start rate limiter cleanup task
         cleanup_task = None
         if config.rate_limit.enabled:
@@ -466,6 +480,8 @@ def create_app(config=None):
 
         await mcp_proxy.close()
         logger.info("✓ MCP proxy HTTP client closed")
+        await process_manager.stop_all()
+        logger.info("✓ STDIO process manager stopped")
 
     # ========================================================================
     # CREATE STARLETTE APP
@@ -588,6 +604,11 @@ def create_app(config=None):
                 "/admin/api/mcp-servers/{server_id:int}/tools",
                 admin_routes.api_get_mcp_server_tools,
                 methods=["GET"],
+            ),
+            Route(
+                "/admin/api/mcp-servers/{server_id:int}/process/{action:str}",
+                admin_routes.api_mcp_server_process_action,
+                methods=["POST"],
             ),
             Route(
                 "/admin/api/mcp-servers/token-statuses",

@@ -1,6 +1,7 @@
 """Admin API: MCP server management."""
 
 import logging
+import json
 from datetime import datetime
 
 import jwt
@@ -21,6 +22,7 @@ __all__ = [
     "api_update_mcp_server",
     "api_test_mcp_server",
     "api_get_mcp_server_tools",
+    "api_mcp_server_process_action",
 ]
 
 
@@ -89,8 +91,65 @@ async def api_list_mcp_servers(request: Request) -> JSONResponse:
     from authmcp_gateway.mcp.store import list_mcp_servers
 
     servers = list_mcp_servers(get_config(request).auth.sqlite_path)
+    try:
+        from authmcp_gateway.mcp.process_manager import get_process_manager
+
+        process_manager = get_process_manager()
+    except Exception:
+        process_manager = None
+
+    for server in servers:
+        transport_type = (server.get("transport_type") or "http").lower()
+        if transport_type == "stdio" and process_manager is not None:
+            server["process_status"] = process_manager.get_status(server["id"])
+        elif transport_type == "pipe":
+            server["process_status"] = "n/a"
+        else:
+            server["process_status"] = "n/a"
 
     return JSONResponse({"servers": servers})
+
+
+def _normalize_transport_payload(data: dict) -> dict:
+    """Normalize and validate transport payload fields."""
+    transport_type = (data.get("transport_type") or "http").lower()
+    data["transport_type"] = transport_type
+
+    if isinstance(data.get("command_args"), str):
+        raw = data.get("command_args", "").strip()
+        if not raw:
+            data["command_args"] = []
+        else:
+            try:
+                parsed = json.loads(raw)
+                data["command_args"] = parsed if isinstance(parsed, list) else []
+            except json.JSONDecodeError:
+                data["command_args"] = [part for part in raw.split(" ") if part]
+    if isinstance(data.get("env_vars"), str):
+        raw_env = data.get("env_vars", "").strip()
+        if not raw_env:
+            data["env_vars"] = {}
+        else:
+            try:
+                parsed_env = json.loads(raw_env)
+                data["env_vars"] = parsed_env if isinstance(parsed_env, dict) else {}
+            except json.JSONDecodeError:
+                data["env_vars"] = {}
+
+    if "expose_port" in data:
+        try:
+            data["expose_port"] = int(data["expose_port"]) if data["expose_port"] else None
+        except (TypeError, ValueError):
+            data["expose_port"] = None
+
+    if transport_type == "http" and not data.get("url"):
+        raise ValueError("url is required for http transport")
+    if transport_type == "stdio" and not data.get("command"):
+        raise ValueError("command is required for stdio transport")
+    if transport_type == "pipe" and not data.get("pipe_path"):
+        raise ValueError("pipe_path is required for pipe transport")
+
+    return data
 
 
 async def api_mcp_servers_token_status(request: Request) -> JSONResponse:
@@ -126,6 +185,7 @@ async def api_create_mcp_server(request: Request) -> JSONResponse:
 
     _config = get_config(request)
     data = await request.json()
+    data = _normalize_transport_payload(data)
 
     # Parse timeout: None means "use global default"
     timeout_val = data.get("timeout")
@@ -138,7 +198,7 @@ async def api_create_mcp_server(request: Request) -> JSONResponse:
     server_id = create_mcp_server(
         db_path=_config.auth.sqlite_path,
         name=data["name"],
-        url=data["url"],
+        url=data.get("url") or "",
         description=data.get("description"),
         tool_prefix=data.get("tool_prefix"),
         enabled=data.get("enabled", True),
@@ -146,6 +206,13 @@ async def api_create_mcp_server(request: Request) -> JSONResponse:
         auth_token=data.get("auth_token"),
         routing_strategy=data.get("routing_strategy", "prefix"),
         timeout=timeout_val,
+        transport_type=data.get("transport_type", "http"),
+        command=data.get("command"),
+        command_args=data.get("command_args"),
+        pipe_path=data.get("pipe_path"),
+        expose_port=data.get("expose_port"),
+        working_dir=data.get("working_dir"),
+        env_vars=data.get("env_vars"),
     )
 
     # Trigger health check for new server
@@ -202,6 +269,14 @@ async def api_update_mcp_server(request: Request) -> JSONResponse:
             data["timeout"] = int(data["timeout"]) if data["timeout"] else None
         except (ValueError, TypeError):
             data["timeout"] = None
+
+    requested_fields = set(data.keys())
+    current = get_mcp_server(_config.auth.sqlite_path, server_id)
+    if not current:
+        return JSONResponse({"error": "Server not found"}, status_code=404)
+    merged = {**current, **data}
+    normalized = _normalize_transport_payload(merged)
+    data = {key: normalized.get(key) for key in requested_fields}
 
     # Update server
     success = update_mcp_server(db_path=_config.auth.sqlite_path, server_id=server_id, **data)
@@ -275,3 +350,33 @@ async def api_get_mcp_server_tools(request: Request) -> JSONResponse:
     tool_names = [tool.get("name") for tool in tools if "name" in tool]
 
     return JSONResponse(tool_names)
+
+
+@api_error_handler
+async def api_mcp_server_process_action(request: Request) -> JSONResponse:
+    """API: control stdio process lifecycle (start/stop/restart)."""
+    from authmcp_gateway.mcp.process_manager import get_process_manager
+    from authmcp_gateway.mcp.store import get_mcp_server
+
+    _config = get_config(request)
+    server_id = int(request.path_params["server_id"])
+    action = request.path_params["action"]
+
+    server = get_mcp_server(_config.auth.sqlite_path, server_id)
+    if not server:
+        return JSONResponse({"error": "Server not found"}, status_code=404)
+
+    if (server.get("transport_type") or "http").lower() != "stdio":
+        return JSONResponse({"error": "Process actions are supported only for stdio transport"}, status_code=400)
+
+    process_manager = get_process_manager()
+    if action == "start":
+        await process_manager.start_server(server_id, server)
+    elif action == "stop":
+        await process_manager.stop_server(server_id)
+    elif action == "restart":
+        await process_manager.restart_server(server_id)
+    else:
+        return JSONResponse({"error": "Invalid action"}, status_code=400)
+
+    return JSONResponse({"message": f"Process {action} requested", "status": process_manager.get_status(server_id)})

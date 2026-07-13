@@ -21,6 +21,7 @@ from ._exceptions import (
     PROXY_TOKEN_REFRESH_ERRORS,
     PROXY_TRANSPORT_ERRORS,
 )
+from .process_manager import get_process_manager
 from .store import (
     check_user_mcp_access,
     get_mcp_server,
@@ -28,6 +29,7 @@ from .store import (
     list_mcp_servers,
     update_server_health,
 )
+from .transports import HttpTransport, McpTransport, PipeTransport
 
 logger = logging.getLogger(__name__)
 _MCP_DEBUG = os.getenv("MCP_DEBUG", "").lower() in ("1", "true", "yes", "on")
@@ -123,7 +125,7 @@ def parse_sse_response(response: httpx.Response) -> Dict[str, Any]:
 class McpProxy:
     """MCP Gateway proxy that routes requests to backend MCP servers."""
 
-    def __init__(self, db_path: str, timeout: int = 30):
+    def __init__(self, db_path: str, timeout: int = 30, process_manager=None):
         self.db_path = db_path
         self.timeout = timeout
         # Caches: server_id → items
@@ -142,6 +144,8 @@ class McpProxy:
         # Serialize stale-session recovery per backend to avoid concurrent
         # reinitialize races (especially with health checks + client traffic).
         self._session_recovery_locks: Dict[int, asyncio.Lock] = {}
+        self._transports: Dict[int, McpTransport] = {}
+        self._process_manager = process_manager
 
     def _get_session_recovery_lock(self, server_id: int) -> asyncio.Lock:
         lock = self._session_recovery_locks.get(server_id)
@@ -161,6 +165,48 @@ class McpProxy:
         if self._http_client and not self._http_client.is_closed:
             await self._http_client.aclose()
             self._http_client = None
+        for transport in self._transports.values():
+            await transport.close()
+        self._transports.clear()
+
+    def _transport_type(self, server: Dict[str, Any]) -> str:
+        return str(server.get("transport_type") or "http").lower()
+
+    async def _get_transport(self, server: Dict[str, Any], headers: Dict[str, str]) -> McpTransport:
+        server_id = server["id"]
+        transport_type = self._transport_type(server)
+        cached = self._transports.get(server_id)
+        if cached:
+            return cached
+
+        if transport_type == "http":
+            client = await self._get_client()
+            transport: McpTransport = HttpTransport(
+                server_url=server["url"],
+                headers=headers,
+                client=client,
+                owns_client=False,
+            )
+        elif transport_type == "stdio":
+            process_manager = self._process_manager
+            if process_manager is None:
+                process_manager = get_process_manager()
+                self._process_manager = process_manager
+            await process_manager.start_server(server_id, server)
+            stdio_transport = process_manager.get_transport(server_id)
+            if stdio_transport is None:
+                raise RuntimeError(f"STDIO transport not available for server {server.get('name')}")
+            transport = stdio_transport
+        elif transport_type == "pipe":
+            pipe_path = server.get("pipe_path")
+            if not pipe_path:
+                raise RuntimeError("pipe_path is required for pipe transport")
+            transport = PipeTransport(pipe_path=pipe_path)
+        else:
+            raise RuntimeError(f"Unsupported transport type: {transport_type}")
+
+        self._transports[server_id] = transport
+        return transport
 
     # ========================================================================
     # GENERIC JSON-RPC PROXY
@@ -184,24 +230,30 @@ class McpProxy:
         Raises:
             httpx.HTTPError: On HTTP-level failure.
         """
-        server_url = server["url"]
         server_name = server["name"]
         server_id = server["id"]
         headers = self._get_auth_headers(server)
+        transport_type = self._transport_type(server)
 
         # Per-server timeout override (DB field → global default)
         server_timeout = (
             timeout_override_ms / 1000 if timeout_override_ms is not None else server.get("timeout")
         ) or self.timeout
 
+        self._request_id_counter += 1
+        request_id = self._request_id_counter
+        payload = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params or {}}
+
+        if transport_type != "http":
+            transport = await self._get_transport(server, headers)
+            return await transport.send_request(payload=payload, timeout=float(server_timeout))
+
+        server_url = server["url"]
+
         # Include mcp-session-id if we have one (Streamable HTTP transport)
         session_id = self._session_ids.get(server_id)
         if session_id:
             headers["mcp-session-id"] = session_id
-
-        self._request_id_counter += 1
-        request_id = self._request_id_counter
-        payload = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params or {}}
 
         client = await self._get_client()
         try:
@@ -380,20 +432,23 @@ class McpProxy:
 
             # Send initialized notification (fire-and-forget)
             try:
-                client = await self._get_client()
-                notify_headers = self._get_auth_headers(server)
-                session_id = self._session_ids.get(server_id)
-                if session_id:
-                    notify_headers["mcp-session-id"] = session_id
-                await client.post(
-                    server["url"],
-                    json={
-                        "jsonrpc": "2.0",
-                        "method": "notifications/initialized",
-                    },
-                    headers=notify_headers,
-                )
-            except httpx.HTTPError as notify_err:
+                if self._transport_type(server) == "http":
+                    client = await self._get_client()
+                    notify_headers = self._get_auth_headers(server)
+                    session_id = self._session_ids.get(server_id)
+                    if session_id:
+                        notify_headers["mcp-session-id"] = session_id
+                    await client.post(
+                        server["url"],
+                        json={
+                            "jsonrpc": "2.0",
+                            "method": "notifications/initialized",
+                        },
+                        headers=notify_headers,
+                    )
+                else:
+                    await self._proxy_jsonrpc(server, "notifications/initialized", {}, allow_retry=False)
+            except Exception as notify_err:
                 # Best-effort: backends that ignore the notification still
                 # work; only transport-layer issues are interesting here.
                 logger.debug(
@@ -1072,6 +1127,13 @@ class McpProxy:
             self._capabilities_cache.pop(server_id, None)
             self._cache_timestamp.pop(server_id, None)
             self._session_ids.pop(server_id, None)
+            transport = self._transports.pop(server_id, None)
+            if transport is not None:
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(transport.close())
+                except RuntimeError:
+                    pass
             logger.info(f"Invalidated cache for server {server_id}")
         else:
             self._tools_cache.clear()
@@ -1080,6 +1142,13 @@ class McpProxy:
             self._capabilities_cache.clear()
             self._cache_timestamp.clear()
             self._session_ids.clear()
+            try:
+                loop = asyncio.get_running_loop()
+                for transport in self._transports.values():
+                    loop.create_task(transport.close())
+            except RuntimeError:
+                pass
+            self._transports.clear()
             logger.info("Invalidated all cache")
 
     def _build_dedup_key(

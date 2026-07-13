@@ -11,7 +11,7 @@
                 <i data-lucide="key" class="w-8 h-8 text-blue-600"></i>
                 API Keys
             </h1>
-            <p class="text-gray-600 mt-1">Manage personal access tokens for all users</p>
+            <p class="text-gray-600 mt-1">Manage personal access tokens for all accounts</p>
         </div>
         <button
             @click="loadKeys()"
@@ -22,15 +22,42 @@
         </button>
     </div>
 
-    <!-- Filter -->
-    <div class="mb-4 flex items-center gap-3">
-        <select x-model="filter" @change="loadKeys()"
+    <!-- Tabs: My Keys / All Users -->
+    <div class="mb-6 border-b border-gray-200">
+        <nav class="flex gap-6">
+            <button @click="tab = 'mine'"
+                    :class="tab === 'mine' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+                    class="pb-3 border-b-2 font-medium text-sm transition-colors">
+                My Keys
+                <span class="ml-1 px-1.5 py-0.5 text-xs rounded-full"
+                      :class="tab === 'mine' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'"
+                      x-text="myTokens.length"></span>
+            </button>
+            <button @click="tab = 'all'"
+                    :class="tab === 'all' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+                    class="pb-3 border-b-2 font-medium text-sm transition-colors">
+                All Users
+                <span class="ml-1 px-1.5 py-0.5 text-xs rounded-full"
+                      :class="tab === 'all' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'"
+                      x-text="tokens.length"></span>
+            </button>
+        </nav>
+    </div>
+
+    <!-- Filters row -->
+    <div class="mb-4 flex flex-wrap items-center gap-3">
+        <select x-model="statusFilter"
                 class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500">
             <option value="active">Active</option>
             <option value="revoked">Revoked</option>
-            <option value="all">All</option>
+            <option value="expired">Expired</option>
+            <option value="all">All Statuses</option>
         </select>
-        <span class="text-sm text-gray-500" x-text="'Showing ' + filteredTokens.length + ' token(s)'"></span>
+        <template x-if="tab === 'all'">
+            <input type="text" x-model="userSearch" placeholder="Filter by username..."
+                   class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 w-48" />
+        </template>
+        <span class="text-sm text-gray-500" x-text="'Showing ' + displayTokens.length + ' token(s)'"></span>
     </div>
 
     <!-- Tokens Table -->
@@ -40,7 +67,7 @@
                 <thead class="bg-gradient-to-r from-blue-50 to-cyan-50">
                     <tr>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
+                        <th x-show="tab === 'all'" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Expires</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Last Used</th>
@@ -49,19 +76,30 @@
                     </tr>
                 </thead>
                 <tbody class="bg-white divide-y divide-gray-200">
-                    <template x-if="filteredTokens.length === 0">
+                    <template x-if="displayTokens.length === 0">
                         <tr>
-                            <td colspan="7" class="px-6 py-8 text-center text-gray-500">
-                                No API keys found.
+                            <td :colspan="tab === 'all' ? 7 : 6" class="px-6 py-8 text-center text-gray-500">
+                                <template x-if="tab === 'mine'">
+                                    <span>You have no API keys. Create one from the <a href="/account" class="text-blue-600 hover:underline">Account portal</a>.</span>
+                                </template>
+                                <template x-if="tab === 'all'">
+                                    <span>No API keys found matching your filters.</span>
+                                </template>
                             </td>
                         </tr>
                     </template>
-                    <template x-for="token in filteredTokens" :key="token.id">
-                        <tr class="hover:bg-gray-50">
+                    <template x-for="token in displayTokens" :key="token.id">
+                        <tr class="hover:bg-gray-50"
+                            :class="token.user_id === currentUserId ? 'bg-blue-50/40' : ''">
                             <td class="px-6 py-4 whitespace-nowrap">
-                                <span class="text-sm font-medium text-gray-900" x-text="token.token_name"></span>
+                                <div class="flex items-center gap-2">
+                                    <span class="text-sm font-medium text-gray-900" x-text="token.token_name"></span>
+                                    <template x-if="token.user_id === currentUserId && tab === 'all'">
+                                        <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">You</span>
+                                    </template>
+                                </div>
                             </td>
-                            <td class="px-6 py-4 whitespace-nowrap">
+                            <td x-show="tab === 'all'" class="px-6 py-4 whitespace-nowrap">
                                 <span class="text-sm text-gray-700" x-text="token.username || ('User #' + token.user_id)"></span>
                             </td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="formatDate(token.created_at)"></td>
@@ -80,13 +118,13 @@
                             </td>
                             <td class="px-6 py-4 whitespace-nowrap">
                                 <template x-if="!token.revoked_at">
-                                    <button @click="revokeKey(token.id)"
+                                    <button @click="revokeKey(token.id, token.user_id === currentUserId)"
                                             class="text-sm text-red-600 hover:text-red-800 font-medium">
                                         Revoke
                                     </button>
                                 </template>
                                 <template x-if="token.revoked_at">
-                                    <span class="text-sm text-gray-400">—</span>
+                                    <span class="text-sm text-gray-400">&mdash;</span>
                                 </template>
                             </td>
                         </tr>
@@ -104,17 +142,38 @@
     function apiKeysManager() {
         return {
             tokens: [],
-            filter: 'active',
+            currentUserId: null,
+            tab: 'mine',
+            statusFilter: 'active',
+            userSearch: '',
 
             init() {
                 this.loadKeys();
             },
 
-            get filteredTokens() {
-                if (this.filter === 'all') return this.tokens;
-                if (this.filter === 'revoked') return this.tokens.filter(t => t.revoked_at);
-                // active: not revoked
-                return this.tokens.filter(t => !t.revoked_at);
+            get myTokens() {
+                return this.tokens.filter(t => t.user_id === this.currentUserId);
+            },
+
+            get displayTokens() {
+                let list = this.tab === 'mine' ? this.myTokens : this.tokens;
+
+                // Status filter
+                if (this.statusFilter === 'active') {
+                    list = list.filter(t => !t.revoked_at && !this.isExpired(t.expires_at));
+                } else if (this.statusFilter === 'revoked') {
+                    list = list.filter(t => t.revoked_at);
+                } else if (this.statusFilter === 'expired') {
+                    list = list.filter(t => !t.revoked_at && this.isExpired(t.expires_at));
+                }
+
+                // User search (only in "all" tab)
+                if (this.tab === 'all' && this.userSearch.trim()) {
+                    const q = this.userSearch.trim().toLowerCase();
+                    list = list.filter(t => (t.username || '').toLowerCase().includes(q));
+                }
+
+                return list;
             },
 
             async loadKeys() {
@@ -122,14 +181,18 @@
                     const resp = await fetch('/admin/api/api-keys');
                     const data = await resp.json();
                     this.tokens = data.tokens || [];
+                    this.currentUserId = data.current_user_id;
                 } catch (e) {
                     console.error('Failed to load API keys', e);
                 }
                 this.$nextTick(() => lucide.createIcons());
             },
 
-            async revokeKey(tokenId) {
-                if (!confirm('Are you sure you want to revoke this API key?')) return;
+            async revokeKey(tokenId, isOwnToken) {
+                const msg = isOwnToken
+                    ? 'Revoke your own API key? You will lose access with this token.'
+                    : 'Revoke this user\'s API key?';
+                if (!confirm(msg)) return;
                 try {
                     const resp = await fetch(`/admin/api/api-keys/${tokenId}/revoke`, { method: 'POST' });
                     if (resp.ok) {
@@ -144,7 +207,7 @@
             },
 
             formatDate(dateStr) {
-                if (!dateStr) return '—';
+                if (!dateStr) return '\u2014';
                 const d = new Date(dateStr);
                 return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
             },

@@ -29,8 +29,9 @@ async def admin_api_keys(request: Request) -> HTMLResponse:
 async def api_list_all_api_keys(request: Request) -> JSONResponse:
     """API: List all personal access tokens across all users."""
     _config = get_config(request)
+    admin_user_id = request.state.user_id
     rows = list_all_personal_access_tokens(_config.auth.sqlite_path)
-    return JSONResponse({"tokens": rows})
+    return JSONResponse({"tokens": rows, "current_user_id": admin_user_id})
 
 
 @api_error_handler

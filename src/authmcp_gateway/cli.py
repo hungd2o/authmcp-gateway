@@ -60,6 +60,18 @@ For more information, visit: https://github.com/loglux/authmcp-gateway
     start_parser.add_argument(
         "--reload", action="store_true", help="Enable auto-reload for development"
     )
+    start_parser.add_argument(
+        "--tray",
+        action="store_true",
+        help="Show a Windows System Tray icon (requires authmcp-gateway[windows])",
+    )
+    start_parser.add_argument(
+        "--tray-icon",
+        type=Path,
+        default=None,
+        metavar="ICON_PATH",
+        help="Path to a custom .ico or .png file for the tray icon",
+    )
 
     # Init DB command
     init_parser = subparsers.add_parser("init-db", help="Initialize database")
@@ -145,9 +157,54 @@ Press CTRL+C to stop
     # Import app here to ensure environment is loaded first
     from authmcp_gateway.app import app
 
-    uvicorn.run(
-        app, host=args.host, port=args.port, log_level=args.log_level.lower(), reload=args.reload
+    tray_requested = getattr(args, "tray", False)
+
+    if tray_requested:
+        _start_server_with_tray(app, args)
+    else:
+        uvicorn.run(
+            app,
+            host=args.host,
+            port=args.port,
+            log_level=args.log_level.lower(),
+            reload=args.reload,
+        )
+
+
+def _start_server_with_tray(app, args) -> None:
+    """Run uvicorn in a background thread and the system tray on the main thread."""
+    import threading
+
+    import uvicorn
+
+    from authmcp_gateway.tray import run_tray
+
+    if args.reload:
+        print(
+            "⚠  --reload is not compatible with --tray (uvicorn reloader requires the "
+            "main thread).  Ignoring --reload.",
+            file=sys.stderr,
+        )
+
+    config = uvicorn.Config(
+        app,
+        host=args.host,
+        port=args.port,
+        log_level=args.log_level.lower(),
     )
+    server = uvicorn.Server(config)
+
+    server_thread = threading.Thread(target=server.run, daemon=True, name="uvicorn-server")
+    server_thread.start()
+
+    icon_path = str(args.tray_icon) if getattr(args, "tray_icon", None) else None
+
+    # run_tray blocks until the user clicks Exit
+    run_tray(port=args.port, host=args.host, server=server, icon_path=icon_path)
+
+    # Ensure uvicorn has stopped after the tray exits
+    server.should_exit = True
+    server_thread.join(timeout=10)
 
 
 def init_database(args):

@@ -4,6 +4,7 @@ import argparse
 import logging
 import os
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
@@ -80,6 +81,16 @@ For more information, visit: https://github.com/loglux/authmcp-gateway
         default=None,
         metavar="ICON_PATH",
         help="Path to a custom .ico or .png file for the tray icon",
+    )
+    start_parser.add_argument(
+        "--background",
+        action="store_true",
+        help="Start the gateway in the background and return the terminal immediately",
+    )
+    start_parser.add_argument(
+        "--background-child",
+        action="store_true",
+        help=argparse.SUPPRESS,
     )
 
     # Init DB command
@@ -177,13 +188,18 @@ Starting server...
     from authmcp_gateway.app import app
     from authmcp_gateway.tray import is_tray_available
 
+    tray_available = is_tray_available()
+
+    if _maybe_start_server_in_background(args, tray_available, server_url):
+        return
+
     no_tray = getattr(args, "no_tray", False)
-    use_tray = (not no_tray) and is_tray_available()
+    use_tray = (not no_tray) and tray_available
 
     if use_tray:
         _start_server_with_tray(app, args)
     else:
-        if not no_tray and not is_tray_available():
+        if not no_tray and not tray_available:
             print(
                 "ℹ  System tray not available. "
                 "Reinstall authmcp-gateway to restore bundled tray dependencies.\n"
@@ -200,6 +216,143 @@ Starting server...
             log_level=log_level.lower(),
             reload=args.reload,
         )
+
+
+def _maybe_start_server_in_background(args, tray_available: bool, server_url: str) -> bool:
+    """Prompt for or honor background mode and relaunch if needed."""
+    if getattr(args, "background_child", False):
+        return False
+
+    if getattr(args, "background", False):
+        _launch_background_server(args, tray_available, server_url)
+        return True
+
+    if not _supports_interactive_start_prompt():
+        return False
+
+    choice = _prompt_start_mode(args, tray_available)
+    if choice == "background":
+        _launch_background_server(args, tray_available, server_url)
+        return True
+    if choice == "foreground":
+        args.no_tray = True
+
+    return False
+
+
+def _supports_interactive_start_prompt() -> bool:
+    """Return True when stdin/stdout are interactive TTYs."""
+    stdin = getattr(sys, "stdin", None)
+    stdout = getattr(sys, "stdout", None)
+    return bool(
+        stdin
+        and stdout
+        and hasattr(stdin, "isatty")
+        and hasattr(stdout, "isatty")
+        and stdin.isatty()
+        and stdout.isatty()
+    )
+
+
+def _prompt_start_mode(args, tray_available: bool) -> str:
+    """Prompt the user to keep logs attached or continue in the background."""
+    if getattr(args, "no_tray", False):
+        background_label = "send to background (logs only)"
+    elif tray_available:
+        background_label = "send to background (system tray + log file)"
+    else:
+        background_label = "send to background (log file only)"
+
+    prompt = (
+        "\nChoose how to continue:\n"
+        "  [1] View logs in this terminal\n"
+        f"  [2] {background_label}\n"
+        "Select [1/2] (default: 1): "
+    )
+
+    while True:
+        try:
+            choice = input(prompt).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\nKeeping the gateway attached to this terminal.\n")
+            return "foreground"
+
+        if choice in ("", "1", "f", "fg", "foreground", "logs", "view", "view-logs"):
+            return "foreground"
+        if choice in ("2", "b", "bg", "background", "detach"):
+            return "background"
+
+        print("Please choose 1 to view logs or 2 to send the gateway to the background.\n")
+
+
+def _launch_background_server(args, tray_available: bool, server_url: str) -> None:
+    """Relaunch the gateway in a detached child process."""
+    log_file = _background_log_file_path()
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    with log_file.open("a", encoding="utf-8") as log_stream:
+        try:
+            process = subprocess.Popen(
+                _build_background_start_command(args),
+                cwd=os.getcwd(),
+                env=os.environ.copy(),
+                stdin=subprocess.DEVNULL,
+                stdout=log_stream,
+                stderr=log_stream,
+                start_new_session=(os.name != "nt"),
+                creationflags=_windows_background_creationflags(),
+            )
+        except OSError as exc:
+            print(f"✗ Failed to start AuthMCP Gateway in the background: {exc}")
+            sys.exit(1)
+
+    background_mode = "system tray" if tray_available and not getattr(args, "no_tray", False) else "log file"
+    print(
+        "✓ AuthMCP Gateway is running in the background.\n"
+        f"  URL: {server_url}\n"
+        f"  Mode: {background_mode}\n"
+        f"  PID: {process.pid}\n"
+        f"  Log file: {log_file}\n"
+    )
+
+
+def _build_background_start_command(args) -> list[str]:
+    """Build the child process command for detached startup."""
+    command = [sys.executable, "-m", "authmcp_gateway.cli", "start", "--background-child"]
+
+    if args.host is not None:
+        command.extend(["--host", args.host])
+    if args.port is not None:
+        command.extend(["--port", str(args.port)])
+    if args.config is not None:
+        command.extend(["--config", str(args.config)])
+    if args.env_file is not None:
+        command.extend(["--env-file", str(args.env_file)])
+    if args.log_level is not None:
+        command.extend(["--log-level", args.log_level])
+    if args.reload:
+        command.append("--reload")
+    if getattr(args, "no_tray", False):
+        command.append("--no-tray")
+    if getattr(args, "tray_icon", None):
+        command.extend(["--tray-icon", str(args.tray_icon)])
+
+    return command
+
+
+def _background_log_file_path() -> Path:
+    """Return the default log file for detached startup."""
+    return Path("data/logs/gateway-console.log").resolve()
+
+
+def _windows_background_creationflags() -> int:
+    """Return detached-process flags on Windows."""
+    if os.name != "nt":
+        return 0
+
+    detached_process = getattr(subprocess, "DETACHED_PROCESS", 0)
+    new_process_group = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    return detached_process | new_process_group
 
 
 def _start_server_with_tray(app, args) -> None:

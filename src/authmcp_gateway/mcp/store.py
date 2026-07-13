@@ -9,6 +9,16 @@ from typing import Any, Dict, List, Optional, cast
 from authmcp_gateway.db import get_db
 
 from .crypto import decrypt_token_safe, encrypt_token
+from .trust import (
+    APPROVAL_APPROVED,
+    APPROVAL_PENDING,
+    RISK_LOW,
+    build_server_fingerprint,
+    build_virtual_tool_fingerprint,
+    default_risk_level,
+    derive_server_allowlist_policy,
+    server_matches_allowlist_policy,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +41,16 @@ def _decrypt_server_dict(server: Dict[str, Any]) -> Dict[str, Any]:
             server["env_vars"] = parsed_env if isinstance(parsed_env, dict) else {}
         except json.JSONDecodeError:
             server["env_vars"] = {}
+    if isinstance(server.get("allowlist_policy"), str):
+        try:
+            server["allowlist_policy"] = json.loads(server["allowlist_policy"])
+        except json.JSONDecodeError:
+            server["allowlist_policy"] = {}
+    if isinstance(server.get("approval_metadata"), str):
+        try:
+            server["approval_metadata"] = json.loads(server["approval_metadata"])
+        except json.JSONDecodeError:
+            server["approval_metadata"] = {}
     return server
 
 
@@ -79,7 +99,13 @@ def init_mcp_database(db_path: str) -> None:
                 pipe_path TEXT,
                 expose_port INTEGER,
                 working_dir TEXT,
-                env_vars TEXT
+                env_vars TEXT,
+                approval_state TEXT DEFAULT 'pending',
+                risk_level TEXT DEFAULT 'low',
+                config_fingerprint TEXT,
+                allowlist_policy TEXT,
+                approval_metadata TEXT,
+                blocked_reason TEXT
             )
         """)
 
@@ -90,6 +116,27 @@ def init_mcp_database(db_path: str) -> None:
                 tool_name TEXT UNIQUE NOT NULL,
                 mcp_server_id INTEGER NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (mcp_server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS virtual_tools (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                mcp_server_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                enabled INTEGER DEFAULT 1,
+                approval_state TEXT DEFAULT 'pending',
+                risk_level TEXT DEFAULT 'low',
+                execution_type TEXT NOT NULL,
+                config TEXT,
+                config_fingerprint TEXT,
+                approval_metadata TEXT,
+                blocked_reason TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(mcp_server_id, name),
                 FOREIGN KEY (mcp_server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
             )
         """)
@@ -160,6 +207,12 @@ def init_mcp_database(db_path: str) -> None:
             ("expose_port", "INTEGER"),
             ("working_dir", "TEXT"),
             ("env_vars", "TEXT"),
+            ("approval_state", "TEXT DEFAULT 'pending'"),
+            ("risk_level", "TEXT DEFAULT 'low'"),
+            ("config_fingerprint", "TEXT"),
+            ("allowlist_policy", "TEXT"),
+            ("approval_metadata", "TEXT"),
+            ("blocked_reason", "TEXT"),
         ]
         for column_name, column_def in transport_columns:
             try:
@@ -188,6 +241,15 @@ def init_mcp_database(db_path: str) -> None:
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_user_mcp_permissions_mcp_server_id"
             " ON user_mcp_permissions(mcp_server_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_mcp_servers_approval_state ON mcp_servers(approval_state)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_virtual_tools_server_id ON virtual_tools(mcp_server_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_virtual_tools_approval_state ON virtual_tools(approval_state)"
         )
 
         conn.commit()
@@ -245,15 +307,31 @@ def create_mcp_server(
 
     with _db_conn(db_path) as conn:
         cursor = conn.cursor()
+        normalized_transport = (transport_type or "http").lower()
+        config_for_fingerprint = {
+            "transport_type": normalized_transport,
+            "url": url,
+            "command": command,
+            "command_args": command_args or [],
+            "pipe_path": pipe_path,
+            "working_dir": working_dir,
+            "env_vars": env_vars or {},
+        }
+        config_fingerprint = build_server_fingerprint(config_for_fingerprint)
+        risk_level = default_risk_level(normalized_transport)
+        allowlist_policy_obj = derive_server_allowlist_policy(config_for_fingerprint)
+        approval_state = APPROVAL_PENDING
+        blocked_reason = "Server is pending whitelist approval"
 
         cursor.execute(
             """
             INSERT INTO mcp_servers (
                 name, description, url, tool_prefix, enabled,
                 auth_type, auth_token, routing_strategy, timeout, updated_at,
-                transport_type, command, command_args, pipe_path, expose_port, working_dir, env_vars
+                transport_type, command, command_args, pipe_path, expose_port, working_dir, env_vars,
+                approval_state, risk_level, config_fingerprint, allowlist_policy, approval_metadata, blocked_reason
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 name,
@@ -266,13 +344,19 @@ def create_mcp_server(
                 routing_strategy,
                 timeout,
                 datetime.now(timezone.utc).isoformat(),
-                transport_type,
+                normalized_transport,
                 command,
                 json.dumps(command_args or []),
                 pipe_path,
                 expose_port,
                 working_dir,
                 json.dumps(env_vars or {}),
+                approval_state,
+                risk_level,
+                config_fingerprint,
+                json.dumps(allowlist_policy_obj),
+                json.dumps({}),
+                blocked_reason,
             ),
         )
 
@@ -365,7 +449,21 @@ def list_mcp_servers(
         cursor.execute(query, params)
         rows = cursor.fetchall()
 
-    return [_decrypt_server_dict(dict(row)) for row in rows]
+    servers: List[Dict[str, Any]] = []
+    for row in rows:
+        server = _decrypt_server_dict(dict(row))
+        if isinstance(server.get("allowlist_policy"), str):
+            try:
+                server["allowlist_policy"] = json.loads(server["allowlist_policy"])
+            except json.JSONDecodeError:
+                server["allowlist_policy"] = {}
+        if isinstance(server.get("approval_metadata"), str):
+            try:
+                server["approval_metadata"] = json.loads(server["approval_metadata"])
+            except json.JSONDecodeError:
+                server["approval_metadata"] = {}
+        servers.append(server)
+    return servers
 
 
 def update_mcp_server(db_path: str, server_id: int, **fields) -> bool:
@@ -410,6 +508,12 @@ def update_mcp_server(db_path: str, server_id: int, **fields) -> bool:
         "expose_port",
         "working_dir",
         "env_vars",
+        "approval_state",
+        "risk_level",
+        "config_fingerprint",
+        "allowlist_policy",
+        "approval_metadata",
+        "blocked_reason",
     }
 
     # Reject any keys not in the whitelist
@@ -428,6 +532,29 @@ def update_mcp_server(db_path: str, server_id: int, **fields) -> bool:
         fields["command_args"] = json.dumps(fields["command_args"])
     if "env_vars" in fields and fields["env_vars"] is not None:
         fields["env_vars"] = json.dumps(fields["env_vars"])
+    if "allowlist_policy" in fields and fields["allowlist_policy"] is not None:
+        fields["allowlist_policy"] = json.dumps(fields["allowlist_policy"])
+    if "approval_metadata" in fields and fields["approval_metadata"] is not None:
+        fields["approval_metadata"] = json.dumps(fields["approval_metadata"])
+
+    current = get_mcp_server(db_path, server_id)
+    if current:
+        merged = {**current, **fields}
+        if isinstance(merged.get("command_args"), str):
+            merged["command_args"] = json.loads(merged["command_args"] or "[]")
+        if isinstance(merged.get("env_vars"), str):
+            merged["env_vars"] = json.loads(merged["env_vars"] or "{}")
+        normalized_transport = (merged.get("transport_type") or "http").lower()
+        merged["transport_type"] = normalized_transport
+        new_fingerprint = build_server_fingerprint(merged)
+        fields["config_fingerprint"] = new_fingerprint
+        fields["risk_level"] = default_risk_level(normalized_transport)
+
+        current_fingerprint = current.get("config_fingerprint")
+        current_state = (current.get("approval_state") or APPROVAL_PENDING).lower()
+        if current_state == APPROVAL_APPROVED and current_fingerprint != new_fingerprint:
+            fields["approval_state"] = APPROVAL_PENDING
+            fields["blocked_reason"] = "Configuration changed and requires whitelist re-approval"
 
     # Add updated_at timestamp
     fields["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -900,3 +1027,234 @@ def get_servers_needing_refresh(db_path: str, threshold_minutes: int = 5) -> Lis
         rows = cursor.fetchall()
 
     return [_decrypt_server_dict(dict(row)) for row in rows]
+
+
+def update_server_approval(
+    db_path: str,
+    server_id: int,
+    approval_state: str,
+    actor: str,
+    blocked_reason: Optional[str] = None,
+    allowlist_policy: Optional[Dict[str, Any]] = None,
+) -> bool:
+    server = get_mcp_server(db_path, server_id)
+    if not server:
+        return False
+
+    now = datetime.now(timezone.utc).isoformat()
+    metadata = dict(server.get("approval_metadata") or {})
+    metadata.update({"actor": actor, "updated_at": now, "approval_state": approval_state})
+
+    policy = allowlist_policy
+    if approval_state == APPROVAL_APPROVED:
+        if policy is None:
+            policy = derive_server_allowlist_policy(server)
+        if not server_matches_allowlist_policy(server, policy):
+            return False
+
+    updates: Dict[str, Any] = {
+        "approval_state": approval_state,
+        "approval_metadata": metadata,
+        "blocked_reason": blocked_reason,
+    }
+    if policy is not None:
+        updates["allowlist_policy"] = policy
+
+    if approval_state == APPROVAL_APPROVED:
+        updates["blocked_reason"] = None
+    return update_mcp_server(db_path, server_id, **updates)
+
+
+def list_pending_mcp_servers(db_path: str) -> List[Dict[str, Any]]:
+    return [s for s in list_mcp_servers(db_path) if s.get("approval_state") == APPROVAL_PENDING]
+
+
+def create_virtual_tool(
+    db_path: str,
+    mcp_server_id: int,
+    name: str,
+    description: Optional[str],
+    execution_type: str,
+    config: Optional[Dict[str, Any]],
+    enabled: bool = True,
+) -> int:
+    now = datetime.now(timezone.utc).isoformat()
+    tool_obj = {"name": name, "execution_type": execution_type, "config": config or {}}
+    fingerprint = build_virtual_tool_fingerprint(tool_obj)
+    risk_level = RISK_LOW
+    with _db_conn(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO virtual_tools (
+                mcp_server_id, name, description, enabled, approval_state, risk_level,
+                execution_type, config, config_fingerprint, approval_metadata, blocked_reason,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                mcp_server_id,
+                name,
+                description,
+                1 if enabled else 0,
+                APPROVAL_PENDING,
+                risk_level,
+                execution_type,
+                json.dumps(config or {}),
+                fingerprint,
+                json.dumps({}),
+                "Virtual tool is pending whitelist approval",
+                now,
+                now,
+            ),
+        )
+        tool_id = cursor.lastrowid
+        conn.commit()
+    return cast(int, tool_id)
+
+
+def list_virtual_tools(
+    db_path: str,
+    mcp_server_id: Optional[int] = None,
+    enabled_only: bool = False,
+    approved_only: bool = False,
+) -> List[Dict[str, Any]]:
+    with _db_conn(db_path, row_factory=sqlite3.Row) as conn:
+        cursor = conn.cursor()
+        query = "SELECT vt.*, s.name AS source_server_name FROM virtual_tools vt JOIN mcp_servers s ON vt.mcp_server_id = s.id"
+        clauses = []
+        params: List[Any] = []
+        if mcp_server_id is not None:
+            clauses.append("vt.mcp_server_id = ?")
+            params.append(mcp_server_id)
+        if enabled_only:
+            clauses.append("vt.enabled = 1")
+        if approved_only:
+            clauses.append("vt.approval_state = ?")
+            params.append(APPROVAL_APPROVED)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY vt.name"
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+
+    tools = []
+    for row in rows:
+        item = dict(row)
+        if isinstance(item.get("config"), str):
+            try:
+                item["config"] = json.loads(item["config"])
+            except json.JSONDecodeError:
+                item["config"] = {}
+        if isinstance(item.get("approval_metadata"), str):
+            try:
+                item["approval_metadata"] = json.loads(item["approval_metadata"])
+            except json.JSONDecodeError:
+                item["approval_metadata"] = {}
+        tools.append(item)
+    return tools
+
+
+def get_virtual_tool(db_path: str, tool_id: int) -> Optional[Dict[str, Any]]:
+    tools = list_virtual_tools(db_path)
+    for item in tools:
+        if item["id"] == tool_id:
+            return item
+    return None
+
+
+def get_virtual_tool_by_name(
+    db_path: str, name: str, mcp_server_id: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
+    tools = list_virtual_tools(db_path, mcp_server_id=mcp_server_id)
+    for item in tools:
+        if item["name"] == name:
+            return item
+    return None
+
+
+def update_virtual_tool(db_path: str, tool_id: int, **fields) -> bool:
+    if not fields:
+        return False
+    allowed = {
+        "name",
+        "description",
+        "enabled",
+        "approval_state",
+        "risk_level",
+        "execution_type",
+        "config",
+        "config_fingerprint",
+        "approval_metadata",
+        "blocked_reason",
+        "updated_at",
+    }
+    invalid = set(fields.keys()) - allowed
+    if invalid:
+        raise ValueError(f"Invalid column names: {invalid}")
+
+    current = get_virtual_tool(db_path, tool_id)
+    if not current:
+        return False
+
+    if "config" in fields and fields["config"] is not None:
+        fields["config"] = json.dumps(fields["config"])
+    if "approval_metadata" in fields and fields["approval_metadata"] is not None:
+        fields["approval_metadata"] = json.dumps(fields["approval_metadata"])
+
+    merged = {**current, **fields}
+    if isinstance(merged.get("config"), str):
+        merged["config"] = json.loads(merged["config"] or "{}")
+    new_fp = build_virtual_tool_fingerprint(merged)
+    fields["config_fingerprint"] = new_fp
+    if (
+        current.get("approval_state") == APPROVAL_APPROVED
+        and current.get("config_fingerprint") != new_fp
+    ):
+        fields["approval_state"] = APPROVAL_PENDING
+        fields["blocked_reason"] = "Configuration changed and requires whitelist re-approval"
+
+    fields["updated_at"] = datetime.now(timezone.utc).isoformat()
+    set_clause = ", ".join([f"{key} = ?" for key in fields.keys()])
+    values = list(fields.values()) + [tool_id]
+    with _db_conn(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"UPDATE virtual_tools SET {set_clause} WHERE id = ?", values)
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def update_virtual_tool_approval(
+    db_path: str,
+    tool_id: int,
+    approval_state: str,
+    actor: str,
+    blocked_reason: Optional[str] = None,
+) -> bool:
+    tool = get_virtual_tool(db_path, tool_id)
+    if not tool:
+        return False
+    metadata = dict(tool.get("approval_metadata") or {})
+    metadata.update(
+        {
+            "actor": actor,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "approval_state": approval_state,
+        }
+    )
+    updates: Dict[str, Any] = {
+        "approval_state": approval_state,
+        "approval_metadata": metadata,
+        "blocked_reason": blocked_reason,
+    }
+    if approval_state == APPROVAL_APPROVED:
+        updates["blocked_reason"] = None
+    return update_virtual_tool(db_path, tool_id, **updates)
+
+
+def list_pending_virtual_tools(db_path: str) -> List[Dict[str, Any]]:
+    return [
+        tool
+        for tool in list_virtual_tools(db_path)
+        if tool.get("approval_state") == APPROVAL_PENDING
+    ]

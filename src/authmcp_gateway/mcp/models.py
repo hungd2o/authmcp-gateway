@@ -35,6 +35,12 @@ class McpServerBase(BaseModel):
 
     # Status
     enabled: bool = Field(True, description="Whether this MCP server is active")
+    approval_state: Literal["pending", "approved", "rejected", "revoked"] = "pending"
+    risk_level: Literal["low", "high"] = "low"
+    config_fingerprint: Optional[str] = None
+    allowlist_policy: Optional[Dict[str, object]] = None
+    approval_metadata: Optional[Dict[str, object]] = None
+    blocked_reason: Optional[str] = None
 
     # Auth to backend MCP
     auth_type: Literal["none", "bearer", "basic"] = Field(
@@ -96,6 +102,7 @@ class McpServerUpdate(BaseModel):
     expose_port: Optional[int] = Field(default=None, ge=1, le=65535)
     working_dir: Optional[str] = None
     env_vars: Optional[Dict[str, str]] = None
+    allowlist_policy: Optional[Dict[str, object]] = None
 
 
 class McpServerResponse(McpServerBase):

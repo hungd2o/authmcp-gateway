@@ -6,11 +6,27 @@ import asyncio
 import json
 import logging
 import os
+import sys
 from typing import Any, Dict, List, Optional
 
 from .base import McpTransport
 
 logger = logging.getLogger(__name__)
+
+
+def _windows_no_window_flags() -> int:
+    """CREATE_NO_WINDOW on Windows, else 0.
+
+    Without this, a console-subsystem child (e.g. ``npx`` -> ``cmd.exe``)
+    spawned from a GUI-subsystem parent (``pythonw.exe`` tray mode, no
+    console to inherit) makes Windows allocate it a brand-new visible
+    console window.
+    """
+    if sys.platform != "win32":
+        return 0
+    import subprocess
+
+    return getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 
 
 class StdioTransport(McpTransport):
@@ -51,6 +67,7 @@ class StdioTransport(McpTransport):
             cwd=self.working_dir,
             env=env,
             limit=self.STREAM_READER_LIMIT,
+            creationflags=_windows_no_window_flags(),
         )
         self._stderr_task = asyncio.create_task(self._read_stderr())
 

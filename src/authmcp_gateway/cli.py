@@ -297,12 +297,20 @@ def _launch_background_server(args, tray_available: bool, server_url: str) -> No
     log_file = _background_log_file_path()
     log_file.parent.mkdir(parents=True, exist_ok=True)
 
+    child_env = os.environ.copy()
+    # Force UTF-8 stdio in the child: redirected to a file (no console), Python
+    # falls back to the OS ANSI codepage (cp1252 on most Windows installs) for
+    # print()'s encoding, which can't encode the ✓/⚠/✗ glyphs used in output
+    # and crashes the child on its first print — before uvicorn/tray start.
+    child_env["PYTHONIOENCODING"] = "utf-8"
+    child_env["PYTHONUTF8"] = "1"
+
     with log_file.open("a", encoding="utf-8") as log_stream:
         try:
             process = subprocess.Popen(
                 _build_background_start_command(args),
                 cwd=os.getcwd(),
-                env=os.environ.copy(),
+                env=child_env,
                 stdin=subprocess.DEVNULL,
                 stdout=log_stream,
                 stderr=log_stream,

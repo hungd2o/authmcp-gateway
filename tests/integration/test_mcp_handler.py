@@ -21,8 +21,10 @@ from authmcp_gateway.mcp.handler import McpHandler
 from authmcp_gateway.mcp.proxy import (
     PromptNotFoundError,
     ResourceNotFoundError,
+    StdioCapacityExceeded,
     ToolNotFoundError,
 )
+from authmcp_gateway.mcp.stdio_pool_config import WorkerPoolOverloadedError
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -117,6 +119,20 @@ async def test_dispatch_initialize_degrades_on_proxy_discovery_error(handler, fa
     )
     body = _body(response)
     assert body["result"]["capabilities"] == {"tools": {}}
+
+
+@pytest.mark.asyncio
+async def test_dispatch_initialize_returns_structured_capacity_error(handler, fake_proxy):
+    fake_proxy.get_aggregated_capabilities.side_effect = StdioCapacityExceeded(
+        WorkerPoolOverloadedError(server_id=7, retry_after=11)
+    )
+
+    response = await handler.handle_request(
+        _make_request(body={"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+    )
+    body = _body(response)
+    assert body["error"]["code"] == -32001
+    assert body["error"]["data"] == {"http_status": 503, "retry_after": 11}
 
 
 @pytest.mark.asyncio

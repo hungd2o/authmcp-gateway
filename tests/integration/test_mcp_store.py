@@ -219,6 +219,7 @@ def test_update_server_health_writes_status_and_counts(mcp_db):
     server = store.get_mcp_server(mcp_db, sid)
     assert server["status"] == "online"
     assert server["tools_count"] == 42
+    assert server["last_error"] is None
 
 
 def test_update_server_health_writes_error(mcp_db):

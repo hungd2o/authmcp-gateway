@@ -13,7 +13,7 @@ import time
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple, Union, cast
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, cast
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -24,6 +24,7 @@ from ._exceptions import (
     PROXY_TRANSPORT_ERRORS,
 )
 from .process_manager import get_process_manager
+from .stdio_pool_config import WorkerPoolOverloadedError, config_fingerprint
 from .store import (
     check_user_mcp_access,
     get_mcp_server,
@@ -38,6 +39,16 @@ from .transports import HttpTransport, McpTransport, PipeTransport
 from .trust import approval_is_active
 
 logger = logging.getLogger(__name__)
+
+
+class StdioCapacityExceeded(Exception):
+    """Capacity failure that must escape optional discovery fallbacks."""
+
+    def __init__(self, error: WorkerPoolOverloadedError):
+        super().__init__(str(error))
+        self.retry_after = error.retry_after
+
+
 _MCP_DEBUG = os.getenv("MCP_DEBUG", "").lower() in ("1", "true", "yes", "on")
 _IDEMPOTENCY_KEY_FIELD = "idempotency_key"
 # Cap on captured stdout/stderr for stdio_call/pipeline_call virtual tools —
@@ -155,6 +166,8 @@ class McpProxy:
         self._session_recovery_locks: Dict[int, asyncio.Lock] = {}
         self._transports: Dict[int, McpTransport] = {}
         self._process_manager = process_manager
+        self._stdio_config_fingerprints: Dict[int, str] = {}
+        self._stdio_configuration_locks: Dict[int, asyncio.Lock] = {}
 
     def _get_session_recovery_lock(self, server_id: int) -> asyncio.Lock:
         lock = self._session_recovery_locks.get(server_id)
@@ -162,6 +175,44 @@ class McpProxy:
             lock = asyncio.Lock()
             self._session_recovery_locks[server_id] = lock
         return lock
+
+    def _get_stdio_configuration_lock(self, server_id: int) -> asyncio.Lock:
+        lock = self._stdio_configuration_locks.get(server_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._stdio_configuration_locks[server_id] = lock
+        return lock
+
+    def _get_process_manager(self):
+        process_manager = self._process_manager
+        if process_manager is None:
+            process_manager = get_process_manager()
+            self._process_manager = process_manager
+        return process_manager
+
+    async def _configure_stdio_server(self, server: Dict[str, Any]):
+        """Reconcile a server only when demand reaches the managed STDIO boundary."""
+        server_id = server["id"]
+        if not server.get("enabled", True):
+            raise PermissionError(f"STDIO server {server.get('name')} is disabled")
+
+        process_manager = self._get_process_manager()
+        if process_manager.is_blocked(server_id):
+            raise PermissionError(f"STDIO server {server.get('name')} is blocked")
+
+        fingerprint = config_fingerprint(server)
+        async with self._get_stdio_configuration_lock(server_id):
+            if self._stdio_config_fingerprints.get(server_id) != fingerprint:
+                await process_manager.reconcile(server_id, server)
+                self._stdio_config_fingerprints[server_id] = fingerprint
+        return process_manager
+
+    @staticmethod
+    def _raise_capacity_error(results: Sequence[object]) -> None:
+        """Keep controlled saturation distinct from optional discovery failures."""
+        for result in results:
+            if isinstance(result, StdioCapacityExceeded):
+                raise result
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create shared httpx.AsyncClient."""
@@ -177,6 +228,7 @@ class McpProxy:
         for transport in self._transports.values():
             await transport.close()
         self._transports.clear()
+        self._stdio_config_fingerprints.clear()
 
     def _transport_type(self, server: Dict[str, Any]) -> str:
         return str(server.get("transport_type") or "http").lower()
@@ -184,6 +236,13 @@ class McpProxy:
     async def _get_transport(self, server: Dict[str, Any], headers: Dict[str, str]) -> McpTransport:
         server_id = server["id"]
         transport_type = self._transport_type(server)
+        if transport_type == "stdio":
+            if not server.get("enabled", True):
+                raise PermissionError(f"STDIO server {server.get('name')} is disabled")
+            if self._get_process_manager().is_blocked(server_id):
+                raise PermissionError(f"STDIO server {server.get('name')} is blocked")
+            raise RuntimeError("STDIO requests must use the managed worker-lease path")
+
         cached = self._transports.get(server_id)
         if cached:
             return cached
@@ -196,16 +255,6 @@ class McpProxy:
                 client=client,
                 owns_client=False,
             )
-        elif transport_type == "stdio":
-            process_manager = self._process_manager
-            if process_manager is None:
-                process_manager = get_process_manager()
-                self._process_manager = process_manager
-            await process_manager.start_server(server_id, server)
-            stdio_transport = process_manager.get_transport(server_id)
-            if stdio_transport is None:
-                raise RuntimeError(f"STDIO transport not available for server {server.get('name')}")
-            transport = stdio_transport
         elif transport_type == "pipe":
             pipe_path = server.get("pipe_path")
             if not pipe_path:
@@ -244,7 +293,6 @@ class McpProxy:
         if not approval_is_active(server.get("approval_state")):
             reason = server.get("blocked_reason") or "Server is pending whitelist approval"
             raise PermissionError(reason)
-        headers = self._get_auth_headers(server)
         transport_type = self._transport_type(server)
 
         # Per-server timeout override (DB field → global default)
@@ -256,11 +304,22 @@ class McpProxy:
         request_id = self._request_id_counter
         payload = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params or {}}
 
+        if transport_type == "stdio":
+            process_manager = await self._configure_stdio_server(server)
+            try:
+                async with await process_manager.acquire(server_id, purpose="request") as lease:
+                    return await lease.send_request(
+                        method, params or {}, timeout=float(server_timeout)
+                    )
+            except WorkerPoolOverloadedError as error:
+                raise StdioCapacityExceeded(error) from error
+
         if transport_type != "http":
-            transport = await self._get_transport(server, headers)
+            transport = await self._get_transport(server, self._get_auth_headers(server))
             return await transport.send_request(payload=payload, timeout=float(server_timeout))
 
         server_url = server["url"]
+        headers = self._get_auth_headers(server)
 
         # Include mcp-session-id if we have one (Streamable HTTP transport)
         session_id = self._session_ids.get(server_id)
@@ -463,6 +522,8 @@ class McpProxy:
                     await self._proxy_jsonrpc(
                         server, "notifications/initialized", {}, allow_retry=False
                     )
+            except StdioCapacityExceeded:
+                raise
             except Exception as notify_err:
                 # Best-effort: backends that ignore the notification still
                 # work; only transport-layer issues are interesting here.
@@ -473,6 +534,8 @@ class McpProxy:
                 )
 
             return caps
+        except StdioCapacityExceeded:
+            raise
         except PROXY_DISCOVERY_ERRORS as e:
             message = str(e).lower()
             if "already initialized" in message:
@@ -502,6 +565,7 @@ class McpProxy:
 
         tasks = [self._fetch_capabilities_from_server(s) for s in servers]
         results = await asyncio.gather(*tasks, return_exceptions=True)
+        self._raise_capacity_error(results)
 
         merged: Dict[str, Any] = {}
         for result in results:
@@ -532,6 +596,7 @@ class McpProxy:
 
         tasks = [self._fetch_tools_from_server(s) for s in servers]
         results = await asyncio.gather(*tasks, return_exceptions=True)
+        self._raise_capacity_error(results)
 
         all_tools: List[Dict[str, Any]] = []
         for i, result in enumerate(results):
@@ -1199,6 +1264,7 @@ class McpProxy:
 
         tasks = [self._fetch_resources_from_server(s) for s in servers]
         results = await asyncio.gather(*tasks, return_exceptions=True)
+        self._raise_capacity_error(results)
 
         all_resources: List[Dict[str, Any]] = []
         for i, result in enumerate(results):
@@ -1338,6 +1404,7 @@ class McpProxy:
                 return []
 
         results = await asyncio.gather(*[fetch_one(s) for s in servers], return_exceptions=True)
+        self._raise_capacity_error(results)
 
         all_templates = []
         for result in results:
@@ -1359,6 +1426,7 @@ class McpProxy:
 
         tasks = [self._fetch_prompts_from_server(s) for s in servers]
         results = await asyncio.gather(*tasks, return_exceptions=True)
+        self._raise_capacity_error(results)
 
         all_prompts: List[Dict[str, Any]] = []
         for i, result in enumerate(results):
@@ -1508,7 +1576,7 @@ class McpProxy:
     # ========================================================================
 
     def invalidate_cache(self, server_id: Optional[int] = None):
-        """Invalidate all caches for a server (or all servers)."""
+        """Evict proxy cache and session state without managing STDIO lifecycle."""
         if server_id:
             self._tools_cache.pop(server_id, None)
             self._resources_cache.pop(server_id, None)
@@ -1516,13 +1584,8 @@ class McpProxy:
             self._capabilities_cache.pop(server_id, None)
             self._cache_timestamp.pop(server_id, None)
             self._session_ids.pop(server_id, None)
-            transport = self._transports.pop(server_id, None)
-            if transport is not None:
-                try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(transport.close())
-                except RuntimeError:
-                    pass
+            self._transports.pop(server_id, None)
+            self._stdio_config_fingerprints.pop(server_id, None)
             logger.info(f"Invalidated cache for server {server_id}")
         else:
             self._tools_cache.clear()
@@ -1531,13 +1594,8 @@ class McpProxy:
             self._capabilities_cache.clear()
             self._cache_timestamp.clear()
             self._session_ids.clear()
-            try:
-                loop = asyncio.get_running_loop()
-                for transport in self._transports.values():
-                    loop.create_task(transport.close())
-            except RuntimeError:
-                pass
             self._transports.clear()
+            self._stdio_config_fingerprints.clear()
             logger.info("Invalidated all cache")
 
     def _build_dedup_key(

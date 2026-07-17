@@ -28,11 +28,13 @@ from authmcp_gateway.mcp.proxy import (
     McpProxy,
     PromptNotFoundError,
     ResourceNotFoundError,
+    StdioCapacityExceeded,
     ToolNotFoundError,
     get_auth_headers,
     normalize_server_name,
     parse_sse_response,
 )
+from authmcp_gateway.mcp.stdio_pool_config import WorkerPoolOverloadedError
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -476,6 +478,36 @@ async def test_get_aggregated_capabilities_filters_exceptions(db_path, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_fetch_capabilities_raises_on_initialized_notification_overload(db_path, monkeypatch):
+    proxy = McpProxy(db_path)
+    server = {
+        "id": 1,
+        "name": "A",
+        "url": "https://a.example/mcp",
+        "auth_type": "none",
+    }
+
+    async def fake_proxy_jsonrpc(*_args, **_kwargs):
+        return {"result": {"capabilities": {"tools": {}}}}
+
+    class _FakeClient:
+        async def post(self, *_args, **_kwargs):
+            raise StdioCapacityExceeded(WorkerPoolOverloadedError(server_id=1, retry_after=13))
+
+    monkeypatch.setattr(proxy, "_proxy_jsonrpc", fake_proxy_jsonrpc)
+    
+    async def fake_get_client():
+        return _FakeClient()
+
+    monkeypatch.setattr(proxy, "_get_client", fake_get_client)
+
+    with pytest.raises(StdioCapacityExceeded) as excinfo:
+        await proxy._fetch_capabilities_from_server(server)
+
+    assert excinfo.value.retry_after == 13
+
+
+@pytest.mark.asyncio
 async def test_list_resources_empty_when_no_servers(db_path, monkeypatch):
     proxy = McpProxy(db_path)
     monkeypatch.setattr(proxy, "_get_servers", lambda **_: [])
@@ -793,6 +825,7 @@ async def test_proxy_jsonrpc_happy_path_returns_parsed_result(db_path, monkeypat
         "url": "https://good.example/mcp",
         "auth_type": "none",
         "refresh_token_hash": None,
+        "approval_state": "approved",
     }
 
     received_headers: list = []
@@ -821,6 +854,7 @@ async def test_proxy_jsonrpc_captures_session_id_from_response_header(db_path, m
         "url": "https://good.example/mcp",
         "auth_type": "none",
         "refresh_token_hash": None,
+        "approval_state": "approved",
     }
 
     def handler(_request):
@@ -851,6 +885,7 @@ async def test_proxy_jsonrpc_400_session_recovery_reinitializes_and_retries(db_p
         "url": "https://good.example/mcp",
         "auth_type": "none",
         "refresh_token_hash": None,
+        "approval_state": "approved",
     }
     proxy._session_ids[1] = "stale-sess"
 
@@ -903,6 +938,7 @@ async def test_proxy_jsonrpc_401_triggers_refresh_and_retries(mcp_db, monkeypatc
         auth_token="old-token",
     )
     store.update_mcp_server(mcp_db, sid, refresh_token_hash="hash-fake")
+    assert store.update_server_approval(mcp_db, sid, "approved", actor="test")
     server = store.get_mcp_server(mcp_db, sid)
 
     state = {"call": 0}
@@ -943,6 +979,7 @@ async def test_proxy_jsonrpc_raises_for_unrelated_4xx(db_path, monkeypatch):
         "url": "https://x.example/mcp",
         "auth_type": "none",
         "refresh_token_hash": None,
+        "approval_state": "approved",
     }
 
     def handler(_request):
@@ -963,6 +1000,7 @@ async def test_proxy_jsonrpc_propagates_timeout_when_no_session_to_recover(db_pa
         "url": "https://x.example/mcp",
         "auth_type": "none",
         "refresh_token_hash": None,
+        "approval_state": "approved",
     }
 
     def handler(_request):

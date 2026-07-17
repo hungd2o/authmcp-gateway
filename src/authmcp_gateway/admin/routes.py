@@ -10,7 +10,7 @@ import logging
 import os
 from functools import wraps
 from pathlib import Path
-from typing import Callable, cast
+from typing import TYPE_CHECKING, Callable, cast
 
 from jinja2 import Environment, FileSystemLoader
 from starlette.requests import Request
@@ -18,6 +18,9 @@ from starlette.responses import HTMLResponse, JSONResponse
 
 from authmcp_gateway import __version__ as _app_version
 from authmcp_gateway.config import AppConfig
+
+if TYPE_CHECKING:
+    from authmcp_gateway.app import McpRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +53,15 @@ def get_config(request: Request) -> AppConfig:
     Submodules call this at *runtime* to access the live AppConfig.
     """
     return cast(AppConfig, request.app.state.config)
+
+
+def get_mcp_runtime(request: Request) -> "McpRuntime":
+    """Return the application-owned MCP runtime or fail clearly when absent."""
+    app = request.scope.get("app")
+    runtime = getattr(getattr(app, "state", None), "mcp_runtime", None)
+    if runtime is None:
+        raise RuntimeError("MCP runtime is not initialized on application state")
+    return cast("McpRuntime", runtime)
 
 
 def render_template(template_name: str, **context) -> HTMLResponse:

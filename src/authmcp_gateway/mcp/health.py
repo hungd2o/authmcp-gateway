@@ -12,8 +12,9 @@ from ._exceptions import (
     PROXY_DISCOVERY_ERRORS,
     PROXY_TOKEN_REFRESH_ERRORS,
 )
-from .process_manager import get_process_manager
+from .process_manager import StdioProcessManager, get_process_manager
 from .proxy import get_auth_headers, parse_sse_response
+from .stdio_pool_config import WorkerPoolOverloadedError
 from .store import list_mcp_servers, update_server_health
 from .transports import PipeTransport
 
@@ -30,6 +31,7 @@ class HealthChecker:
         timeout: int = 10,
         shared_session_ids: Dict[int, str] | None = None,
         shared_recovery_locks: Dict[int, asyncio.Lock] | None = None,
+        process_manager: StdioProcessManager | None = None,
     ):
         """Initialize health checker.
 
@@ -54,6 +56,7 @@ class HealthChecker:
         self._recovery_locks: Dict[int, asyncio.Lock] = (
             shared_recovery_locks if shared_recovery_locks is not None else {}
         )
+        self._process_manager = process_manager
 
     def _get_recovery_lock(self, server_id: int) -> asyncio.Lock:
         lock = self._recovery_locks.get(server_id)
@@ -61,6 +64,21 @@ class HealthChecker:
             lock = asyncio.Lock()
             self._recovery_locks[server_id] = lock
         return lock
+
+    def _deferred_stdio_result(
+        self, server_id: int, server_name: str, reason: str
+    ) -> Dict[str, Any]:
+        """Report a lazy or reserved STDIO pool without changing durable health state."""
+        return {
+            "server_id": server_id,
+            "server_name": server_name,
+            "status": "deferred",
+            "response_time_ms": None,
+            "tools_count": None,
+            "error": None,
+            "detail": reason,
+            "checked_at": datetime.now(timezone.utc),
+        }
 
     async def _check_non_http_server(self, server: Dict[str, Any]) -> Dict[str, Any]:
         """Health check for stdio/pipe transports."""
@@ -74,15 +92,29 @@ class HealthChecker:
         try:
             data: Dict[str, Any]
             if transport_type == "stdio":
-                process_manager = get_process_manager()
-                await process_manager.start_server(server_id, server)
-                transport = process_manager.get_transport(server_id)
-                if transport is None:
-                    raise RuntimeError("STDIO transport unavailable")
-                data = await transport.send_request(
-                    {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
-                    timeout=request_timeout,
-                )
+                process_manager = self._process_manager or get_process_manager()
+                status = process_manager.status_detail(server_id)
+                workers = status.get("workers", {})
+                ready_workers = int(workers.get("ready", 0))
+                worker_count = sum(int(count) for count in workers.values())
+                if status.get("state") != "running":
+                    return self._deferred_stdio_result(
+                        server_id, server_name, "STDIO pool is lazy and has not started"
+                    )
+                if worker_count < int(status.get("max_workers", 0)) or ready_workers < 2:
+                    return self._deferred_stdio_result(
+                        server_id, server_name, "STDIO capacity is reserved for foreground traffic"
+                    )
+                acquire_timeout = min(request_timeout, 1.0)
+                try:
+                    async with await process_manager.acquire(
+                        server_id, purpose="health", timeout=acquire_timeout
+                    ) as lease:
+                        data = await lease.send_request("tools/list", {}, timeout=request_timeout)
+                except WorkerPoolOverloadedError:
+                    return self._deferred_stdio_result(
+                        server_id, server_name, "STDIO capacity is reserved for foreground traffic"
+                    )
             elif transport_type == "pipe":
                 pipe_path = server.get("pipe_path")
                 if not pipe_path:
@@ -221,6 +253,18 @@ class HealthChecker:
         server_name = server["name"]
         server_url = server["url"]
         transport_type = (server.get("transport_type") or "http").lower()
+        if not server.get("enabled", True):
+            error_msg = "Server is disabled"
+            update_server_health(self.db_path, server_id, status="offline", error=error_msg)
+            return {
+                "server_id": server_id,
+                "server_name": server_name,
+                "status": "offline",
+                "response_time_ms": None,
+                "tools_count": None,
+                "error": error_msg,
+                "checked_at": datetime.now(timezone.utc),
+            }
         if server.get("approval_state") != "approved":
             return {
                 "server_id": server_id,
@@ -541,6 +585,7 @@ def initialize_health_checker(
     timeout: int = 10,
     shared_session_ids: Dict[int, str] | None = None,
     shared_recovery_locks: Dict[int, asyncio.Lock] | None = None,
+    process_manager: StdioProcessManager | None = None,
 ) -> HealthChecker:
     """Initialize global health checker.
 
@@ -561,5 +606,6 @@ def initialize_health_checker(
         timeout,
         shared_session_ids=shared_session_ids,
         shared_recovery_locks=shared_recovery_locks,
+        process_manager=process_manager,
     )
     return _health_checker

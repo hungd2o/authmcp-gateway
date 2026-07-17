@@ -14,7 +14,13 @@ from starlette.responses import JSONResponse, Response
 from authmcp_gateway.utils import get_request_ip
 
 from ._exceptions import PROXY_DISCOVERY_DB_ERRORS
-from .proxy import McpProxy, PromptNotFoundError, ResourceNotFoundError, ToolNotFoundError
+from .proxy import (
+    McpProxy,
+    PromptNotFoundError,
+    ResourceNotFoundError,
+    StdioCapacityExceeded,
+    ToolNotFoundError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +39,7 @@ class McpHandler:
         errors, or a 204 :class:`Response` (no body) for notifications
         per the JSON-RPC 2.0 spec — hence the broader return type.
         """
+        jsonrpc_id: int | str | None = None
         try:
             data = await request.json()
             jsonrpc_id = data.get("id")
@@ -123,6 +130,8 @@ class McpHandler:
                 logger.warning(f"Unknown MCP method: {method}")
                 return self._error_response(jsonrpc_id or 1, -32601, f"Method not found: {method}")
 
+        except StdioCapacityExceeded as error:
+            return self._capacity_error_response(jsonrpc_id, error)
         except Exception as e:  # noqa: BLE001 — outer JSON-RPC last-resort
             # Top-level dispatcher backstop. Any exception that escapes the
             # per-method handlers below is logged and surfaced to the client
@@ -223,6 +232,8 @@ class McpHandler:
                 {"jsonrpc": "2.0", "id": jsonrpc_id, "result": {"tools": formatted_tools}}
             )
 
+        except StdioCapacityExceeded:
+            raise
         except Exception as e:  # noqa: BLE001 — per-method JSON-RPC last-resort backstop
             logger.exception(f"Error in tools/list: {e}")
             self._log_mcp(
@@ -326,6 +337,8 @@ class McpHandler:
             logger.warning(f"Invalid params: {e}")
             return self._error_response(jsonrpc_id, -32602, str(e))
 
+        except StdioCapacityExceeded:
+            raise
         except Exception as e:  # noqa: BLE001 — per-method JSON-RPC last-resort backstop
             logger.exception(f"Error calling tool '{tool_name}': {e}")
             return self._error_response(jsonrpc_id, -32603, str(e))
@@ -365,6 +378,8 @@ class McpHandler:
                 {"jsonrpc": "2.0", "id": jsonrpc_id, "result": {"resources": formatted}}
             )
 
+        except StdioCapacityExceeded:
+            raise
         except Exception as e:  # noqa: BLE001 — per-method JSON-RPC last-resort backstop
             logger.exception(f"Error in resources/list: {e}")
             self._log_mcp(
@@ -437,6 +452,8 @@ class McpHandler:
         except PermissionError as e:
             return self._error_response(jsonrpc_id, -32000, str(e))
 
+        except StdioCapacityExceeded:
+            raise
         except Exception as e:  # noqa: BLE001 — per-method JSON-RPC last-resort backstop
             logger.exception(f"Error reading resource '{uri}': {e}")
             return self._error_response(jsonrpc_id, -32603, str(e))
@@ -476,6 +493,8 @@ class McpHandler:
                 }
             )
 
+        except StdioCapacityExceeded:
+            raise
         except Exception as e:  # noqa: BLE001 — per-method JSON-RPC last-resort backstop
             logger.exception(f"Error in resources/templates/list: {e}")
             return self._error_response(jsonrpc_id, -32603, str(e))
@@ -514,6 +533,8 @@ class McpHandler:
                 {"jsonrpc": "2.0", "id": jsonrpc_id, "result": {"prompts": formatted}}
             )
 
+        except StdioCapacityExceeded:
+            raise
         except Exception as e:  # noqa: BLE001 — per-method JSON-RPC last-resort backstop
             logger.exception(f"Error in prompts/list: {e}")
             self._log_mcp(
@@ -587,6 +608,8 @@ class McpHandler:
         except PermissionError as e:
             return self._error_response(jsonrpc_id, -32000, str(e))
 
+        except StdioCapacityExceeded:
+            raise
         except Exception as e:  # noqa: BLE001 — per-method JSON-RPC last-resort backstop
             logger.exception(f"Error getting prompt '{name}': {e}")
             return self._error_response(jsonrpc_id, -32603, str(e))
@@ -637,6 +660,8 @@ class McpHandler:
         except (ResourceNotFoundError, PromptNotFoundError) as e:
             return self._error_response(jsonrpc_id, -32602, str(e))
 
+        except StdioCapacityExceeded:
+            raise
         except Exception as e:  # noqa: BLE001 — per-method JSON-RPC last-resort backstop
             logger.exception(f"Error in completion/complete: {e}")
             return self._error_response(jsonrpc_id, -32603, str(e))
@@ -687,7 +712,25 @@ class McpHandler:
             # file-based logger; failures here must not abort the request.
             logger.error(f"Failed to log MCP request: {log_err}")
 
-    def _error_response(self, jsonrpc_id: int, code: int, message: str) -> JSONResponse:
+    def _capacity_error_response(
+        self, jsonrpc_id: int | str | None, error: StdioCapacityExceeded
+    ) -> JSONResponse:
+        """Preserve controlled STDIO saturation for the HTTP boundary."""
+        return JSONResponse(
+            {
+                "jsonrpc": "2.0",
+                "id": jsonrpc_id,
+                "error": {
+                    "code": -32001,
+                    "message": str(error),
+                    "data": {"http_status": 503, "retry_after": error.retry_after},
+                },
+            }
+        )
+
+    def _error_response(
+        self, jsonrpc_id: int | str | None, code: int, message: str
+    ) -> JSONResponse:
         """Create JSON-RPC error response."""
         return JSONResponse(
             {"jsonrpc": "2.0", "id": jsonrpc_id, "error": {"code": code, "message": message}},

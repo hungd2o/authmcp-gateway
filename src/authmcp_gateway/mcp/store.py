@@ -650,6 +650,23 @@ def update_server_health(
     update_mcp_server(db_path, server_id, **fields)
 
 
+def mark_server_online_if_active(db_path: str, server_id: int, tools_count: int) -> bool:
+    """Record healthy STDIO discovery only while the server remains active."""
+    now = datetime.now(timezone.utc).isoformat()
+    with _db_conn(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE mcp_servers
+            SET status = ?, last_health_check = ?, last_error = NULL,
+                tools_count = ?, updated_at = ?
+            WHERE id = ? AND enabled = 1 AND approval_state = ?
+            """,
+            ("online", now, tools_count, now, server_id, APPROVAL_APPROVED),
+        )
+        return cursor.rowcount > 0
+
+
 def delete_mcp_server(db_path: str, server_id: int) -> bool:
     """Delete MCP server.
 

@@ -16,9 +16,13 @@ from urllib.parse import urlencode
 import jwt as pyjwt
 import pytest
 from starlette.requests import Request
+from starlette.testclient import TestClient
 
+from authmcp_gateway.app import create_app
 from authmcp_gateway.auth import endpoints as ep
 from authmcp_gateway.config import AppConfig, AuthConfig, JWTConfig, RateLimitConfig
+from authmcp_gateway.mcp.proxy import StdioCapacityExceeded
+from authmcp_gateway.mcp.stdio_pool_config import WorkerPoolOverloadedError
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -808,3 +812,34 @@ async def test_me_401_on_expired_token(reset_settings, config):
 
 # Suppress unused-import warning on urlencode (kept for future expansion).
 _ = urlencode
+
+
+def _mcp_initialize_request() -> dict:
+    return {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+
+
+@pytest.mark.asyncio
+async def test_mcp_initialize_and_sse_message_post_map_capacity_to_503(
+    config, monkeypatch
+):
+    config.static_bearer_tokens = ["static-secret"]
+
+    async def raise_capacity(*_args, **_kwargs):
+        raise StdioCapacityExceeded(WorkerPoolOverloadedError(server_id=3, retry_after=9))
+
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.proxy.McpProxy.get_aggregated_capabilities",
+        raise_capacity,
+    )
+
+    with TestClient(create_app(config)) as client:
+        headers = {"authorization": "Bearer static-secret"}
+        initialize = client.post("/mcp", json=_mcp_initialize_request(), headers=headers)
+        sse_message = client.post("/mcp/messages", json=_mcp_initialize_request(), headers=headers)
+
+    for response in (initialize, sse_message):
+        assert response.status_code == 503
+        assert response.headers["Retry-After"] == "9"
+        body = response.json()
+        assert body["error"]["code"] == -32001
+        assert body["error"]["data"] == {"http_status": 503, "retry_after": 9}

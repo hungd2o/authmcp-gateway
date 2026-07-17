@@ -14,10 +14,61 @@ from dotenv import dotenv_values
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
 
-from authmcp_gateway.admin.routes import api_error_handler, get_config, render_template
+from authmcp_gateway.admin.routes import (
+    api_error_handler,
+    get_config,
+    get_mcp_runtime,
+    render_template,
+)
 from authmcp_gateway.mcp.templating import validate_template_string, validate_templates_in_value
 
 logger = logging.getLogger(__name__)
+
+_PROTECTED_SERVER_UPDATE_FIELDS = frozenset(
+    {
+        "allowlist_policy",
+        "approval_metadata",
+        "approval_state",
+        "blocked_reason",
+        "config_fingerprint",
+        "last_health_check",
+        "last_error",
+        "refresh_endpoint",
+        "refresh_token_encrypted",
+        "refresh_token_hash",
+        "risk_level",
+        "status",
+        "token_expires_at",
+        "token_last_refreshed",
+        "tools_count",
+        "updated_at",
+    }
+)
+
+_PROCESS_DETAIL_STRING_FIELDS = frozenset(
+    {
+        "desired_state",
+        "pool_state",
+        "aggregate",
+        "config_fingerprint_short",
+        "last_crash_at",
+        "last_reconcile_at",
+    }
+)
+_PROCESS_DETAIL_INTEGER_FIELDS = frozenset(
+    {
+        "generation",
+        "pool_size",
+        "active",
+        "idle",
+        "queue_depth",
+        "restart_count",
+    }
+)
+_PROCESS_DETAIL_WORKER_STRING_FIELDS = frozenset({"worker_id", "state"})
+_PROCESS_DETAIL_WORKER_INTEGER_FIELDS = frozenset(
+    {"pid", "uptime_secs", "restart_count", "last_exit_code"}
+)
 
 __all__ = [
     "admin_mcp_servers",
@@ -122,18 +173,104 @@ def _schedule_health_check(db_path: str, server_id: int) -> None:
     asyncio.create_task(_run())
 
 
+def _legacy_process_detail(raw_detail: dict) -> dict:
+    """Adapt the current manager summary until get_status_detail() is available."""
+    workers_by_state = raw_detail.get("workers")
+    if not isinstance(workers_by_state, dict):
+        workers_by_state = {}
+
+    worker_counts = {
+        state: count
+        for state, count in workers_by_state.items()
+        if isinstance(state, str) and isinstance(count, int) and not isinstance(count, bool)
+    }
+    pool_state = raw_detail.get("state")
+    detail: dict[str, object] = {
+        "pool_state": pool_state,
+        "aggregate": pool_state,
+        "generation": raw_detail.get("generation"),
+        "pool_size": sum(worker_counts.values()),
+        "active": worker_counts.get("busy", 0),
+        "idle": worker_counts.get("ready", 0),
+        "queue_depth": raw_detail.get("waiting"),
+    }
+    fingerprint = raw_detail.get("fingerprint")
+    if isinstance(fingerprint, str):
+        detail["config_fingerprint_short"] = fingerprint[:12]
+    return detail
+
+
+def _safe_process_detail(process_manager: object, server_id: int) -> dict | None:
+    """Return only the manager's public lifecycle fields for an STDIO server."""
+    get_status_detail = getattr(process_manager, "get_status_detail", None)
+    legacy_status_detail = getattr(process_manager, "status_detail", None)
+
+    try:
+        if callable(get_status_detail):
+            raw_detail = get_status_detail(server_id)
+        elif callable(legacy_status_detail):
+            raw_detail = _legacy_process_detail(legacy_status_detail(server_id))
+        else:
+            return None
+    except Exception:
+        logger.debug("Process detail unavailable for server %s", server_id, exc_info=True)
+        return None
+
+    if not isinstance(raw_detail, dict):
+        logger.debug("Process detail for server %s was not a mapping", server_id)
+        return None
+
+    detail: dict[str, object] = {
+        field: value
+        for field, value in raw_detail.items()
+        if field in _PROCESS_DETAIL_STRING_FIELDS and isinstance(value, str)
+    }
+    detail.update(
+        {
+            field: value
+            for field, value in raw_detail.items()
+            if field in _PROCESS_DETAIL_INTEGER_FIELDS
+            and isinstance(value, int)
+            and not isinstance(value, bool)
+        }
+    )
+
+    raw_workers = raw_detail.get("workers")
+    if isinstance(raw_workers, list):
+        workers: list[dict[str, object]] = []
+        for raw_worker in raw_workers:
+            if not isinstance(raw_worker, dict):
+                continue
+            worker: dict[str, object] = {
+                field: value
+                for field, value in raw_worker.items()
+                if field in _PROCESS_DETAIL_WORKER_STRING_FIELDS and isinstance(value, str)
+            }
+            worker.update(
+                {
+                    field: value
+                    for field, value in raw_worker.items()
+                    if field in _PROCESS_DETAIL_WORKER_INTEGER_FIELDS
+                    and (
+                        value is None
+                        or (isinstance(value, int) and not isinstance(value, bool))
+                        or (field == "uptime_secs" and isinstance(value, float))
+                    )
+                }
+            )
+            workers.append(worker)
+        detail["workers"] = workers
+
+    return detail or None
+
+
 async def api_list_mcp_servers(request: Request) -> JSONResponse:
     """API: List all MCP servers."""
     from authmcp_gateway.mcp.store import list_mcp_servers, list_virtual_tools
 
     db_path = get_config(request).auth.sqlite_path
     servers = list_mcp_servers(db_path)
-    try:
-        from authmcp_gateway.mcp.process_manager import get_process_manager
-
-        process_manager = get_process_manager()
-    except Exception:
-        process_manager = None
+    process_manager = get_mcp_runtime(request).process_manager
 
     virtual_tool_counts: dict = {}
     for tool in list_virtual_tools(db_path):
@@ -142,8 +279,11 @@ async def api_list_mcp_servers(request: Request) -> JSONResponse:
 
     for server in servers:
         transport_type = (server.get("transport_type") or "http").lower()
-        if transport_type == "stdio" and process_manager is not None:
+        if transport_type == "stdio":
             server["process_status"] = process_manager.get_status(server["id"])
+            process_detail = _safe_process_detail(process_manager, server["id"])
+            if process_detail is not None:
+                server["process_detail"] = process_detail
         elif transport_type == "pipe":
             server["process_status"] = "n/a"
         else:
@@ -251,7 +391,7 @@ def _normalize_virtual_tool_stdin_config(config: dict) -> dict:
     if mode not in {"json", "template", "none"}:
         raise ValueError("config.stdin.mode must be 'json', 'template', or 'none'")
 
-    normalized = {"mode": mode}
+    normalized: dict[str, object] = {"mode": mode}
     if mode == "template":
         if "template" not in stdin_cfg:
             raise ValueError("config.stdin.template is required when stdin.mode='template'")
@@ -464,11 +604,12 @@ async def api_delete_mcp_server(request: Request) -> JSONResponse:
     success = delete_mcp_server(_config.auth.sqlite_path, server_id)
 
     if success:
-        # Invalidate cache
-        from authmcp_gateway.mcp.proxy import McpProxy
-
-        proxy = McpProxy(_config.auth.sqlite_path)
-        proxy.invalidate_cache(server_id)
+        runtime = get_mcp_runtime(request)
+        remove_server = getattr(runtime, "remove_server", None)
+        if callable(remove_server):
+            await remove_server(server_id)
+        else:
+            await runtime.block_and_stop_server(server_id)
 
         return JSONResponse({"message": "Server deleted successfully"})
     else:
@@ -483,6 +624,15 @@ async def api_update_mcp_server(request: Request) -> JSONResponse:
     _config = get_config(request)
     server_id = int(request.path_params["server_id"])
     data = await request.json()
+    if not isinstance(data, dict):
+        return JSONResponse({"error": "Request body must be a JSON object"}, status_code=400)
+
+    protected_fields = sorted(_PROTECTED_SERVER_UPDATE_FIELDS.intersection(data))
+    if protected_fields:
+        return JSONResponse(
+            {"error": f"Protected fields cannot be updated here: {', '.join(protected_fields)}"},
+            status_code=400,
+        )
 
     # Sanitize timeout: empty/zero → None (use global default)
     if "timeout" in data:
@@ -490,6 +640,10 @@ async def api_update_mcp_server(request: Request) -> JSONResponse:
             data["timeout"] = int(data["timeout"]) if data["timeout"] else None
         except (ValueError, TypeError):
             data["timeout"] = None
+    if "enabled" in data:
+        if not isinstance(data["enabled"], bool):
+            return JSONResponse({"error": "enabled must be a JSON boolean"}, status_code=400)
+        data["enabled"] = int(data["enabled"])
 
     requested_fields = set(data.keys())
     current = get_mcp_server(_config.auth.sqlite_path, server_id)
@@ -503,14 +657,16 @@ async def api_update_mcp_server(request: Request) -> JSONResponse:
     success = update_mcp_server(db_path=_config.auth.sqlite_path, server_id=server_id, **data)
 
     if success:
-        # Invalidate cache
-        from authmcp_gateway.mcp.proxy import McpProxy
-
-        proxy = McpProxy(_config.auth.sqlite_path)
-        proxy.invalidate_cache(server_id)
-
         server = get_mcp_server(_config.auth.sqlite_path, server_id)
-        if server and server.get("approval_state") == "approved":
+        runtime = get_mcp_runtime(request)
+        if server and (
+            not server.get("enabled", True) or server.get("approval_state") != "approved"
+        ):
+            await runtime.block_and_stop_server(server_id)
+        elif server:
+            await runtime.reconcile_server(server)
+
+        if server and server.get("approval_state") == "approved" and server.get("enabled", True):
             _schedule_health_check(_config.auth.sqlite_path, server_id)
 
         return JSONResponse({"message": "Server updated successfully"})
@@ -530,17 +686,50 @@ async def api_test_mcp_server(request: Request) -> JSONResponse:
 
     if not server:
         return JSONResponse({"error": "Server not found"}, status_code=404)
-    if server.get("approval_state") != "approved":
+    if server.get("approval_state") != "approved" or not server.get("enabled", True):
         return JSONResponse(
             {
                 "error": server.get("blocked_reason")
-                or "Server is pending whitelist approval and cannot be tested"
+                or "Server is disabled or pending whitelist approval and cannot be tested"
             },
             status_code=403,
         )
 
-    # Perform health check
-    health_checker = HealthChecker(_config.auth.sqlite_path)
+    runtime = get_mcp_runtime(request)
+    if (server.get("transport_type") or "http").lower() == "stdio":
+        try:
+            await runtime.reconcile_server(server)
+            tools_count = await runtime.process_manager.probe_tools(
+                server_id, timeout=float(server.get("timeout") or 10)
+            )
+        except Exception as error:
+            from authmcp_gateway.mcp.store import update_server_health
+
+            error_message = str(error).strip() or type(error).__name__
+            update_server_health(
+                _config.auth.sqlite_path, server_id, status="error", error=error_message
+            )
+            return JSONResponse({"status": "error", "tools_count": None, "error": error_message})
+        from authmcp_gateway.mcp.store import mark_server_online_if_active, update_server_health
+
+        if not mark_server_online_if_active(_config.auth.sqlite_path, server_id, tools_count):
+            update_server_health(
+                _config.auth.sqlite_path,
+                server_id,
+                status="offline",
+                error="Server is no longer active",
+            )
+            return JSONResponse(
+                {"status": "blocked", "tools_count": None, "error": "Server is no longer active"},
+                status_code=409,
+            )
+        return JSONResponse({"status": "online", "tools_count": tools_count, "error": None})
+
+    # Perform health check for remote transports.
+    health_checker = HealthChecker(
+        _config.auth.sqlite_path,
+        process_manager=runtime.process_manager,
+    )
     result = await health_checker.check_server(server)
 
     # Convert datetime to ISO string for JSON serialization
@@ -553,7 +742,6 @@ async def api_test_mcp_server(request: Request) -> JSONResponse:
 @api_error_handler
 async def api_get_mcp_server_tools(request: Request) -> JSONResponse:
     """API: Get tools from MCP server."""
-    from authmcp_gateway.mcp.proxy import McpProxy
     from authmcp_gateway.mcp.store import get_mcp_server, list_virtual_tools
 
     _config = get_config(request)
@@ -562,18 +750,17 @@ async def api_get_mcp_server_tools(request: Request) -> JSONResponse:
 
     if not server:
         return JSONResponse({"error": "Server not found"}, status_code=404)
-    if server.get("approval_state") != "approved":
+    if server.get("approval_state") != "approved" or not server.get("enabled", True):
         return JSONResponse(
             {
                 "error": server.get("blocked_reason")
-                or "Server is pending whitelist approval and tools cannot be listed"
+                or "Server is disabled or pending whitelist approval and tools cannot be listed"
             },
             status_code=403,
         )
 
-    # Fetch tools from server
-    proxy = McpProxy(_config.auth.sqlite_path)
-    tools = await proxy._fetch_tools_from_server(server)
+    # Fetch tools through the application-owned proxy.
+    tools = await get_mcp_runtime(request).proxy._fetch_tools_from_server(server)
     virtual_tools = list_virtual_tools(
         _config.auth.sqlite_path,
         mcp_server_id=server_id,
@@ -612,8 +799,11 @@ async def api_get_mcp_server_tools(request: Request) -> JSONResponse:
 @api_error_handler
 async def api_mcp_server_process_action(request: Request) -> JSONResponse:
     """API: control stdio process lifecycle (start/stop/restart)."""
-    from authmcp_gateway.mcp.process_manager import get_process_manager
-    from authmcp_gateway.mcp.store import get_mcp_server
+    from authmcp_gateway.mcp.store import (
+        get_mcp_server,
+        mark_server_online_if_active,
+        update_server_health,
+    )
 
     _config = get_config(request)
     server_id = int(request.path_params["server_id"])
@@ -622,7 +812,7 @@ async def api_mcp_server_process_action(request: Request) -> JSONResponse:
     server = get_mcp_server(_config.auth.sqlite_path, server_id)
     if not server:
         return JSONResponse({"error": "Server not found"}, status_code=404)
-    if server.get("approval_state") != "approved":
+    if server.get("approval_state") != "approved" or not server.get("enabled", True):
         return JSONResponse(
             {
                 "error": server.get("blocked_reason")
@@ -636,19 +826,59 @@ async def api_mcp_server_process_action(request: Request) -> JSONResponse:
             {"error": "Process actions are supported only for stdio transport"}, status_code=400
         )
 
-    process_manager = get_process_manager()
-    if action == "start":
-        await process_manager.start_server(server_id, server)
-    elif action == "stop":
-        await process_manager.stop_server(server_id)
-    elif action == "restart":
-        await process_manager.restart_server(server_id)
-    else:
-        return JSONResponse({"error": "Invalid action"}, status_code=400)
+    process_manager = get_mcp_runtime(request).process_manager
+    if action in {"start", "restart"} and process_manager.is_blocked(server_id):
+        return JSONResponse({"error": "STDIO server is blocked"}, status_code=403)
+    try:
+        if action == "start":
+            await process_manager.start_server(server_id, server)
+        elif action == "stop":
+            await process_manager.stop_server(server_id)
+        elif action == "restart":
+            await process_manager.restart_server(server_id)
+        else:
+            return JSONResponse({"error": "Invalid action"}, status_code=400)
 
-    return JSONResponse(
-        {"message": f"Process {action} requested", "status": process_manager.get_status(server_id)}
-    )
+        if action in {"start", "restart"}:
+            tools_count = await process_manager.probe_tools(
+                server_id, timeout=float(server.get("timeout") or 10)
+            )
+    except Exception as error:
+        error_message = str(error).strip() or type(error).__name__
+        update_server_health(_config.auth.sqlite_path, server_id, status="error", error=error_message)
+        return JSONResponse(
+            {
+                "error": error_message,
+                "message": f"Process {action} failed its backend check",
+                "status": process_manager.get_status(server_id),
+            },
+            status_code=502,
+        )
+
+    if action in {"start", "restart"}:
+        if not mark_server_online_if_active(_config.auth.sqlite_path, server_id, tools_count):
+            update_server_health(
+                _config.auth.sqlite_path,
+                server_id,
+                status="offline",
+                error="Server is no longer active",
+            )
+            return JSONResponse(
+                {
+                    "error": "Server is no longer active",
+                    "status": process_manager.get_status(server_id),
+                },
+                status_code=409,
+            )
+
+    response: dict[str, object] = {
+        "message": f"Process {action} requested",
+        "status": process_manager.get_status(server_id),
+    }
+    process_detail = _safe_process_detail(process_manager, server_id)
+    if process_detail is not None:
+        response["process_detail"] = process_detail
+    return JSONResponse(response)
 
 
 def _has_valid_whitelist_token(request: Request) -> bool:
@@ -728,6 +958,11 @@ async def api_whitelist_servers_action(request: Request) -> JSONResponse:
             {"error": "Server not found or does not match allowlist policy"},
             status_code=400,
         )
+    runtime = get_mcp_runtime(request)
+    if approval_state == "approved":
+        await runtime.allow_server(server_id)
+    else:
+        await runtime.block_and_stop_server(server_id)
     return JSONResponse({"message": f"Server {approval_state}"})
 
 

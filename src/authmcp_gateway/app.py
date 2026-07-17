@@ -1,5 +1,6 @@
 """AuthMCP Gateway - Main application."""
 
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -27,7 +28,7 @@ from .csrf import CSRFMiddleware
 from .mcp.crypto import initialize_crypto
 from .mcp.handler import McpHandler
 from .mcp.health import initialize_health_checker
-from .mcp.process_manager import initialize_process_manager
+from .mcp.process_manager import StdioProcessManager
 from .mcp.proxy import McpProxy
 from .mcp.store import init_mcp_database, list_mcp_servers
 from .mcp.token_manager import initialize_token_manager
@@ -57,6 +58,62 @@ input, textarea, select, button {
     font: inherit;
 }
 """
+
+
+class McpRuntime:
+    """Own the shared MCP proxy and STDIO lifecycle for one application."""
+
+    def __init__(self, proxy: McpProxy, process_manager: StdioProcessManager):
+        self.proxy = proxy
+        self.process_manager = process_manager
+
+    async def block_and_stop_server(self, server_id: int) -> None:
+        """Fail closed, stop the server, and evict its request state."""
+        await self.process_manager.block_and_stop_server(server_id)
+        self.proxy.invalidate_cache(server_id)
+
+    async def remove_server(self, server_id: int) -> None:
+        """Remove a deleted server's pool before evicting its request state."""
+        await self.process_manager.block_server(server_id)
+        await self.process_manager.stop_and_remove(server_id, blocked=True)
+        self.proxy.invalidate_cache(server_id)
+
+    async def allow_server(self, server_id: int) -> None:
+        """Allow an explicitly re-approved server to start again."""
+        await self.process_manager.unblock_server(server_id)
+        self.proxy.invalidate_cache(server_id)
+
+    async def reconcile_server(self, server: dict) -> None:
+        """Reconcile a STDIO server while preserving safe live generations."""
+        server_id = int(server["id"])
+        if (server.get("transport_type") or "http").lower() != "stdio":
+            await self.remove_server(server_id)
+            return
+        elif not server.get("enabled", True) or server.get("approval_state") != "approved":
+            await self.process_manager.block_and_stop_server(server_id)
+        else:
+            requires_reapproval = getattr(
+                self.process_manager, "requires_reapproval", lambda _server_id: False
+            )
+            if not requires_reapproval(server_id):
+                reconcile = getattr(self.process_manager, "reconcile", None)
+                if reconcile is not None:
+                    await self.process_manager.unblock_server(server_id)
+                    await reconcile(server_id, server)
+                elif self.process_manager.get_status(server_id) == "running":
+                    # Compatibility with lightweight runtime fakes used by
+                    # external integrations before staged reconciliation.
+                    await self.process_manager.block_server(server_id)
+                    await self.process_manager.stop_and_remove(server_id, blocked=True)
+                    await self.process_manager.unblock_server(server_id)
+                else:
+                    await self.process_manager.unblock_server(server_id)
+        self.proxy.invalidate_cache(server_id)
+
+    async def close(self) -> None:
+        """Release application-owned MCP resources during shutdown."""
+        await self.process_manager.stop_all()
+        await self.proxy.close()
 
 
 # ============================================================================
@@ -185,10 +242,13 @@ def create_app(config=None):
     health_check_interval = settings_manager.get("timeouts", "health_check_interval", default=60)
 
     # Initialize MCP Gateway components
-    process_manager = initialize_process_manager()
+    # A runtime owns its subprocess lifecycle. Module-level manager helpers
+    # remain only for standalone compatibility, never for application paths.
+    process_manager = StdioProcessManager()
     mcp_proxy = McpProxy(
         config.auth.sqlite_path, timeout=proxy_timeout, process_manager=process_manager
     )
+    mcp_runtime = McpRuntime(mcp_proxy, process_manager)
     mcp_handler = McpHandler(config.auth.sqlite_path, proxy=mcp_proxy)
 
     # Initialize health checker
@@ -198,6 +258,7 @@ def create_app(config=None):
         timeout=health_check_timeout,
         shared_session_ids=mcp_proxy._session_ids,
         shared_recovery_locks=mcp_proxy._session_recovery_locks,
+        process_manager=process_manager,
     )
 
     # Initialize token manager and refresher
@@ -376,6 +437,23 @@ def create_app(config=None):
             )
         return None
 
+    def _with_capacity_headers(response: Response) -> Response:
+        """Expose bounded STDIO saturation as an HTTP 503 for JSON-RPC clients."""
+        if not isinstance(response, JSONResponse):
+            return response
+        try:
+            payload = json.loads(response.body)
+            error = payload.get("error", {})
+            error_data = error.get("data", {})
+            retry_after = error_data.get("retry_after")
+            status_code = error_data.get("http_status")
+        except (AttributeError, TypeError, ValueError):
+            return response
+        if status_code == 503 and isinstance(retry_after, int) and retry_after > 0:
+            response.status_code = 503
+            response.headers["Retry-After"] = str(retry_after)
+        return response
+
     async def mcp_gateway_endpoint(request: Request):
         """MCP Gateway endpoint - routes to backend MCP servers."""
         rate_limit_response = _check_mcp_rate_limit(request)
@@ -387,7 +465,7 @@ def create_app(config=None):
 
             return await mcp_sse_endpoint(request, mcp_handler, server_name=None)
 
-        return await mcp_handler.handle_request(request)
+        return _with_capacity_headers(await mcp_handler.handle_request(request))
 
     async def mcp_server_endpoint(request: Request):
         """MCP Server-specific endpoint."""
@@ -402,7 +480,9 @@ def create_app(config=None):
 
             return await mcp_sse_endpoint(request, mcp_handler, server_name)
 
-        return await mcp_handler.handle_request(request, server_name=server_name)
+        return _with_capacity_headers(
+            await mcp_handler.handle_request(request, server_name=server_name)
+        )
 
     async def mcp_messages_endpoint(request: Request):
         """MCP SSE message endpoint (POST only)."""
@@ -412,7 +492,9 @@ def create_app(config=None):
 
         from authmcp_gateway.mcp.sse_handler import handle_sse_message
 
-        return await handle_sse_message(request, mcp_handler, server_name=None)
+        return _with_capacity_headers(
+            await handle_sse_message(request, mcp_handler, server_name=None)
+        )
 
     async def mcp_server_messages_endpoint(request: Request):
         """MCP SSE message endpoint for a specific server (POST only)."""
@@ -423,7 +505,9 @@ def create_app(config=None):
         server_name = request.path_params.get("server_name")
         from authmcp_gateway.mcp.sse_handler import handle_sse_message
 
-        return await handle_sse_message(request, mcp_handler, server_name=server_name)
+        return _with_capacity_headers(
+            await handle_sse_message(request, mcp_handler, server_name=server_name)
+        )
 
     # ========================================================================
     # LIFESPAN
@@ -441,15 +525,18 @@ def create_app(config=None):
         token_refresher.start()
         logger.info("✓ Token refresher started")
 
-        # Start enabled STDIO servers
+        # Keep STDIO lazy by default; only explicitly prewarmed pools start here.
         try:
             servers = list_mcp_servers(config.auth.sqlite_path, enabled_only=True)
             for server in servers:
-                if (server.get("transport_type") or "http").lower() == "stdio" and server.get(
-                    "approval_state"
-                ) == "approved":
+                if (
+                    (server.get("transport_type") or "http").lower() == "stdio"
+                    and server.get("enabled", True)
+                    and server.get("approval_state") == "approved"
+                    and (server.get("prewarm") is True or int(server.get("min_workers") or 0) > 0)
+                ):
                     await process_manager.start_server(server["id"], server)
-            logger.info("✓ STDIO process manager initialized")
+            logger.info("✓ STDIO prewarm complete")
         except Exception as e:
             logger.warning(f"STDIO auto-start skipped: {e}")
 
@@ -498,10 +585,8 @@ def create_app(config=None):
         await health_checker.stop()
         logger.info("✓ Health checker stopped")
 
-        await mcp_proxy.close()
-        logger.info("✓ MCP proxy HTTP client closed")
-        await process_manager.stop_all()
-        logger.info("✓ STDIO process manager stopped")
+        await mcp_runtime.close()
+        logger.info("✓ MCP runtime stopped")
 
     # ========================================================================
     # CREATE STARLETTE APP
@@ -799,6 +884,8 @@ def create_app(config=None):
     # Store config on app.state for dependency injection
     app.state.config = config
     app.state.auth_db_path = config.auth.sqlite_path
+    app.state.mcp_runtime = mcp_runtime
+    app.state.mcp_proxy = mcp_proxy
 
     # Mount static files with cache headers
     static_dir = os.path.join(os.path.dirname(__file__), "static")

@@ -1,6 +1,7 @@
 """Tests for MCP server API payload normalization."""
 
 import json
+from types import SimpleNamespace
 
 import pytest
 from starlette.requests import Request
@@ -22,6 +23,22 @@ def _base_payload(command_args=None, **overrides):
     }
     payload.update(overrides)
     return payload
+
+
+def _request_with_runtime(method: str, path: str, path_params: dict, runtime):
+    async def _receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    scope = {
+        "type": "http",
+        "method": method,
+        "path": path,
+        "headers": [],
+        "query_string": b"",
+        "path_params": path_params,
+        "app": SimpleNamespace(state=SimpleNamespace(mcp_runtime=runtime)),
+    }
+    return Request(scope, _receive)
 
 
 def test_normalize_command_args_accepts_list_input():
@@ -183,18 +200,12 @@ async def test_api_test_mcp_server_blocks_unapproved(monkeypatch):
     class DummyConfig:
         auth = DummyAuth()
 
-    async def _receive():
-        return {"type": "http.request", "body": b"", "more_body": False}
-
-    scope = {
-        "type": "http",
-        "method": "POST",
-        "path": "/admin/api/mcp-servers/1/test",
-        "headers": [],
-        "query_string": b"",
-        "path_params": {"server_id": "1"},
-    }
-    request = Request(scope, _receive)
+    request = _request_with_runtime(
+        "POST",
+        "/admin/api/mcp-servers/1/test",
+        {"server_id": "1"},
+        runtime=SimpleNamespace(proxy=None, process_manager=None),
+    )
     monkeypatch.setattr(mcp_servers_api, "get_config", lambda _req: DummyConfig())
     monkeypatch.setattr(
         "authmcp_gateway.mcp.store.get_mcp_server",
@@ -205,6 +216,206 @@ async def test_api_test_mcp_server_blocks_unapproved(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_api_test_stdio_server_probes_and_replaces_stale_health(monkeypatch):
+    class DummyAuth:
+        sqlite_path = "/tmp/unused.db"
+
+    class DummyConfig:
+        auth = DummyAuth()
+
+    class FakeManager:
+        async def probe_tools(self, server_id, *, timeout):
+            assert (server_id, timeout) == (1, 60)
+            return 32
+
+    class FakeRuntime:
+        process_manager = FakeManager()
+
+        async def reconcile_server(self, server):
+            assert server["id"] == 1
+
+    request = _request_with_runtime(
+        "POST", "/admin/api/mcp-servers/1/test", {"server_id": "1"}, runtime=FakeRuntime()
+    )
+    updates = []
+    monkeypatch.setattr(mcp_servers_api, "get_config", lambda _req: DummyConfig())
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.store.get_mcp_server",
+        lambda _db, _sid: {
+            "id": 1,
+            "transport_type": "stdio",
+            "approval_state": "approved",
+            "enabled": True,
+            "timeout": 60,
+        },
+    )
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.store.update_server_health",
+        lambda *args, **kwargs: updates.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.store.mark_server_online_if_active", lambda *_args: True
+    )
+
+    response = await mcp_servers_api.api_test_mcp_server(request)
+
+    assert json.loads(response.body) == {"status": "online", "tools_count": 32, "error": None}
+    assert updates == []
+
+
+@pytest.mark.asyncio
+async def test_process_start_records_its_own_failure(monkeypatch):
+    class DummyAuth:
+        sqlite_path = "/tmp/unused.db"
+
+    class DummyConfig:
+        auth = DummyAuth()
+
+    class FakeManager:
+        def is_blocked(self, _server_id):
+            return False
+
+        async def start_server(self, _server_id, _server):
+            raise RuntimeError("backend startup failed")
+
+        def get_status(self, _server_id):
+            return "stopped"
+
+    request = _request_with_runtime(
+        "POST",
+        "/admin/api/mcp-servers/1/process/start",
+        {"server_id": "1", "action": "start"},
+        runtime=SimpleNamespace(proxy=None, process_manager=FakeManager()),
+    )
+    updates = []
+    monkeypatch.setattr(mcp_servers_api, "get_config", lambda _req: DummyConfig())
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.store.get_mcp_server",
+        lambda _db, _sid: {
+            "id": 1,
+            "transport_type": "stdio",
+            "approval_state": "approved",
+            "enabled": True,
+        },
+    )
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.store.update_server_health",
+        lambda *args, **kwargs: updates.append((args, kwargs)),
+    )
+
+    response = await mcp_servers_api.api_mcp_server_process_action(request)
+
+    assert response.status_code == 502
+    assert json.loads(response.body)["error"] == "backend startup failed"
+    assert updates == [(("/tmp/unused.db", 1), {"status": "error", "error": "backend startup failed"})]
+
+
+@pytest.mark.asyncio
+async def test_process_start_probes_and_records_current_health(monkeypatch):
+    class DummyAuth:
+        sqlite_path = "/tmp/unused.db"
+
+    class DummyConfig:
+        auth = DummyAuth()
+
+    class FakeManager:
+        def is_blocked(self, _server_id):
+            return False
+
+        async def start_server(self, _server_id, _server):
+            return None
+
+        async def probe_tools(self, server_id, *, timeout):
+            assert (server_id, timeout) == (1, 60)
+            return 32
+
+        def get_status(self, _server_id):
+            return "running"
+
+    request = _request_with_runtime(
+        "POST",
+        "/admin/api/mcp-servers/1/process/start",
+        {"server_id": "1", "action": "start"},
+        runtime=SimpleNamespace(proxy=None, process_manager=FakeManager()),
+    )
+    server = {
+        "id": 1,
+        "transport_type": "stdio",
+        "approval_state": "approved",
+        "enabled": True,
+        "timeout": 60,
+    }
+    updates = []
+    monkeypatch.setattr(mcp_servers_api, "get_config", lambda _req: DummyConfig())
+    monkeypatch.setattr("authmcp_gateway.mcp.store.get_mcp_server", lambda _db, _sid: server)
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.store.update_server_health",
+        lambda *args, **kwargs: updates.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.store.mark_server_online_if_active", lambda *_args: True
+    )
+
+    response = await mcp_servers_api.api_mcp_server_process_action(request)
+
+    assert response.status_code == 200
+    assert json.loads(response.body)["status"] == "running"
+    assert updates == []
+
+
+@pytest.mark.asyncio
+async def test_process_start_marks_disabled_server_offline(monkeypatch):
+    class DummyAuth:
+        sqlite_path = "/tmp/unused.db"
+
+    class DummyConfig:
+        auth = DummyAuth()
+
+    class FakeManager:
+        def is_blocked(self, _server_id):
+            return False
+
+        async def start_server(self, _server_id, _server):
+            return None
+
+        async def probe_tools(self, _server_id, *, timeout):
+            assert timeout == 60
+            return 32
+
+        def get_status(self, _server_id):
+            return "stopped"
+
+    request = _request_with_runtime(
+        "POST",
+        "/admin/api/mcp-servers/1/process/start",
+        {"server_id": "1", "action": "start"},
+        runtime=SimpleNamespace(proxy=None, process_manager=FakeManager()),
+    )
+    server = {
+        "id": 1,
+        "transport_type": "stdio",
+        "approval_state": "approved",
+        "enabled": True,
+        "timeout": 60,
+    }
+    updates = []
+    monkeypatch.setattr(mcp_servers_api, "get_config", lambda _req: DummyConfig())
+    monkeypatch.setattr("authmcp_gateway.mcp.store.get_mcp_server", lambda _db, _sid: server)
+    monkeypatch.setattr("authmcp_gateway.mcp.store.mark_server_online_if_active", lambda *_args: False)
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.store.update_server_health",
+        lambda *args, **kwargs: updates.append((args, kwargs)),
+    )
+
+    response = await mcp_servers_api.api_mcp_server_process_action(request)
+
+    assert response.status_code == 409
+    assert updates == [
+        (("/tmp/unused.db", 1), {"status": "offline", "error": "Server is no longer active"})
+    ]
+
+
+@pytest.mark.asyncio
 async def test_tools_api_returns_metadata_payload(monkeypatch):
     class DummyAuth:
         sqlite_path = "/tmp/unused.db"
@@ -212,18 +423,19 @@ async def test_tools_api_returns_metadata_payload(monkeypatch):
     class DummyConfig:
         auth = DummyAuth()
 
-    async def _receive():
-        return {"type": "http.request", "body": b"", "more_body": False}
+    class FakeRuntime:
+        def __init__(self):
+            self.proxy = self
 
-    scope = {
-        "type": "http",
-        "method": "GET",
-        "path": "/admin/api/mcp-servers/2/tools",
-        "headers": [],
-        "query_string": b"",
-        "path_params": {"server_id": "2"},
-    }
-    request = Request(scope, _receive)
+        async def _fetch_tools_from_server(self, _server):
+            return [{"name": "native", "description": "n", "inputSchema": {"type": "object"}}]
+
+    request = _request_with_runtime(
+        "GET",
+        "/admin/api/mcp-servers/2/tools",
+        {"server_id": "2"},
+        runtime=FakeRuntime(),
+    )
     monkeypatch.setattr(mcp_servers_api, "get_config", lambda _req: DummyConfig())
     monkeypatch.setattr(
         "authmcp_gateway.mcp.store.get_mcp_server",
@@ -242,14 +454,10 @@ async def test_tools_api_returns_metadata_payload(monkeypatch):
         ],
     )
 
-    class FakeProxy:
-        def __init__(self, *_args, **_kwargs):
-            pass
-
-        async def _fetch_tools_from_server(self, _server):
-            return [{"name": "native", "description": "n", "inputSchema": {"type": "object"}}]
-
-    monkeypatch.setattr("authmcp_gateway.mcp.proxy.McpProxy", FakeProxy)
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.proxy.McpProxy",
+        lambda *_args, **_kwargs: pytest.fail("McpProxy should not be constructed"),
+    )
     response = await mcp_servers_api.api_get_mcp_server_tools(request)
     assert response.status_code == 200
     payload = json.loads(response.body.decode("utf-8"))
@@ -265,18 +473,16 @@ async def test_api_list_mcp_servers_includes_virtual_tools_count(monkeypatch):
     class DummyConfig:
         auth = DummyAuth()
 
-    async def _receive():
-        return {"type": "http.request", "body": b"", "more_body": False}
+    class FakeProcessManager:
+        def get_status(self, server_id):
+            return "running" if server_id == 1 else "stopped"
 
-    scope = {
-        "type": "http",
-        "method": "GET",
-        "path": "/admin/api/mcp-servers",
-        "headers": [],
-        "query_string": b"",
-        "path_params": {},
-    }
-    request = Request(scope, _receive)
+    request = _request_with_runtime(
+        "GET",
+        "/admin/api/mcp-servers",
+        {},
+        runtime=SimpleNamespace(process_manager=FakeProcessManager(), proxy=None),
+    )
     monkeypatch.setattr(mcp_servers_api, "get_config", lambda _req: DummyConfig())
     monkeypatch.setattr(
         "authmcp_gateway.mcp.store.list_mcp_servers",

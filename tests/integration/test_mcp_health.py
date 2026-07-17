@@ -150,8 +150,10 @@ async def test_check_all_servers_returns_empty_list_when_none(mcp_db):
 @pytest.mark.asyncio
 async def test_check_all_servers_filters_baseexception_results(mcp_db, monkeypatch):
     """If one per-server check raises, other results still come through."""
-    store.create_mcp_server(mcp_db, "ok", "https://ok.example.com/mcp")
-    store.create_mcp_server(mcp_db, "broken", "https://broken.example.com/mcp")
+    ok_id = store.create_mcp_server(mcp_db, "ok", "https://ok.example.com/mcp")
+    broken_id = store.create_mcp_server(mcp_db, "broken", "https://broken.example.com/mcp")
+    assert store.update_server_approval(mcp_db, ok_id, "approved", actor="test")
+    assert store.update_server_approval(mcp_db, broken_id, "approved", actor="test")
 
     checker = health_mod.HealthChecker(mcp_db)
 
@@ -185,6 +187,7 @@ async def test_check_all_servers_filters_baseexception_results(mcp_db, monkeypat
 @pytest.mark.asyncio
 async def test_check_server_online_updates_db_and_returns_tools_count(mcp_db, monkeypatch):
     sid = store.create_mcp_server(mcp_db, "good", "https://good.example.com/mcp")
+    assert store.update_server_approval(mcp_db, sid, "approved", actor="test")
 
     def handler(_request):
         return _tools_list_response(tools=[{"name": "search"}, {"name": "read"}, {"name": "write"}])
@@ -208,6 +211,7 @@ async def test_check_server_online_updates_db_and_returns_tools_count(mcp_db, mo
 @pytest.mark.asyncio
 async def test_check_server_http_500_returns_error_status(mcp_db, monkeypatch):
     sid = store.create_mcp_server(mcp_db, "bad", "https://bad.example.com/mcp")
+    assert store.update_server_approval(mcp_db, sid, "approved", actor="test")
 
     def handler(_request):
         return httpx.Response(500, text="internal server error")
@@ -226,6 +230,7 @@ async def test_check_server_http_500_returns_error_status(mcp_db, monkeypatch):
 @pytest.mark.asyncio
 async def test_check_server_timeout_returns_offline(mcp_db, monkeypatch):
     sid = store.create_mcp_server(mcp_db, "slow", "https://slow.example.com/mcp")
+    assert store.update_server_approval(mcp_db, sid, "approved", actor="test")
 
     def handler(_request):
         raise httpx.TimeoutException("read timeout")
@@ -244,6 +249,7 @@ async def test_check_server_unexpected_error_falls_through_to_error_branch(mcp_d
     """RuntimeError from the JSON parse path lands in the
     PROXY_DISCOVERY_DB_ERRORS catch and surfaces as `status=error`."""
     sid = store.create_mcp_server(mcp_db, "weird", "https://weird.example.com/mcp")
+    assert store.update_server_approval(mcp_db, sid, "approved", actor="test")
 
     def handler(_request):
         # Returns 200 but with a body parse_sse_response can't make sense of —
@@ -268,6 +274,7 @@ async def test_check_server_401_with_refresh_hash_attempts_token_refresh(mcp_db,
         auth_type="bearer",
         auth_token="old-token",
     )
+    assert store.update_server_approval(mcp_db, sid, "approved", actor="test")
     # Mark server as having a refresh capability.
     store.update_mcp_server(
         mcp_db, sid, refresh_token_hash="sha-fake", refresh_token_encrypted=None
@@ -308,6 +315,7 @@ async def test_check_server_400_no_session_initializes_then_retries(mcp_db, monk
     `initialize`, store the returned `mcp-session-id`, then retry tools/list.
     """
     sid = store.create_mcp_server(mcp_db, "stateful", "https://state.example.com/mcp")
+    assert store.update_server_approval(mcp_db, sid, "approved", actor="test")
 
     state = {"call": 0}
 

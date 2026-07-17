@@ -17,18 +17,22 @@ class PipeTransport(McpTransport):
     On Windows, falls back to opening ``\\\\.\\pipe\\name`` as a stream path.
     """
 
+    # Keep a finite reader limit so large MCP responses do not trip asyncio's
+    # default 32 MB line cap on named-pipe / socket transports.
+    STREAM_READER_LIMIT = 32 * 1024 * 1024
+
     def __init__(self, pipe_path: str):
         self.pipe_path = pipe_path
 
     async def send_request(self, payload: Dict[str, Any], timeout: float) -> Dict[str, Any]:
         if os.name == "nt":
             reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(self.pipe_path),
+                asyncio.open_connection(self.pipe_path, limit=self.STREAM_READER_LIMIT),
                 timeout=timeout,
             )
         else:
             reader, writer = await asyncio.wait_for(
-                asyncio.open_unix_connection(self.pipe_path),
+                asyncio.open_unix_connection(self.pipe_path, limit=self.STREAM_READER_LIMIT),
                 timeout=timeout,
             )
 

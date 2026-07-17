@@ -276,6 +276,12 @@ def test_start_server_background_mode_relaunches_and_returns(tmp_path, monkeypat
                 "background": args.background,
                 "tray_available": tray_available,
             }
+        )
+        or cli.BackgroundServer(
+            pid=4321,
+            log_file=tmp_path / "gateway-console.log",
+            log_offset=0,
+            mode="log file",
         ),
     )
     monkeypatch.setattr(
@@ -339,7 +345,8 @@ def test_background_mode_starts_new_session_on_non_windows(tmp_path, monkeypatch
 
     assert cli._should_start_new_session(args, tray_available=True) is True
     assert (
-        cli._should_start_new_session(_start_args(tmp_path, no_tray=True), tray_available=False) is True
+        cli._should_start_new_session(_start_args(tmp_path, no_tray=True), tray_available=False)
+        is True
     )
 
 

@@ -383,7 +383,13 @@ def _get_background_executable() -> str:
 
 def _build_background_start_command(args) -> list[str]:
     """Build the child process command for detached startup."""
-    command = [_get_background_executable(), "-m", "authmcp_gateway.cli", "start", "--background-child"]
+    command = [
+        _get_background_executable(),
+        "-m",
+        "authmcp_gateway.cli",
+        "start",
+        "--background-child",
+    ]
 
     if args.host is not None:
         command.extend(["--host", args.host])

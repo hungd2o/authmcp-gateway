@@ -525,7 +525,6 @@ def create_app(config=None):
         token_refresher.start()
         logger.info("✓ Token refresher started")
 
-        # Keep STDIO lazy by default; only explicitly prewarmed pools start here.
         try:
             servers = list_mcp_servers(config.auth.sqlite_path, enabled_only=True)
             for server in servers:
@@ -533,7 +532,6 @@ def create_app(config=None):
                     (server.get("transport_type") or "http").lower() == "stdio"
                     and server.get("enabled", True)
                     and server.get("approval_state") == "approved"
-                    and (server.get("prewarm") is True or int(server.get("min_workers") or 0) > 0)
                 ):
                     await process_manager.start_server(server["id"], server)
             logger.info("✓ STDIO prewarm complete")

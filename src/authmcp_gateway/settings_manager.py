@@ -99,6 +99,17 @@ class SettingsManager:
                 "health_check_timeout": 10,
                 "health_check_interval": 60,
             },
+            "mcp_worker": {
+                "min_workers": 1,
+                "max_workers": 3,
+                "max_queue": 8,
+                "acquire_timeout": 5.0,
+                "request_timeout": 30.0,
+                "startup_timeout": 10.0,
+                "shutdown_timeout": 5.0,
+                "idle_timeout": 60.0,
+                "health_queue": 1,
+            },
         }
 
     def get(self, *keys: str, default: Any = None) -> Any:

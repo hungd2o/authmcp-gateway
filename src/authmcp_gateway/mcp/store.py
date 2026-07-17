@@ -111,6 +111,8 @@ def init_mcp_database(db_path: str) -> None:
                 expose_port INTEGER,
                 working_dir TEXT,
                 env_vars TEXT,
+                min_workers INTEGER DEFAULT NULL,
+                max_workers INTEGER DEFAULT NULL,
                 approval_state TEXT DEFAULT 'pending',
                 risk_level TEXT DEFAULT 'low',
                 config_fingerprint TEXT,
@@ -218,6 +220,8 @@ def init_mcp_database(db_path: str) -> None:
             ("expose_port", "INTEGER"),
             ("working_dir", "TEXT"),
             ("env_vars", "TEXT"),
+            ("min_workers", "INTEGER DEFAULT NULL"),
+            ("max_workers", "INTEGER DEFAULT NULL"),
             ("approval_state", "TEXT DEFAULT 'pending'"),
             ("risk_level", "TEXT DEFAULT 'low'"),
             ("config_fingerprint", "TEXT"),
@@ -320,6 +324,8 @@ def create_mcp_server(
     expose_port: Optional[int] = None,
     working_dir: Optional[str] = None,
     env_vars: Optional[Dict[str, str]] = None,
+    min_workers: Optional[int] = None,
+    max_workers: Optional[int] = None,
 ) -> int:
     """Create a new MCP server entry.
 
@@ -375,9 +381,10 @@ def create_mcp_server(
                 name, description, url, tool_prefix, enabled,
                 auth_type, auth_token, routing_strategy, timeout, updated_at,
                 transport_type, command, command_args, pipe_path, expose_port, working_dir, env_vars,
+                min_workers, max_workers,
                 approval_state, risk_level, config_fingerprint, allowlist_policy, approval_metadata, blocked_reason
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 name,
@@ -397,6 +404,8 @@ def create_mcp_server(
                 expose_port,
                 working_dir,
                 json.dumps(env_vars or {}),
+                min_workers,
+                max_workers,
                 approval_state,
                 risk_level,
                 config_fingerprint,
@@ -554,6 +563,8 @@ def update_mcp_server(db_path: str, server_id: int, **fields) -> bool:
         "expose_port",
         "working_dir",
         "env_vars",
+        "min_workers",
+        "max_workers",
         "approval_state",
         "risk_level",
         "config_fingerprint",
@@ -595,10 +606,11 @@ def update_mcp_server(db_path: str, server_id: int, **fields) -> bool:
         new_fingerprint = build_server_fingerprint(merged)
         fields["config_fingerprint"] = new_fingerprint
         fields["risk_level"] = default_risk_level(normalized_transport)
-
         current_fingerprint = current.get("config_fingerprint")
         current_state = (current.get("approval_state") or APPROVAL_PENDING).lower()
-        if current_state == APPROVAL_APPROVED and current_fingerprint != new_fingerprint:
+        fingerprint_changed = current_fingerprint != new_fingerprint
+        
+        if current_state == APPROVAL_APPROVED and fingerprint_changed:
             fields["approval_state"] = APPROVAL_PENDING
             fields["blocked_reason"] = "Configuration changed and requires whitelist re-approval"
 

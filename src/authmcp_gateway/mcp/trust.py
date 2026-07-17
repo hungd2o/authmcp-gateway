@@ -43,6 +43,8 @@ def build_server_fingerprint(server: Dict[str, Any]) -> str:
         payload["command_args"] = list(server.get("command_args") or [])
         payload["working_dir"] = server.get("working_dir") or ""
         payload["env_vars"] = dict(server.get("env_vars") or {})
+        payload["min_workers"] = server.get("min_workers")
+        payload["max_workers"] = server.get("max_workers")
     elif transport == "pipe":
         payload["pipe_path"] = server.get("pipe_path") or ""
     else:

@@ -40,6 +40,16 @@ class PoolConfig:
     health_queue: int = 1
 
 
+def _settings_default(section: str, key: str, fallback: Any) -> Any:
+    """Read dynamic defaults from settings manager when available."""
+    try:
+        from authmcp_gateway.settings_manager import get_settings_manager
+
+        return get_settings_manager().get(section, key, default=fallback)
+    except Exception:
+        return fallback
+
+
 def _integer(value: Any, name: str, default: int, low: int, high: int) -> int:
     result = default if value is None else int(value)
     if not low <= result <= high:
@@ -55,17 +65,55 @@ def _timeout(value: Any, name: str, default: float) -> float:
 
 
 def pool_config_from_server(server: Mapping[str, Any]) -> PoolConfig:
-    max_workers = _integer(server.get("max_workers"), "max_workers", 1, 1, 32)
+    max_workers_default = int(_settings_default("mcp_worker", "max_workers", 3))
+    max_workers = _integer(server.get("max_workers"), "max_workers", max_workers_default, 1, 32)
+    min_workers_default = int(_settings_default("mcp_worker", "min_workers", 1))
+    min_workers_default = max(0, min(min_workers_default, max_workers))
+
     return PoolConfig(
-        min_workers=_integer(server.get("min_workers"), "min_workers", 0, 0, max_workers),
+        min_workers=_integer(
+            server.get("min_workers"), "min_workers", min_workers_default, 0, max_workers
+        ),
         max_workers=max_workers,
-        max_queue=_integer(server.get("max_queue"), "max_queue", 8, 0, 1024),
-        acquire_timeout=_timeout(server.get("acquire_timeout"), "acquire_timeout", 5),
-        request_timeout=_timeout(server.get("request_timeout"), "request_timeout", 30),
-        startup_timeout=_timeout(server.get("startup_timeout"), "startup_timeout", 10),
-        shutdown_timeout=_timeout(server.get("shutdown_timeout"), "shutdown_timeout", 5),
-        idle_timeout=_timeout(server.get("idle_timeout"), "idle_timeout", 60),
-        health_queue=_integer(server.get("health_queue"), "health_queue", 1, 0, 32),
+        max_queue=_integer(
+            server.get("max_queue"),
+            "max_queue",
+            int(_settings_default("mcp_worker", "max_queue", 8)),
+            0,
+            1024,
+        ),
+        acquire_timeout=_timeout(
+            server.get("acquire_timeout"),
+            "acquire_timeout",
+            float(_settings_default("mcp_worker", "acquire_timeout", 5.0)),
+        ),
+        request_timeout=_timeout(
+            server.get("request_timeout"),
+            "request_timeout",
+            float(_settings_default("mcp_worker", "request_timeout", 30.0)),
+        ),
+        startup_timeout=_timeout(
+            server.get("startup_timeout"),
+            "startup_timeout",
+            float(_settings_default("mcp_worker", "startup_timeout", 10.0)),
+        ),
+        shutdown_timeout=_timeout(
+            server.get("shutdown_timeout"),
+            "shutdown_timeout",
+            float(_settings_default("mcp_worker", "shutdown_timeout", 5.0)),
+        ),
+        idle_timeout=_timeout(
+            server.get("idle_timeout"),
+            "idle_timeout",
+            float(_settings_default("mcp_worker", "idle_timeout", 60.0)),
+        ),
+        health_queue=_integer(
+            server.get("health_queue"),
+            "health_queue",
+            int(_settings_default("mcp_worker", "health_queue", 1)),
+            0,
+            32,
+        ),
     )
 
 

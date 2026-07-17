@@ -156,6 +156,57 @@ async def api_save_settings(request: Request) -> JSONResponse:
         except (ValueError, TypeError):
             errors.append("mcp_activity_window_seconds must be an integer")
 
+    timeouts = body.get("timeouts") or {}
+    for key, low, high in (
+        ("proxy_timeout", 1, 600),
+        ("health_check_timeout", 1, 300),
+        ("health_check_interval", 5, 3600),
+    ):
+        if key in timeouts:
+            try:
+                val = int(timeouts[key])
+                if val < low or val > high:
+                    errors.append(f"{key} must be between {low} and {high}")
+            except (ValueError, TypeError):
+                errors.append(f"{key} must be an integer")
+
+    worker = body.get("mcp_worker") or {}
+    for key, low, high in (
+        ("min_workers", 0, 32),
+        ("max_workers", 1, 32),
+        ("max_queue", 0, 1024),
+        ("health_queue", 0, 32),
+    ):
+        if key in worker:
+            try:
+                val = int(worker[key])
+                if val < low or val > high:
+                    errors.append(f"{key} must be between {low} and {high}")
+            except (ValueError, TypeError):
+                errors.append(f"{key} must be an integer")
+
+    for key in (
+        "acquire_timeout",
+        "request_timeout",
+        "startup_timeout",
+        "shutdown_timeout",
+        "idle_timeout",
+    ):
+        if key in worker:
+            try:
+                val = float(worker[key])
+                if val <= 0 or val > 3600:
+                    errors.append(f"{key} must be between 0 and 3600 seconds")
+            except (ValueError, TypeError):
+                errors.append(f"{key} must be a number")
+
+    if "min_workers" in worker and "max_workers" in worker:
+        try:
+            if int(worker["min_workers"]) > int(worker["max_workers"]):
+                errors.append("min_workers must be less than or equal to max_workers")
+        except (ValueError, TypeError):
+            pass
+
     if errors:
         return JSONResponse(
             status_code=400,
@@ -215,6 +266,16 @@ async def api_save_settings(request: Request) -> JSONResponse:
             _config.rate_limit.register_limit = int(rl["register_limit"])
         if "register_window" in rl:
             _config.rate_limit.register_window = int(rl["register_window"])
+
+        ui_s = body.get("ui") or {}
+        timeouts_s = body.get("timeouts") or {}
+        worker_s = body.get("mcp_worker") or {}
+
+        if ui_s or timeouts_s or worker_s:
+            logger.info(
+                "Additional dynamic settings saved (ui/timeouts/mcp_worker); "
+                "new defaults apply to future runtime operations"
+            )
 
         logger.info("Dynamic settings applied from admin panel")
     except Exception as e:

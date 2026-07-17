@@ -346,6 +346,26 @@ def _normalize_transport_payload(data: dict) -> dict:
         except (TypeError, ValueError):
             data["expose_port"] = None
 
+    if "min_workers" in data:
+        try:
+            data["min_workers"] = (
+                int(data["min_workers"]) if data["min_workers"] not in {None, ""} else None
+            )
+        except (TypeError, ValueError):
+            raise ValueError("min_workers must be an integer")
+
+    if "max_workers" in data:
+        try:
+            data["max_workers"] = (
+                int(data["max_workers"]) if data["max_workers"] not in {None, ""} else None
+            )
+        except (TypeError, ValueError):
+            raise ValueError("max_workers must be an integer")
+
+    if data.get("min_workers") is not None and data.get("max_workers") is not None:
+        if int(data["min_workers"]) > int(data["max_workers"]):
+            raise ValueError("min_workers cannot be greater than max_workers")
+
     if transport_type == "http" and not data.get("url"):
         raise ValueError("url is required for http transport")
     if transport_type == "stdio" and not data.get("command"):
@@ -578,6 +598,8 @@ async def api_create_mcp_server(request: Request) -> JSONResponse:
         expose_port=data.get("expose_port"),
         working_dir=data.get("working_dir"),
         env_vars=data.get("env_vars"),
+        min_workers=data.get("min_workers"),
+        max_workers=data.get("max_workers"),
     )
 
     server = get_mcp_server(_config.auth.sqlite_path, server_id)

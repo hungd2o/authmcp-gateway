@@ -315,23 +315,9 @@ def test_build_background_start_command_preserves_cli_flags(tmp_path):
     ]
 
 
-def test_background_log_file_path_requires_enabled_flag_and_path(monkeypatch):
-    """Background log file is disabled unless both env flag and path are set."""
-    monkeypatch.delenv("AUTHMCP_BACKGROUND_LOG_FILE_ENABLED", raising=False)
-    monkeypatch.delenv("AUTHMCP_BACKGROUND_LOG_FILE", raising=False)
-    assert cli._background_log_file_path() is None
-
-    monkeypatch.setenv("AUTHMCP_BACKGROUND_LOG_FILE_ENABLED", "true")
-    assert cli._background_log_file_path() is None
-
-
-def test_background_log_file_path_returns_resolved_path(monkeypatch, tmp_path):
-    """Background log file path resolves when explicitly enabled and configured."""
-    log_path = tmp_path / "gateway.log"
-    monkeypatch.setenv("AUTHMCP_BACKGROUND_LOG_FILE_ENABLED", "1")
-    monkeypatch.setenv("AUTHMCP_BACKGROUND_LOG_FILE", str(log_path))
-
-    assert cli._background_log_file_path() == log_path.resolve()
+def test_background_log_file_path_returns_default_resolved_path():
+    """Background log file always resolves to the default gateway console log."""
+    assert cli._background_log_file_path() == Path("data/logs/gateway-console.log").resolve()
 
 
 def test_background_mode_starts_new_session_on_non_windows(monkeypatch):

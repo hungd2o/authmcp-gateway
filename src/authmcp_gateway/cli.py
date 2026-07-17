@@ -8,8 +8,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-BACKGROUND_LOG_FILE_PATH = Path("data/logs/gateway-console.log")
-
 
 def main():
     """Main CLI entry point."""
@@ -239,7 +237,10 @@ def _supports_interactive_start_prompt() -> bool:
 
 def _prompt_start_mode(args) -> str:
     """Prompt the user to keep logs attached or continue in the background."""
-    background_label = "send to background (system tray + log file)"
+    if _background_log_file_path() is not None:
+        background_label = "send to background (system tray + configured log file)"
+    else:
+        background_label = "send to background (system tray, no terminal logs)"
 
     prompt = (
         "\nChoose how to continue:\n"
@@ -304,7 +305,12 @@ def _launch_background_server(args, server_url: str) -> None:
         f"  URL: {server_url}\n"
         "  Mode: system tray\n"
         f"  PID: {process.pid}\n"
-        f"  Log file: {log_file}\n"
+        + (
+            f"  Log file: {log_file}\n"
+            if log_file is not None
+            else "  Log file: disabled (set MCP_LOG_FILE_ENABLED=true and "
+            "MCP_LOG_FILE=<path> to enable)\n"
+        )
     )
 
 
@@ -352,9 +358,23 @@ def _build_background_start_command(args) -> list[str]:
     return command
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    """Return a boolean parsed from environment variables."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _background_log_file_path() -> Path | None:
-    """Return the background log file path."""
-    return BACKGROUND_LOG_FILE_PATH.resolve()
+    """Return configured background log file path when explicitly enabled."""
+    if not _env_bool("MCP_LOG_FILE_ENABLED", False):
+        return None
+
+    configured_path = os.getenv("MCP_LOG_FILE", "").strip()
+    if not configured_path:
+        return None
+    return Path(configured_path).expanduser().resolve()
 
 
 def _should_start_new_session() -> bool:

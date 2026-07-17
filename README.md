@@ -158,7 +158,7 @@ authmcp-gateway version                  # Show version
 authmcp-gateway --help                   # Show all options
 ```
 
-When you run `authmcp-gateway start` from an interactive terminal, the CLI lets you choose between keeping logs attached in the current terminal (stdio) or sending the gateway to the background. The tray is always enabled. Background output is written to `data/logs/gateway-console.log`.
+When you run `authmcp-gateway start` from an interactive terminal, the CLI lets you choose between keeping logs attached in the current terminal (stdio) or sending the gateway to the background. The tray is always enabled. Background log file output is disabled by default and is only enabled when both `MCP_LOG_FILE_ENABLED=true` and `MCP_LOG_FILE` are set.
 
 ### Option 2: Docker Compose
 

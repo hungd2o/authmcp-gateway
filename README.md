@@ -146,11 +146,13 @@ authmcp-gateway start
 
 **Available Commands:**
 ```bash
-authmcp-gateway start                    # Start server (default: 0.0.0.0:8000)
+authmcp-gateway start                    # Start in background, return the terminal (default)
 authmcp-gateway start --port 9000        # Start on custom port
 authmcp-gateway start --host 127.0.0.1   # Bind to localhost only
 authmcp-gateway start --env-file custom.env  # Use custom config file
-authmcp-gateway start --background       # Start in background and return the terminal
+authmcp-gateway start --foreground       # Run attached to this terminal and stream logs
+authmcp-gateway stop                     # Stop the background gateway
+authmcp-gateway status                   # Show whether the gateway is running
 
 authmcp-gateway init-db                  # Initialize database
 authmcp-gateway create-admin             # Create admin user via CLI
@@ -158,7 +160,7 @@ authmcp-gateway version                  # Show version
 authmcp-gateway --help                   # Show all options
 ```
 
-When you run `authmcp-gateway start` from an interactive terminal, the CLI now lets you choose between keeping logs attached in the current terminal or sending the gateway to the background and writing console output to `data/logs/gateway-console.log`.
+By default `authmcp-gateway start` launches the server + system tray in a detached background process and immediately returns your terminal, so you can close it while the gateway keeps running. If a gateway is already running it detects the existing instance instead of starting a second one. Control it from the tray icon (open the dashboard, or Exit to stop) or with `authmcp-gateway stop`. Pass `--foreground` to keep logs streaming in the current terminal instead (use the tray Exit item to stop it). Background log file output is disabled by default and is only enabled when both `MCP_LOG_FILE_ENABLED=true` and `MCP_LOG_FILE` are set.
 
 ### Option 2: Docker Compose
 

@@ -15,6 +15,15 @@ import pytest
 
 from authmcp_gateway import cli
 
+
+@pytest.fixture(autouse=True)
+def _isolate_pid_file(tmp_path, monkeypatch):
+    """Redirect the runtime PID file to a temp path so tests never touch data/."""
+    monkeypatch.setattr(
+        cli.runtime_state, "_PID_FILE", tmp_path / "authmcp-gateway.pid", raising=False
+    )
+
+
 # ---------------------------------------------------------------------------
 # main() — argparse + dispatch
 # ---------------------------------------------------------------------------
@@ -79,6 +88,100 @@ def test_main_dispatches_to_version(monkeypatch):
     assert called["hit"]
 
 
+def test_main_dispatches_to_stop(monkeypatch):
+    called = {"hit": False}
+    monkeypatch.setattr(cli, "stop_gateway", lambda args: called.update({"hit": True}))
+    monkeypatch.setattr(sys, "argv", ["authmcp-gateway", "stop"])
+    cli.main()
+    assert called["hit"]
+
+
+def test_main_dispatches_to_status(monkeypatch):
+    called = {"hit": False}
+    monkeypatch.setattr(cli, "gateway_status", lambda args: called.update({"hit": True}))
+    monkeypatch.setattr(sys, "argv", ["authmcp-gateway", "status"])
+    cli.main()
+    assert called["hit"]
+
+
+# ---------------------------------------------------------------------------
+# stop / status
+# ---------------------------------------------------------------------------
+
+
+def test_stop_gateway_when_not_running(monkeypatch, capsys):
+    """stop reports gracefully when no gateway is running."""
+    monkeypatch.setattr(cli.runtime_state, "get_running_pid", lambda: None)
+    cli.stop_gateway(argparse.Namespace())
+    assert "not running" in capsys.readouterr().out
+
+
+def test_stop_gateway_signals_and_clears(monkeypatch, capsys):
+    """stop signals the running process and clears the PID file."""
+    monkeypatch.setattr(cli.runtime_state, "get_running_pid", lambda: 777)
+    stopped = {}
+    monkeypatch.setattr(cli.runtime_state, "stop_process", lambda pid: stopped.setdefault("pid", pid) or True)
+    cleared = {"value": False}
+    monkeypatch.setattr(cli.runtime_state, "clear_pid", lambda: cleared.update({"value": True}))
+
+    cli.stop_gateway(argparse.Namespace())
+
+    assert stopped == {"pid": 777}
+    assert cleared == {"value": True}
+    assert "Stopped" in capsys.readouterr().out
+
+
+def test_stop_gateway_exits_on_failure(monkeypatch, capsys):
+    """stop exits non-zero when the signal cannot be delivered."""
+    monkeypatch.setattr(cli.runtime_state, "get_running_pid", lambda: 888)
+    monkeypatch.setattr(cli.runtime_state, "stop_process", lambda pid: False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.stop_gateway(argparse.Namespace())
+
+    assert exc_info.value.code == 1
+    assert "Failed to stop" in capsys.readouterr().out
+
+
+def test_gateway_status_running(monkeypatch, capsys):
+    monkeypatch.delenv("HOST", raising=False)
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.setattr(cli.runtime_state, "get_running_pid", lambda: 555)
+    monkeypatch.setattr(cli.runtime_state, "is_port_in_use", lambda *a, **k: True)
+    cli.gateway_status(argparse.Namespace())
+    out = capsys.readouterr().out
+    assert "running" in out
+    assert "555" in out
+    assert "listening" in out
+
+
+def test_gateway_status_running_but_not_responding(monkeypatch, capsys):
+    monkeypatch.delenv("HOST", raising=False)
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.setattr(cli.runtime_state, "get_running_pid", lambda: 555)
+    monkeypatch.setattr(cli.runtime_state, "is_port_in_use", lambda *a, **k: False)
+    cli.gateway_status(argparse.Namespace())
+    assert "NOT responding" in capsys.readouterr().out
+
+
+def test_gateway_status_not_running(monkeypatch, capsys):
+    monkeypatch.delenv("HOST", raising=False)
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.setattr(cli.runtime_state, "get_running_pid", lambda: None)
+    monkeypatch.setattr(cli.runtime_state, "is_port_in_use", lambda *a, **k: False)
+    cli.gateway_status(argparse.Namespace())
+    assert "not running" in capsys.readouterr().out
+
+
+def test_gateway_status_port_busy_unmanaged(monkeypatch, capsys):
+    monkeypatch.delenv("HOST", raising=False)
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.setattr(cli.runtime_state, "get_running_pid", lambda: None)
+    monkeypatch.setattr(cli.runtime_state, "is_port_in_use", lambda *a, **k: True)
+    cli.gateway_status(argparse.Namespace())
+    assert "no managed" in capsys.readouterr().out.lower()
+
+
 # ---------------------------------------------------------------------------
 # start_server
 # ---------------------------------------------------------------------------
@@ -92,8 +195,8 @@ def _start_args(tmp_path, **overrides):
         env_file=tmp_path / "missing.env",
         log_level=None,
         reload=False,
-        no_tray=True,
         tray_icon=None,
+        foreground=False,
         background=False,
         background_child=False,
     )
@@ -101,21 +204,42 @@ def _start_args(tmp_path, **overrides):
     return argparse.Namespace(**defaults)
 
 
-def test_start_server_passes_args_to_uvicorn(tmp_path, monkeypatch, capsys):
-    """uvicorn.run gets host/port/log_level/reload from args."""
-    fake_uvicorn = MagicMock()
-    monkeypatch.setitem(sys.modules, "uvicorn", fake_uvicorn)
-    # Don't actually load the real app — substitute a sentinel.
+def test_start_server_passes_args_to_tray_runner(tmp_path, monkeypatch, capsys):
+    """start_server passes normalized args into tray startup."""
     fake_app_module = MagicMock()
     fake_app_module.app = "FAKE_APP"
     monkeypatch.setitem(sys.modules, "authmcp_gateway.app", fake_app_module)
+    monkeypatch.delenv("HOST", raising=False)
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    monkeypatch.setattr("authmcp_gateway.tray.is_tray_available", lambda: True)
+    monkeypatch.setattr(cli.runtime_state, "write_pid", lambda _pid: None)
+    monkeypatch.setattr(cli.runtime_state, "clear_pid", lambda: None)
+    captured_call = {}
+    monkeypatch.setattr(
+        cli,
+        "_start_server_with_tray",
+        lambda app, args, whitelist_token=None: captured_call.update(
+            {
+                "app": app,
+                "host": args.host,
+                "port": args.port,
+                "log_level": args.log_level,
+                "reload": args.reload,
+            }
+        ),
+    )
 
-    args = _start_args(tmp_path, port=9090, log_level="DEBUG", reload=True)
+    args = _start_args(tmp_path, port=9090, log_level="DEBUG", reload=True, foreground=True)
     cli.start_server(args)
 
-    fake_uvicorn.run.assert_called_once_with(
-        "FAKE_APP", host="0.0.0.0", port=9090, log_level="debug", reload=True
-    )
+    assert captured_call == {
+        "app": "FAKE_APP",
+        "host": "0.0.0.0",
+        "port": 9090,
+        "log_level": "DEBUG",
+        "reload": True,
+    }
     captured = capsys.readouterr()
     assert "URL: http://localhost:9090" in captured.out  # 0.0.0.0 → localhost cosmetic
 
@@ -125,19 +249,25 @@ def test_start_server_uses_env_file_for_host_port_and_log_level(tmp_path, monkey
     env_file = tmp_path / "real.env"
     env_file.write_text("HOST=127.0.0.1\nPORT=9105\nLOG_LEVEL=ERROR\n", encoding="utf-8")
 
-    monkeypatch.setitem(sys.modules, "uvicorn", MagicMock())
     fake_app_module = MagicMock()
     fake_app_module.app = "APP"
     monkeypatch.setitem(sys.modules, "authmcp_gateway.app", fake_app_module)
+    monkeypatch.setattr("authmcp_gateway.tray.is_tray_available", lambda: True)
+    captured_call = {}
+    monkeypatch.setattr(
+        cli,
+        "_start_server_with_tray",
+        lambda app, args, whitelist_token=None: captured_call.update(
+            {"app": app, "host": args.host, "port": args.port, "log_level": args.log_level}
+        ),
+    )
     monkeypatch.delenv("HOST", raising=False)
     monkeypatch.delenv("PORT", raising=False)
     monkeypatch.delenv("LOG_LEVEL", raising=False)
 
-    cli.start_server(_start_args(tmp_path, env_file=env_file))
+    cli.start_server(_start_args(tmp_path, env_file=env_file, foreground=True))
 
-    sys.modules["uvicorn"].run.assert_called_once_with(
-        "APP", host="127.0.0.1", port=9105, log_level="error", reload=False
-    )
+    assert captured_call == {"app": "APP", "host": "127.0.0.1", "port": 9105, "log_level": "ERROR"}
     captured = capsys.readouterr()
     assert "URL: http://127.0.0.1:9105" in captured.out
     assert "Log Level: ERROR" in captured.out
@@ -148,14 +278,17 @@ def test_start_server_loads_existing_env_file(tmp_path, monkeypatch, capsys):
     env_file = tmp_path / "real.env"
     env_file.write_text("DUMMY=1\n", encoding="utf-8")
 
-    monkeypatch.setitem(sys.modules, "uvicorn", MagicMock())
     fake_app_module = MagicMock()
     fake_app_module.app = "APP"
     monkeypatch.setitem(sys.modules, "authmcp_gateway.app", fake_app_module)
+    monkeypatch.setattr("authmcp_gateway.tray.is_tray_available", lambda: True)
+    monkeypatch.setattr(
+        cli, "_start_server_with_tray", lambda _app, _args, whitelist_token=None: None
+    )
     fake_dotenv = MagicMock()
     monkeypatch.setitem(sys.modules, "dotenv", fake_dotenv)
 
-    args = _start_args(tmp_path, env_file=env_file)
+    args = _start_args(tmp_path, env_file=env_file, foreground=True)
     cli.start_server(args)
 
     fake_dotenv.load_dotenv.assert_called_once_with(env_file)
@@ -165,77 +298,187 @@ def test_start_server_loads_existing_env_file(tmp_path, monkeypatch, capsys):
 
 def test_start_server_sets_log_level_env(tmp_path, monkeypatch):
     """LOG_LEVEL gets set in the process env so subprocesses inherit it."""
-    monkeypatch.setitem(sys.modules, "uvicorn", MagicMock())
     fake_app_module = MagicMock()
     fake_app_module.app = "APP"
     monkeypatch.setitem(sys.modules, "authmcp_gateway.app", fake_app_module)
+    monkeypatch.setattr("authmcp_gateway.tray.is_tray_available", lambda: True)
+    monkeypatch.setattr(
+        cli, "_start_server_with_tray", lambda _app, _args, whitelist_token=None: None
+    )
     monkeypatch.delenv("LOG_LEVEL", raising=False)
 
-    cli.start_server(_start_args(tmp_path, log_level="WARNING"))
+    cli.start_server(_start_args(tmp_path, log_level="WARNING", foreground=True))
 
     import os
 
     assert os.environ["LOG_LEVEL"] == "WARNING"
 
 
-def test_start_server_interactive_foreground_disables_tray(tmp_path, monkeypatch):
-    """Choosing foreground keeps logs attached without disabling tray mode."""
-    monkeypatch.setitem(sys.modules, "uvicorn", MagicMock())
+def test_start_server_foreground_flag_uses_tray(tmp_path, monkeypatch):
+    """--foreground keeps logs attached and starts tray mode inline."""
     fake_app_module = MagicMock()
     fake_app_module.app = "APP"
     monkeypatch.setitem(sys.modules, "authmcp_gateway.app", fake_app_module)
     monkeypatch.delenv("HOST", raising=False)
     monkeypatch.delenv("PORT", raising=False)
     monkeypatch.delenv("LOG_LEVEL", raising=False)
-    monkeypatch.setattr(cli, "_supports_interactive_start_prompt", lambda: True)
-    monkeypatch.setattr(cli, "_prompt_start_mode", lambda _args, _tray_available: "foreground")
     monkeypatch.setattr("authmcp_gateway.tray.is_tray_available", lambda: True)
-    tray_started = {"value": False, "whitelist_token": None}
+    monkeypatch.setattr(cli.runtime_state, "write_pid", lambda _pid: None)
+    monkeypatch.setattr(cli.runtime_state, "clear_pid", lambda: None)
+    tray_started = {"value": False}
     monkeypatch.setattr(
         cli,
         "_start_server_with_tray",
-        lambda _app, _args, whitelist_token=None: tray_started.update(
-            {"value": True, "whitelist_token": whitelist_token}
-        ),
+        lambda _app, _args, whitelist_token=None: tray_started.update({"value": True}),
     )
 
-    cli.start_server(_start_args(tmp_path, no_tray=False))
+    cli.start_server(_start_args(tmp_path, foreground=True))
 
-    sys.modules["uvicorn"].run.assert_not_called()
-    assert tray_started == {"value": True, "whitelist_token": None}
+    assert tray_started == {"value": True}
 
 
-def test_start_server_background_mode_relaunches_and_returns(tmp_path, monkeypatch):
-    """--background relaunches a detached child instead of running uvicorn inline."""
-    monkeypatch.setitem(sys.modules, "uvicorn", MagicMock())
+def test_start_server_defaults_to_background(tmp_path, monkeypatch):
+    """Running start with no flags spawns a detached background instance."""
     fake_app_module = MagicMock()
     fake_app_module.app = "APP"
     monkeypatch.setitem(sys.modules, "authmcp_gateway.app", fake_app_module)
     monkeypatch.delenv("HOST", raising=False)
     monkeypatch.delenv("PORT", raising=False)
     monkeypatch.delenv("LOG_LEVEL", raising=False)
-    monkeypatch.setattr("authmcp_gateway.tray.is_tray_available", lambda: False)
+    monkeypatch.setattr("authmcp_gateway.tray.is_tray_available", lambda: True)
+    monkeypatch.setattr(cli.runtime_state, "get_running_pid", lambda: None)
+    monkeypatch.setattr(cli.runtime_state, "is_port_in_use", lambda *a, **k: False)
+    monkeypatch.setattr(cli.runtime_state, "clear_pid", lambda: None)
+    inline_started = {"value": False}
+    monkeypatch.setattr(
+        cli,
+        "_start_server_with_tray",
+        lambda _app, _args, whitelist_token=None: inline_started.update({"value": True}),
+    )
     launched = {}
     monkeypatch.setattr(
         cli,
         "_launch_background_server",
-        lambda args, tray_available, server_url: launched.update(
-            {
-                "background": args.background,
-                "tray_available": tray_available,
-                "server_url": server_url,
-            }
-        ),
+        lambda args, server_url: launched.update({"server_url": server_url}),
     )
 
-    cli.start_server(_start_args(tmp_path, no_tray=False, background=True))
+    cli.start_server(_start_args(tmp_path))
 
-    assert launched == {
-        "background": True,
-        "tray_available": False,
-        "server_url": "http://localhost:8000",
-    }
-    sys.modules["uvicorn"].run.assert_not_called()
+    assert launched == {"server_url": "http://localhost:8000"}
+    assert inline_started == {"value": False}
+
+
+def test_start_server_skips_launch_when_already_running(tmp_path, monkeypatch, capsys):
+    """A second launch detects the running instance and does not spawn again."""
+    fake_app_module = MagicMock()
+    fake_app_module.app = "APP"
+    monkeypatch.setitem(sys.modules, "authmcp_gateway.app", fake_app_module)
+    monkeypatch.delenv("HOST", raising=False)
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    monkeypatch.setattr(cli.runtime_state, "get_running_pid", lambda: 4321)
+    monkeypatch.setattr(cli.runtime_state, "is_port_in_use", lambda *a, **k: True)
+    launched = {"value": False}
+    monkeypatch.setattr(
+        cli,
+        "_launch_background_server",
+        lambda args, server_url: launched.update({"value": True}),
+    )
+
+    cli.start_server(_start_args(tmp_path))
+
+    assert launched == {"value": False}
+    out = capsys.readouterr().out
+    assert "already running" in out
+    assert "4321" in out
+
+
+def test_start_server_reports_dead_pid_health(tmp_path, monkeypatch, capsys):
+    """A recorded PID whose port is silent is reported as not responding."""
+    fake_app_module = MagicMock()
+    fake_app_module.app = "APP"
+    monkeypatch.setitem(sys.modules, "authmcp_gateway.app", fake_app_module)
+    monkeypatch.delenv("HOST", raising=False)
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    monkeypatch.setattr(cli.runtime_state, "get_running_pid", lambda: 4321)
+    monkeypatch.setattr(cli.runtime_state, "is_port_in_use", lambda *a, **k: False)
+    monkeypatch.setattr(
+        cli, "_launch_background_server", lambda args, server_url: pytest.fail("should not launch")
+    )
+
+    cli.start_server(_start_args(tmp_path))
+
+    out = capsys.readouterr().out
+    assert "NOT responding" in out
+
+
+def test_start_server_exits_when_port_busy_and_unmanaged(tmp_path, monkeypatch, capsys):
+    """Port taken by an unmanaged process aborts startup instead of spawning."""
+    fake_app_module = MagicMock()
+    fake_app_module.app = "APP"
+    monkeypatch.setitem(sys.modules, "authmcp_gateway.app", fake_app_module)
+    monkeypatch.delenv("HOST", raising=False)
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    monkeypatch.setattr(cli.runtime_state, "get_running_pid", lambda: None)
+    monkeypatch.setattr(cli.runtime_state, "is_port_in_use", lambda *a, **k: True)
+    monkeypatch.setattr(
+        cli, "_launch_background_server", lambda args, server_url: pytest.fail("should not launch")
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.start_server(_start_args(tmp_path))
+
+    assert exc_info.value.code == 1
+    err = capsys.readouterr().err
+    assert "already in use" in err
+
+
+def test_launch_background_server_reports_startup_failure(tmp_path, monkeypatch, capsys):
+    """When the port never opens, the launcher reports failure and exits 1."""
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda *a, **k: MagicMock(pid=9999))
+    monkeypatch.setattr(cli.runtime_state, "write_pid", lambda _pid: None)
+    monkeypatch.setattr(cli.runtime_state, "wait_for_port", lambda *a, **k: False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli._launch_background_server(_start_args(tmp_path, host="127.0.0.1", port=9105), "http://127.0.0.1:9105")
+
+    assert exc_info.value.code == 1
+    assert "not responding" in capsys.readouterr().err
+
+
+def test_launch_background_server_reports_real_worker_pid(tmp_path, monkeypatch, capsys):
+    """On success the launcher reports the worker's real PID, not the spawn handle."""
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda *a, **k: MagicMock(pid=1111))
+    monkeypatch.setattr(cli.runtime_state, "write_pid", lambda _pid: None)
+    monkeypatch.setattr(cli.runtime_state, "wait_for_port", lambda *a, **k: True)
+    monkeypatch.setattr(cli.runtime_state, "get_running_pid", lambda: 2222)
+
+    cli._launch_background_server(
+        _start_args(tmp_path, host="127.0.0.1", port=9105), "http://127.0.0.1:9105"
+    )
+
+    out = capsys.readouterr().out
+    assert "PID: 2222" in out
+    assert "1111" not in out
+
+
+def test_start_server_exits_when_tray_unavailable(tmp_path, monkeypatch, capsys):
+    """System tray is required and startup exits when tray deps are unavailable."""
+    fake_app_module = MagicMock()
+    fake_app_module.app = "APP"
+    monkeypatch.setitem(sys.modules, "authmcp_gateway.app", fake_app_module)
+    monkeypatch.setattr(cli.runtime_state, "get_running_pid", lambda: None)
+    monkeypatch.setattr(cli.runtime_state, "is_port_in_use", lambda *a, **k: False)
+    monkeypatch.setattr(cli.runtime_state, "clear_pid", lambda: None)
+    monkeypatch.setattr("authmcp_gateway.tray.is_tray_available", lambda: False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.start_server(_start_args(tmp_path))
+
+    assert exc_info.value.code == 1
+    assert "System tray is required" in capsys.readouterr().err
 
 
 def test_build_background_start_command_preserves_cli_flags(tmp_path):
@@ -248,14 +491,13 @@ def test_build_background_start_command_preserves_cli_flags(tmp_path):
         env_file=tmp_path / ".env",
         log_level="ERROR",
         reload=True,
-        no_tray=True,
         tray_icon=tmp_path / "icon.png",
     )
 
     command = cli._build_background_start_command(args)
 
     assert command == [
-        sys.executable,
+        cli._get_background_executable(),
         "-m",
         "authmcp_gateway.cli",
         "start",
@@ -271,30 +513,42 @@ def test_build_background_start_command_preserves_cli_flags(tmp_path):
         "--log-level",
         "ERROR",
         "--reload",
-        "--no-tray",
         "--tray-icon",
         str(tmp_path / "icon.png"),
     ]
 
 
-def test_background_tray_mode_keeps_current_session_on_non_windows(tmp_path, monkeypatch):
-    """Tray-enabled background mode must stay in the current session so the tray can initialize."""
-    args = _start_args(tmp_path, no_tray=False)
+def test_background_log_file_path_requires_enabled_flag_and_path(monkeypatch):
+    """Background log file is disabled unless both env flag and path are set."""
+    monkeypatch.delenv("MCP_LOG_FILE_ENABLED", raising=False)
+    monkeypatch.delenv("MCP_LOG_FILE", raising=False)
+    assert cli._background_log_file_path() is None
+
+    monkeypatch.setenv("MCP_LOG_FILE_ENABLED", "true")
+    assert cli._background_log_file_path() is None
+
+
+def test_background_log_file_path_returns_resolved_path(monkeypatch, tmp_path):
+    """Background log file path resolves when explicitly enabled and configured."""
+    log_path = tmp_path / "gateway.log"
+    monkeypatch.setenv("MCP_LOG_FILE_ENABLED", "1")
+    monkeypatch.setenv("MCP_LOG_FILE", str(log_path))
+
+    assert cli._background_log_file_path() == log_path.resolve()
+
+
+def test_background_mode_starts_new_session_on_non_windows(monkeypatch):
+    """Background mode detaches from current session on non-Windows."""
     monkeypatch.setattr(cli.os, "name", "posix")
 
-    assert cli._should_start_new_session(args, tray_available=True) is False
+    assert cli._should_start_new_session() is True
 
 
-def test_background_log_only_mode_starts_new_session_on_non_windows(tmp_path, monkeypatch):
-    """Log-only background mode can fully detach from the current session."""
-    args = _start_args(tmp_path, no_tray=True)
-    monkeypatch.setattr(cli.os, "name", "posix")
+def test_background_mode_does_not_start_new_session_on_windows(monkeypatch):
+    """Background mode on Windows uses creation flags instead of start_new_session."""
+    monkeypatch.setattr(cli.os, "name", "nt")
 
-    assert cli._should_start_new_session(args, tray_available=True) is True
-    assert (
-        cli._should_start_new_session(_start_args(tmp_path, no_tray=False), tray_available=False)
-        is True
-    )
+    assert cli._should_start_new_session() is False
 
 
 def test_windows_background_creationflags_uses_new_process_group_and_no_window(monkeypatch):

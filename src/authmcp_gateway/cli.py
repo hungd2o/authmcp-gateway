@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from authmcp_gateway import runtime_state
+
 
 def main():
     """Main CLI entry point."""
@@ -67,15 +69,6 @@ For more information, visit: https://github.com/loglux/authmcp-gateway
         "--reload", action="store_true", help="Enable auto-reload for development"
     )
     start_parser.add_argument(
-        "--no-tray",
-        action="store_true",
-        dest="no_tray",
-        help=(
-            "Disable the system tray icon and run in console-only mode. "
-            "The tray is enabled by default in the packaged application."
-        ),
-    )
-    start_parser.add_argument(
         "--tray-icon",
         type=Path,
         default=None,
@@ -83,15 +76,27 @@ For more information, visit: https://github.com/loglux/authmcp-gateway
         help="Path to a custom .ico or .png file for the tray icon",
     )
     start_parser.add_argument(
+        "--foreground",
+        "-f",
+        action="store_true",
+        help="Run attached to this terminal and stream logs (tray Exit stops it)",
+    )
+    start_parser.add_argument(
         "--background",
         action="store_true",
-        help="Start the gateway in the background and return the terminal immediately",
+        help=argparse.SUPPRESS,  # kept for backwards compatibility (now the default)
     )
     start_parser.add_argument(
         "--background-child",
         action="store_true",
         help=argparse.SUPPRESS,
     )
+
+    # Stop command
+    subparsers.add_parser("stop", help="Stop the background gateway server")
+
+    # Status command
+    subparsers.add_parser("status", help="Show whether the gateway is running")
 
     # Init DB command
     init_parser = subparsers.add_parser("init-db", help="Initialize database")
@@ -132,6 +137,10 @@ For more information, visit: https://github.com/loglux/authmcp-gateway
 
     if args.command == "start":
         start_server(args)
+    elif args.command == "stop":
+        stop_gateway(args)
+    elif args.command == "status":
+        gateway_status(args)
     elif args.command == "init-db":
         init_database(args)
     elif args.command == "create-admin":
@@ -141,9 +150,12 @@ For more information, visit: https://github.com/loglux/authmcp-gateway
 
 
 def start_server(args):
-    """Start the FastMCP Auth gateway server."""
-    import uvicorn
+    """Start the AuthMCP Gateway.
 
+    By default this launches the server + system tray in a detached background
+    process and returns the terminal immediately.  Pass ``--foreground`` to run
+    attached to the current terminal with streaming logs.
+    """
     # Load environment variables
     if args.env_file and args.env_file.exists():
         from dotenv import load_dotenv
@@ -170,6 +182,61 @@ def start_server(args):
     display_host = "localhost" if host == "0.0.0.0" else host
     server_url = f"http://{display_host}:{port}"
 
+    is_worker = getattr(args, "background_child", False) or getattr(args, "foreground", False)
+
+    if is_worker:
+        _run_worker(args, server_url)
+        return
+
+    # Launcher path: spawn (or attach to) a detached background instance.
+    existing_pid = runtime_state.get_running_pid()
+    port_busy = runtime_state.is_port_in_use(host, port)
+
+    if existing_pid is not None:
+        # A managed instance is on record. Confirm it against the real port so a
+        # crashed process that left the PID file behind does not look healthy.
+        health = "listening" if port_busy else f"NOT responding on port {port}"
+        print(
+            "✓ AuthMCP Gateway is already running.\n"
+            f"  URL: {server_url}\n"
+            f"  PID: {existing_pid}\n"
+            f"  Health: {health}\n"
+            "  Use 'authmcp-gateway stop' to stop it, then start again.\n"
+        )
+        return
+
+    if port_busy:
+        # Port is taken but no managed PID on record: an unrelated process (or a
+        # previous instance we can no longer control) owns it. Refuse to start a
+        # second copy silently — surface it so runtime conflicts are visible.
+        print(
+            f"✗ Port {port} on {display_host} is already in use by another process.\n"
+            "  AuthMCP Gateway did not start a second instance.\n"
+            "  Free the port (or stop the other process) and try again.\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Nothing running and the port is free: drop any stale PID file and launch.
+    runtime_state.clear_pid()
+
+    from authmcp_gateway.tray import is_tray_available
+
+    if not is_tray_available():
+        print(
+            "✗ System tray is required but not available.\n"
+            "  Reinstall authmcp-gateway to restore bundled tray dependencies.\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    _launch_background_server(args, server_url)
+
+
+def _run_worker(args, server_url: str) -> None:
+    """Run the server + system tray in this process and own the PID file."""
+    import atexit
+
     print(f"""
 ╔══════════════════════════════════════════════════════════╗
 ║           AuthMCP Gateway                           ║
@@ -178,9 +245,9 @@ def start_server(args):
 
 Starting server...
   URL: {server_url}
-  Host: {host}
-  Port: {port}
-  Log Level: {log_level}
+  Host: {args.host}
+  Port: {args.port}
+  Log Level: {args.log_level}
   Reload: {args.reload}
 """)
 
@@ -197,105 +264,27 @@ Starting server...
             "  Open Admin > Whitelist and enter this token to approve pending items.\n"
         )
 
-    tray_available = is_tray_available()
-
-    if _maybe_start_server_in_background(args, tray_available, server_url):
-        return
-
-    no_tray = getattr(args, "no_tray", False)
-    use_tray = (not no_tray) and tray_available
-
-    if use_tray:
-        _start_server_with_tray(app, args, runtime_config.whitelist_token)
-    else:
-        if not no_tray and not tray_available:
-            print(
-                "ℹ  System tray not available. "
-                "Reinstall authmcp-gateway to restore bundled tray dependencies.\n"
-                "   Running in console mode — press CTRL+C to stop.\n",
-                file=sys.stderr,
-            )
-        else:
-            print("Press CTRL+C to stop\n")
-
-        uvicorn.run(
-            app,
-            host=host,
-            port=port,
-            log_level=log_level.lower(),
-            reload=args.reload,
+    if not is_tray_available():
+        print(
+            "✗ System tray is required but not available.\n"
+            "  Reinstall authmcp-gateway to restore bundled tray dependencies.\n",
+            file=sys.stderr,
         )
+        sys.exit(1)
+
+    runtime_state.write_pid(os.getpid())
+    atexit.register(runtime_state.clear_pid)
+    try:
+        _start_server_with_tray(app, args, runtime_config.whitelist_token)
+    finally:
+        runtime_state.clear_pid()
 
 
-def _maybe_start_server_in_background(args, tray_available: bool, server_url: str) -> bool:
-    """Prompt for or honor background mode and relaunch if needed."""
-    if getattr(args, "background_child", False):
-        return False
-
-    if getattr(args, "background", False):
-        _launch_background_server(args, tray_available, server_url)
-        return True
-
-    if not _supports_interactive_start_prompt():
-        return False
-
-    choice = _prompt_start_mode(args, tray_available)
-    if choice == "background":
-        _launch_background_server(args, tray_available, server_url)
-        return True
-
-    return False
-
-
-def _supports_interactive_start_prompt() -> bool:
-    """Return True when stdin/stdout are interactive TTYs."""
-    stdin = getattr(sys, "stdin", None)
-    stdout = getattr(sys, "stdout", None)
-    return bool(
-        stdin
-        and stdout
-        and hasattr(stdin, "isatty")
-        and hasattr(stdout, "isatty")
-        and stdin.isatty()
-        and stdout.isatty()
-    )
-
-
-def _prompt_start_mode(args, tray_available: bool) -> str:
-    """Prompt the user to keep logs attached or continue in the background."""
-    if getattr(args, "no_tray", False):
-        background_label = "send to background (logs only)"
-    elif tray_available:
-        background_label = "send to background (system tray + log file)"
-    else:
-        background_label = "send to background (log file only)"
-
-    prompt = (
-        "\nChoose how to continue:\n"
-        "  [1] View logs in this terminal\n"
-        f"  [2] {background_label}\n"
-        "Select [1/2] (default: 1): "
-    )
-
-    while True:
-        try:
-            choice = input(prompt).strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            print("\nKeeping the gateway attached to this terminal.\n")
-            return "foreground"
-
-        if choice in ("", "1", "f", "fg", "foreground", "logs", "view", "view-logs"):
-            return "foreground"
-        if choice in ("2", "b", "bg", "background", "detach"):
-            return "background"
-
-        print("Please choose 1 to view logs or 2 to send the gateway to the background.\n")
-
-
-def _launch_background_server(args, tray_available: bool, server_url: str) -> None:
+def _launch_background_server(args, server_url: str) -> None:
     """Relaunch the gateway in a detached child process."""
     log_file = _background_log_file_path()
-    log_file.parent.mkdir(parents=True, exist_ok=True)
+    if log_file is not None:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
 
     child_env = os.environ.copy()
     # Force UTF-8 stdio in the child: redirected to a file (no console), Python
@@ -305,31 +294,64 @@ def _launch_background_server(args, tray_available: bool, server_url: str) -> No
     child_env["PYTHONIOENCODING"] = "utf-8"
     child_env["PYTHONUTF8"] = "1"
 
-    with log_file.open("a", encoding="utf-8") as log_stream:
-        try:
-            process = subprocess.Popen(
-                _build_background_start_command(args),
-                cwd=os.getcwd(),
-                env=child_env,
-                stdin=subprocess.DEVNULL,
-                stdout=log_stream,
-                stderr=log_stream,
-                start_new_session=_should_start_new_session(args, tray_available),
-                creationflags=_windows_background_creationflags(),
-            )
-        except OSError as exc:
-            print(f"✗ Failed to start AuthMCP Gateway in the background: {exc}")
-            sys.exit(1)
+    log_stream = None
+    try:
+        if log_file is not None:
+            log_stream = log_file.open("a", encoding="utf-8")
 
-    background_mode = (
-        "system tray" if tray_available and not getattr(args, "no_tray", False) else "log file"
+        process = subprocess.Popen(
+            _build_background_start_command(args),
+            cwd=os.getcwd(),
+            env=child_env,
+            stdin=subprocess.DEVNULL,
+            stdout=log_stream if log_stream is not None else subprocess.DEVNULL,
+            stderr=log_stream if log_stream is not None else subprocess.DEVNULL,
+            start_new_session=_should_start_new_session(),
+            creationflags=_windows_background_creationflags(),
+        )
+    except OSError as exc:
+        print(f"✗ Failed to start AuthMCP Gateway in the background: {exc}")
+        sys.exit(1)
+    finally:
+        if log_stream is not None:
+            log_stream.close()
+
+    # Record the child PID immediately as a short-lived launch lock so a second
+    # invocation cannot spawn a duplicate before the worker binds the port.
+    runtime_state.write_pid(process.pid)
+
+    log_hint = (
+        f"  Log file: {log_file}\n"
+        if log_file is not None
+        else "  Log file: disabled (set MCP_LOG_FILE_ENABLED=true and "
+        "MCP_LOG_FILE=<path> to enable)\n"
     )
+
+    # Verify the server actually came up instead of trusting the spawn alone, so
+    # a worker that crashes on startup is reported rather than silently missing.
+    if not runtime_state.wait_for_port(args.host, args.port):
+        print(
+            "✗ AuthMCP Gateway was launched but is not responding on "
+            f"{args.host}:{args.port}.\n"
+            f"  PID: {process.pid}\n"
+            + log_hint
+            + "  It may have failed to start — check the log file above "
+            "(enable MCP_LOG_FILE for details) and run 'authmcp-gateway status'.\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # The worker records its own real PID once it starts; prefer it over the
+    # spawn handle (which on Windows/uv can be an intermediate launcher PID).
+    running_pid = runtime_state.get_running_pid() or process.pid
+
     print(
         "✓ AuthMCP Gateway is running in the background.\n"
         f"  URL: {server_url}\n"
-        f"  Mode: {background_mode}\n"
-        f"  PID: {process.pid}\n"
-        f"  Log file: {log_file}\n"
+        "  Mode: system tray\n"
+        f"  PID: {running_pid}\n"
+        + log_hint
+        + "  Stop with: authmcp-gateway stop\n"
     )
 
 
@@ -351,7 +373,13 @@ def _get_background_executable() -> str:
 
 def _build_background_start_command(args) -> list[str]:
     """Build the child process command for detached startup."""
-    command = [_get_background_executable(), "-m", "authmcp_gateway.cli", "start", "--background-child"]
+    command = [
+        _get_background_executable(),
+        "-m",
+        "authmcp_gateway.cli",
+        "start",
+        "--background-child",
+    ]
 
     if args.host is not None:
         command.extend(["--host", args.host])
@@ -365,25 +393,34 @@ def _build_background_start_command(args) -> list[str]:
         command.extend(["--log-level", args.log_level])
     if args.reload:
         command.append("--reload")
-    if getattr(args, "no_tray", False):
-        command.append("--no-tray")
     if getattr(args, "tray_icon", None):
         command.extend(["--tray-icon", str(args.tray_icon)])
 
     return command
 
 
-def _background_log_file_path() -> Path:
-    """Return the default log file for detached startup."""
-    return Path("data/logs/gateway-console.log").resolve()
+def _env_bool(name: str, default: bool = False) -> bool:
+    """Return a boolean parsed from environment variables."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _should_start_new_session(args, tray_available: bool) -> bool:
+def _background_log_file_path() -> Path | None:
+    """Return configured background log file path when explicitly enabled."""
+    if not _env_bool("MCP_LOG_FILE_ENABLED", False):
+        return None
+
+    configured_path = os.getenv("MCP_LOG_FILE", "").strip()
+    if not configured_path:
+        return None
+    return Path(configured_path).expanduser().resolve()
+
+
+def _should_start_new_session() -> bool:
     """Return True when background mode should fully detach from the current session."""
-    if os.name == "nt":
-        return False
-
-    return bool(getattr(args, "no_tray", False) or not tray_available)
+    return os.name != "nt"
 
 
 def _windows_background_creationflags() -> int:
@@ -456,6 +493,52 @@ def _start_server_with_tray(app, args, whitelist_token: str | None = None) -> No
     # Ensure uvicorn has stopped after the tray exits
     server.should_exit = True
     server_thread.join(timeout=10)
+
+
+def stop_gateway(args):
+    """Stop the background gateway server."""
+    pid = runtime_state.get_running_pid()
+    if pid is None:
+        print("AuthMCP Gateway is not running.")
+        return
+
+    if runtime_state.stop_process(pid):
+        runtime_state.clear_pid()
+        print(f"✓ Stopped AuthMCP Gateway (PID {pid}).")
+    else:
+        print(f"✗ Failed to stop AuthMCP Gateway (PID {pid}).")
+        sys.exit(1)
+
+
+def gateway_status(args):
+    """Report whether the gateway is currently running (PID + real port health)."""
+    host = os.getenv("HOST", "0.0.0.0")
+    try:
+        port = int(os.getenv("PORT", "8000").strip())
+    except ValueError:
+        port = 8000
+    display_host = "localhost" if host == "0.0.0.0" else host
+
+    pid = runtime_state.get_running_pid()
+    port_busy = runtime_state.is_port_in_use(host, port)
+
+    if pid is None and not port_busy:
+        print("AuthMCP Gateway is not running.")
+        return
+
+    if pid is not None:
+        health = "listening" if port_busy else f"NOT responding on port {port}"
+        print(
+            f"AuthMCP Gateway is running (PID {pid}).\n"
+            f"  URL: http://{display_host}:{port}\n"
+            f"  Health: {health}"
+        )
+    else:
+        # Port is taken but no PID on record: an unmanaged process owns it.
+        print(
+            f"Port {port} on {display_host} is in use, but no managed AuthMCP "
+            "Gateway PID is on record (unmanaged or externally started process)."
+        )
 
 
 def init_database(args):

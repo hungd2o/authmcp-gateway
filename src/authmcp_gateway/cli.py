@@ -67,15 +67,6 @@ For more information, visit: https://github.com/loglux/authmcp-gateway
         "--reload", action="store_true", help="Enable auto-reload for development"
     )
     start_parser.add_argument(
-        "--no-tray",
-        action="store_true",
-        dest="no_tray",
-        help=(
-            "Disable the system tray icon and run in console-only mode. "
-            "The tray is enabled by default in the packaged application."
-        ),
-    )
-    start_parser.add_argument(
         "--tray-icon",
         type=Path,
         default=None,
@@ -142,8 +133,6 @@ For more information, visit: https://github.com/loglux/authmcp-gateway
 
 def start_server(args):
     """Start the FastMCP Auth gateway server."""
-    import uvicorn
-
     # Load environment variables
     if args.env_file and args.env_file.exists():
         from dotenv import load_dotenv
@@ -198,50 +187,35 @@ Starting server...
         )
 
     tray_available = is_tray_available()
+    if not tray_available:
+        print(
+            "✗ System tray is required but not available.\n"
+            "  Reinstall authmcp-gateway to restore bundled tray dependencies.\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
-    if _maybe_start_server_in_background(args, tray_available, server_url):
+    if _maybe_start_server_in_background(args, server_url):
         return
 
-    no_tray = getattr(args, "no_tray", False)
-    use_tray = (not no_tray) and tray_available
-
-    if use_tray:
-        _start_server_with_tray(app, args, runtime_config.whitelist_token)
-    else:
-        if not no_tray and not tray_available:
-            print(
-                "ℹ  System tray not available. "
-                "Reinstall authmcp-gateway to restore bundled tray dependencies.\n"
-                "   Running in console mode — press CTRL+C to stop.\n",
-                file=sys.stderr,
-            )
-        else:
-            print("Press CTRL+C to stop\n")
-
-        uvicorn.run(
-            app,
-            host=host,
-            port=port,
-            log_level=log_level.lower(),
-            reload=args.reload,
-        )
+    _start_server_with_tray(app, args, runtime_config.whitelist_token)
 
 
-def _maybe_start_server_in_background(args, tray_available: bool, server_url: str) -> bool:
+def _maybe_start_server_in_background(args, server_url: str) -> bool:
     """Prompt for or honor background mode and relaunch if needed."""
     if getattr(args, "background_child", False):
         return False
 
     if getattr(args, "background", False):
-        _launch_background_server(args, tray_available, server_url)
+        _launch_background_server(args, server_url)
         return True
 
     if not _supports_interactive_start_prompt():
         return False
 
-    choice = _prompt_start_mode(args, tray_available)
+    choice = _prompt_start_mode(args)
     if choice == "background":
-        _launch_background_server(args, tray_available, server_url)
+        _launch_background_server(args, server_url)
         return True
 
     return False
@@ -261,18 +235,16 @@ def _supports_interactive_start_prompt() -> bool:
     )
 
 
-def _prompt_start_mode(args, tray_available: bool) -> str:
+def _prompt_start_mode(args) -> str:
     """Prompt the user to keep logs attached or continue in the background."""
-    if getattr(args, "no_tray", False):
-        background_label = "send to background (logs only)"
-    elif tray_available:
-        background_label = "send to background (system tray + log file)"
+    if _background_log_file_path() is not None:
+        background_label = "send to background (system tray + configured log file)"
     else:
-        background_label = "send to background (log file only)"
+        background_label = "send to background (system tray, no terminal logs)"
 
     prompt = (
         "\nChoose how to continue:\n"
-        "  [1] View logs in this terminal\n"
+        "  [1] View logs in this terminal (stdio)\n"
         f"  [2] {background_label}\n"
         "Select [1/2] (default: 1): "
     )
@@ -292,10 +264,11 @@ def _prompt_start_mode(args, tray_available: bool) -> str:
         print("Please choose 1 to view logs or 2 to send the gateway to the background.\n")
 
 
-def _launch_background_server(args, tray_available: bool, server_url: str) -> None:
+def _launch_background_server(args, server_url: str) -> None:
     """Relaunch the gateway in a detached child process."""
     log_file = _background_log_file_path()
-    log_file.parent.mkdir(parents=True, exist_ok=True)
+    if log_file is not None:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
 
     child_env = os.environ.copy()
     # Force UTF-8 stdio in the child: redirected to a file (no console), Python
@@ -305,31 +278,39 @@ def _launch_background_server(args, tray_available: bool, server_url: str) -> No
     child_env["PYTHONIOENCODING"] = "utf-8"
     child_env["PYTHONUTF8"] = "1"
 
-    with log_file.open("a", encoding="utf-8") as log_stream:
-        try:
-            process = subprocess.Popen(
-                _build_background_start_command(args),
-                cwd=os.getcwd(),
-                env=child_env,
-                stdin=subprocess.DEVNULL,
-                stdout=log_stream,
-                stderr=log_stream,
-                start_new_session=_should_start_new_session(args, tray_available),
-                creationflags=_windows_background_creationflags(),
-            )
-        except OSError as exc:
-            print(f"✗ Failed to start AuthMCP Gateway in the background: {exc}")
-            sys.exit(1)
+    log_stream = None
+    try:
+        if log_file is not None:
+            log_stream = log_file.open("a", encoding="utf-8")
 
-    background_mode = (
-        "system tray" if tray_available and not getattr(args, "no_tray", False) else "log file"
-    )
+        process = subprocess.Popen(
+            _build_background_start_command(args),
+            cwd=os.getcwd(),
+            env=child_env,
+            stdin=subprocess.DEVNULL,
+            stdout=log_stream if log_stream is not None else subprocess.DEVNULL,
+            stderr=log_stream if log_stream is not None else subprocess.DEVNULL,
+            start_new_session=_should_start_new_session(),
+            creationflags=_windows_background_creationflags(),
+        )
+    except OSError as exc:
+        print(f"✗ Failed to start AuthMCP Gateway in the background: {exc}")
+        sys.exit(1)
+    finally:
+        if log_stream is not None:
+            log_stream.close()
+
     print(
         "✓ AuthMCP Gateway is running in the background.\n"
         f"  URL: {server_url}\n"
-        f"  Mode: {background_mode}\n"
+        "  Mode: system tray\n"
         f"  PID: {process.pid}\n"
-        f"  Log file: {log_file}\n"
+        + (
+            f"  Log file: {log_file}\n"
+            if log_file is not None
+            else "  Log file: disabled (set AUTHMCP_BACKGROUND_LOG_FILE_ENABLED=true and "
+            "AUTHMCP_BACKGROUND_LOG_FILE=<path> to enable)\n"
+        )
     )
 
 
@@ -351,7 +332,13 @@ def _get_background_executable() -> str:
 
 def _build_background_start_command(args) -> list[str]:
     """Build the child process command for detached startup."""
-    command = [_get_background_executable(), "-m", "authmcp_gateway.cli", "start", "--background-child"]
+    command = [
+        _get_background_executable(),
+        "-m",
+        "authmcp_gateway.cli",
+        "start",
+        "--background-child",
+    ]
 
     if args.host is not None:
         command.extend(["--host", args.host])
@@ -365,25 +352,34 @@ def _build_background_start_command(args) -> list[str]:
         command.extend(["--log-level", args.log_level])
     if args.reload:
         command.append("--reload")
-    if getattr(args, "no_tray", False):
-        command.append("--no-tray")
     if getattr(args, "tray_icon", None):
         command.extend(["--tray-icon", str(args.tray_icon)])
 
     return command
 
 
-def _background_log_file_path() -> Path:
-    """Return the default log file for detached startup."""
-    return Path("data/logs/gateway-console.log").resolve()
+def _env_bool(name: str, default: bool = False) -> bool:
+    """Return a boolean parsed from environment variables."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _should_start_new_session(args, tray_available: bool) -> bool:
+def _background_log_file_path() -> Path | None:
+    """Return configured background log file path when explicitly enabled."""
+    if not _env_bool("AUTHMCP_BACKGROUND_LOG_FILE_ENABLED", False):
+        return None
+
+    configured_path = os.getenv("AUTHMCP_BACKGROUND_LOG_FILE", "").strip()
+    if not configured_path:
+        return None
+    return Path(configured_path).expanduser().resolve()
+
+
+def _should_start_new_session() -> bool:
     """Return True when background mode should fully detach from the current session."""
-    if os.name == "nt":
-        return False
-
-    return bool(getattr(args, "no_tray", False) or not tray_available)
+    return os.name != "nt"
 
 
 def _windows_background_creationflags() -> int:

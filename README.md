@@ -158,7 +158,7 @@ authmcp-gateway version                  # Show version
 authmcp-gateway --help                   # Show all options
 ```
 
-When you run `authmcp-gateway start` from an interactive terminal, the CLI now lets you choose between keeping logs attached in the current terminal or sending the gateway to the background and writing console output to `data/logs/gateway-console.log`.
+When you run `authmcp-gateway start` from an interactive terminal, the gateway now starts once in a detached background process first. The prompt only decides whether the current terminal should follow that already-running process's logs or return to the shell immediately. If you stop viewing logs or close the terminal, the gateway keeps running in the background and continues writing console output to `data/logs/gateway-console.log`.
 
 ### Option 2: Docker Compose
 

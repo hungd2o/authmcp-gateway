@@ -178,54 +178,110 @@ def test_start_server_sets_log_level_env(tmp_path, monkeypatch):
     assert os.environ["LOG_LEVEL"] == "WARNING"
 
 
-def test_start_server_interactive_foreground_disables_tray(tmp_path, monkeypatch):
-    """Choosing foreground keeps logs attached without disabling tray mode."""
-    monkeypatch.setitem(sys.modules, "uvicorn", MagicMock())
-    fake_app_module = MagicMock()
-    fake_app_module.app = "APP"
-    monkeypatch.setitem(sys.modules, "authmcp_gateway.app", fake_app_module)
+def test_start_server_interactive_log_follow_launches_one_child(tmp_path, monkeypatch):
+    """Interactive start launches one detached child, then follows its logs."""
     monkeypatch.delenv("HOST", raising=False)
     monkeypatch.delenv("PORT", raising=False)
     monkeypatch.delenv("LOG_LEVEL", raising=False)
     monkeypatch.setattr(cli, "_supports_interactive_start_prompt", lambda: True)
-    monkeypatch.setattr(cli, "_prompt_start_mode", lambda _args, _tray_available: "foreground")
+    monkeypatch.setattr(cli, "_prompt_start_mode", lambda _args, _tray_available: "logs")
     monkeypatch.setattr("authmcp_gateway.tray.is_tray_available", lambda: True)
-    tray_started = {"value": False, "whitelist_token": None}
+    launches = []
+    followed = {}
+    inline_runs = {"count": 0}
     monkeypatch.setattr(
         cli,
-        "_start_server_with_tray",
-        lambda _app, _args, whitelist_token=None: tray_started.update(
-            {"value": True, "whitelist_token": whitelist_token}
+        "_launch_background_server",
+        lambda _args, _tray_available: launches.append((_args.no_tray, _tray_available))
+        or cli.BackgroundServer(
+            pid=1234,
+            log_file=tmp_path / "gateway-console.log",
+            log_offset=42,
+            mode="system tray",
         ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_follow_background_logs",
+        lambda log_file, log_offset: followed.update(
+            {"log_file": log_file, "log_offset": log_offset}
+        ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_run_server_process",
+        lambda *_args, **_kwargs: inline_runs.update({"count": inline_runs["count"] + 1}),
     )
 
     cli.start_server(_start_args(tmp_path, no_tray=False))
 
-    sys.modules["uvicorn"].run.assert_not_called()
-    assert tray_started == {"value": True, "whitelist_token": None}
+    assert launches == [(False, True)]
+    assert followed == {"log_file": tmp_path / "gateway-console.log", "log_offset": 42}
+    assert inline_runs["count"] == 0
+
+
+def test_start_server_interactive_background_return_launches_one_child(tmp_path, monkeypatch):
+    """Interactive start option 2 leaves the already-running child in the background."""
+    monkeypatch.delenv("HOST", raising=False)
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    monkeypatch.setattr(cli, "_supports_interactive_start_prompt", lambda: True)
+    monkeypatch.setattr(cli, "_prompt_start_mode", lambda _args, _tray_available: "background")
+    monkeypatch.setattr("authmcp_gateway.tray.is_tray_available", lambda: False)
+    launches = []
+    followed = {"count": 0}
+    inline_runs = {"count": 0}
+    monkeypatch.setattr(
+        cli,
+        "_launch_background_server",
+        lambda _args, _tray_available: launches.append((_args.no_tray, _tray_available))
+        or cli.BackgroundServer(
+            pid=5678,
+            log_file=tmp_path / "gateway-console.log",
+            log_offset=99,
+            mode="log file",
+        ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_follow_background_logs",
+        lambda *_args, **_kwargs: followed.update({"count": followed["count"] + 1}),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_run_server_process",
+        lambda *_args, **_kwargs: inline_runs.update({"count": inline_runs["count"] + 1}),
+    )
+
+    cli.start_server(_start_args(tmp_path, no_tray=False))
+
+    assert launches == [(False, False)]
+    assert followed["count"] == 0
+    assert inline_runs["count"] == 0
 
 
 def test_start_server_background_mode_relaunches_and_returns(tmp_path, monkeypatch):
     """--background relaunches a detached child instead of running uvicorn inline."""
-    monkeypatch.setitem(sys.modules, "uvicorn", MagicMock())
-    fake_app_module = MagicMock()
-    fake_app_module.app = "APP"
-    monkeypatch.setitem(sys.modules, "authmcp_gateway.app", fake_app_module)
     monkeypatch.delenv("HOST", raising=False)
     monkeypatch.delenv("PORT", raising=False)
     monkeypatch.delenv("LOG_LEVEL", raising=False)
     monkeypatch.setattr("authmcp_gateway.tray.is_tray_available", lambda: False)
     launched = {}
+    inline_runs = {"count": 0}
     monkeypatch.setattr(
         cli,
         "_launch_background_server",
-        lambda args, tray_available, server_url: launched.update(
+        lambda args, tray_available: launched.update(
             {
                 "background": args.background,
                 "tray_available": tray_available,
-                "server_url": server_url,
             }
         ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_run_server_process",
+        lambda *_args, **_kwargs: inline_runs.update({"count": inline_runs["count"] + 1}),
     )
 
     cli.start_server(_start_args(tmp_path, no_tray=False, background=True))
@@ -233,9 +289,8 @@ def test_start_server_background_mode_relaunches_and_returns(tmp_path, monkeypat
     assert launched == {
         "background": True,
         "tray_available": False,
-        "server_url": "http://localhost:8000",
     }
-    sys.modules["uvicorn"].run.assert_not_called()
+    assert inline_runs["count"] == 0
 
 
 def test_build_background_start_command_preserves_cli_flags(tmp_path):
@@ -277,23 +332,14 @@ def test_build_background_start_command_preserves_cli_flags(tmp_path):
     ]
 
 
-def test_background_tray_mode_keeps_current_session_on_non_windows(tmp_path, monkeypatch):
-    """Tray-enabled background mode must stay in the current session so the tray can initialize."""
+def test_background_mode_starts_new_session_on_non_windows(tmp_path, monkeypatch):
+    """Detached background mode must survive terminal closure on non-Windows."""
     args = _start_args(tmp_path, no_tray=False)
-    monkeypatch.setattr(cli.os, "name", "posix")
-
-    assert cli._should_start_new_session(args, tray_available=True) is False
-
-
-def test_background_log_only_mode_starts_new_session_on_non_windows(tmp_path, monkeypatch):
-    """Log-only background mode can fully detach from the current session."""
-    args = _start_args(tmp_path, no_tray=True)
     monkeypatch.setattr(cli.os, "name", "posix")
 
     assert cli._should_start_new_session(args, tray_available=True) is True
     assert (
-        cli._should_start_new_session(_start_args(tmp_path, no_tray=False), tray_available=False)
-        is True
+        cli._should_start_new_session(_start_args(tmp_path, no_tray=True), tray_available=False) is True
     )
 
 

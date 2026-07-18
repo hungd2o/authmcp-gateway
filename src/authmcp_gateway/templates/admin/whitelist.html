@@ -156,6 +156,14 @@
                             </template>
                         </div>
 
+                        <div
+                            x-show="(server.transport_type === 'stdio') && hasWorkerOverride(server)"
+                            class="text-xs text-gray-600 mb-2"
+                        >
+                            <span class="font-medium">Worker override:</span>
+                            <span x-text="fmtWorkerOverride(server)"></span>
+                        </div>
+
                         <!-- Fingerprint -->
                         <div class="text-xs text-gray-500 mb-2 flex items-center gap-1">
                             <span class="font-medium">Fingerprint:</span>
@@ -478,6 +486,18 @@ function whitelistManager() {
                 parts.push(...server.command_args);
             }
             return parts.join(' ');
+        },
+
+        hasWorkerOverride(server) {
+            return server?.min_workers != null || server?.max_workers != null;
+        },
+
+        fmtWorkerOverride(server) {
+            const min = server?.min_workers;
+            const max = server?.max_workers;
+            const minText = min == null ? 'default' : String(min);
+            const maxText = max == null ? 'default' : String(max);
+            return `min=${minText}, max=${maxText}`;
         },
 
         policyPairs(obj) {

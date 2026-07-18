@@ -14,6 +14,20 @@ from .stdio_pool_config import PoolConfig, PoolState, WorkerPoolOverloadedError
 from .stdio_worker import ManagedStdioWorker, WorkerState
 from .transports.stdio_transport import StdioTransport
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+async def _close_all(workers: list[ManagedStdioWorker], shutdown_timeout: float) -> None:
+    """Close every worker even if one raises; never abandon sibling shutdowns mid-flight."""
+    results = await asyncio.gather(
+        *(worker.close(shutdown_timeout) for worker in workers), return_exceptions=True
+    )
+    for worker, result in zip(workers, results):
+        if isinstance(result, BaseException):
+            logger.error("Error closing STDIO worker pid=%s: %s", worker.pid, result)
+
 
 class ServerPool:
     """Finite worker capacity and queue for a single server generation."""
@@ -166,7 +180,7 @@ class ServerPool:
                 self.workers.remove(worker)
                 worker.state = WorkerState.STOPPING
             self._available.notify_all()
-        await asyncio.gather(*(worker.close(self.config.shutdown_timeout) for worker in stale))
+        await _close_all(stale, self.config.shutdown_timeout)
         return len(stale)
 
     async def stop(self) -> None:
@@ -185,7 +199,7 @@ class ServerPool:
                 self.workers.remove(worker)
                 worker.state = WorkerState.STOPPING
             self._available.notify_all()
-        await asyncio.gather(*(worker.close(self.config.shutdown_timeout) for worker in workers))
+        await _close_all(workers, self.config.shutdown_timeout)
         if not blocked:
             self.state = PoolState.STOPPED
 

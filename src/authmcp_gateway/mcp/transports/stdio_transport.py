@@ -72,17 +72,29 @@ class StdioTransport(McpTransport):
                 return
             env = os.environ.copy()
             env.update(self.env_vars)
-            self._proc = await asyncio.create_subprocess_exec(
-                self.command,
-                *self.command_args,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=self.working_dir,
-                env=env,
-                limit=self.STREAM_READER_LIMIT,
-                creationflags=_windows_no_window_flags(),
+            spawn = asyncio.ensure_future(
+                asyncio.create_subprocess_exec(
+                    self.command,
+                    *self.command_args,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=self.working_dir,
+                    env=env,
+                    limit=self.STREAM_READER_LIMIT,
+                    creationflags=_windows_no_window_flags(),
+                )
             )
+            try:
+                self._proc = await asyncio.shield(spawn)
+            except asyncio.CancelledError:
+                # A cancelled caller (e.g. pool startup_timeout) must not lose
+                # the process handle mid-spawn: the OS process may already
+                # exist even though this await never returned. Wait for the
+                # shielded spawn to actually finish so close() always has a
+                # real process to reap instead of orphaning it.
+                self._proc = await spawn
+                raise
             self._stdout_buffer.clear()
             self._stderr_task = asyncio.create_task(self._read_stderr())
 

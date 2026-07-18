@@ -94,17 +94,16 @@ class HealthChecker:
             if transport_type == "stdio":
                 process_manager = self._process_manager or get_process_manager()
                 status = process_manager.status_detail(server_id)
-                workers = status.get("workers", {})
-                ready_workers = int(workers.get("ready", 0))
-                worker_count = sum(int(count) for count in workers.values())
                 if status.get("state") != "running":
                     return self._deferred_stdio_result(
                         server_id, server_name, "STDIO pool is lazy and has not started"
                     )
-                if worker_count < int(status.get("max_workers", 0)) or ready_workers < 2:
-                    return self._deferred_stdio_result(
-                        server_id, server_name, "STDIO capacity is reserved for foreground traffic"
-                    )
+                # Don't pre-gate on spare capacity here: the "health" purpose
+                # queue (acquire's health_queue + short timeout below) already
+                # reserves foreground capacity and backs off via
+                # WorkerPoolOverloadedError instead of blocking. A pre-check
+                # requiring 2+ ready workers made single-worker pools
+                # (max_workers=1, the common case) permanently skip probing.
                 acquire_timeout = min(request_timeout, 1.0)
                 try:
                     async with await process_manager.acquire(

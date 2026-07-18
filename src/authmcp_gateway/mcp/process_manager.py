@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, Dict
 
 from .stdio_lease import WorkerLease
@@ -264,7 +265,13 @@ class StdioProcessManager:
 
     async def stop_all(self) -> None:
         self._closing = True
-        await asyncio.gather(*(self.stop_server(server_id) for server_id in self.list_running()))
+        results = await asyncio.gather(
+            *(self.stop_server(server_id) for server_id in self.list_running()),
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, BaseException):
+                logging.getLogger(__name__).error("Error stopping STDIO server: %s", result)
 
 
 _process_manager: StdioProcessManager | None = None

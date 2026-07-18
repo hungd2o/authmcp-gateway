@@ -22,6 +22,41 @@ def _windows_no_window_flags() -> int:
     return getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 
 
+# Untrusted third-party stdio servers (npx/uvx/node packages) must not inherit
+# the gateway's full environment — it holds JWT_SECRET_KEY, DB credentials,
+# API keys (see config.py's load_dotenv()). Only pass what a child process
+# actually needs to launch its own runtime/package manager; anything the
+# server itself needs goes through its explicit env_vars config instead.
+_BASE_ENV_KEYS = (
+    frozenset({"PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "USER", "SHELL"})
+    if sys.platform != "win32"
+    else frozenset(
+        {
+            "PATH",
+            "SYSTEMROOT",
+            "SYSTEMDRIVE",
+            "TEMP",
+            "TMP",
+            "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "COMSPEC",
+            "PATHEXT",
+            "NUMBER_OF_PROCESSORS",
+            "PROCESSOR_ARCHITECTURE",
+            "WINDIR",
+        }
+    )
+)
+
+
+def _minimal_subprocess_env(extra: Dict[str, str]) -> Dict[str, str]:
+    """Base env with only OS/runtime essentials, plus caller-supplied overrides."""
+    base = {key: value for key, value in os.environ.items() if key.upper() in _BASE_ENV_KEYS}
+    base.update(extra)
+    return base
+
+
 class StdioTransport(McpTransport):
     """Raw JSON-RPC-over-stdio transport. It never starts itself on send."""
 
@@ -70,8 +105,7 @@ class StdioTransport(McpTransport):
                 raise RuntimeError("STDIO transport is shutting down")
             if self.is_running():
                 return
-            env = os.environ.copy()
-            env.update(self.env_vars)
+            env = _minimal_subprocess_env(self.env_vars)
             spawn = asyncio.ensure_future(
                 asyncio.create_subprocess_exec(
                     self.command,

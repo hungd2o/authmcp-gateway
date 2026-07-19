@@ -5,7 +5,9 @@ import hmac
 import json
 import logging
 import os
+import re
 import shlex
+from uuid import uuid4
 from datetime import datetime
 from io import StringIO
 
@@ -17,12 +19,15 @@ from starlette.responses import HTMLResponse, JSONResponse
 from authmcp_gateway.admin.routes import (
     api_error_handler,
     get_config,
+    get_control_plane_service,
     get_mcp_runtime,
     render_template,
 )
 from authmcp_gateway.mcp.templating import validate_template_string, validate_templates_in_value
 
 logger = logging.getLogger(__name__)
+
+_CORRELATION_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,120}$")
 
 _PROTECTED_SERVER_UPDATE_FIELDS = frozenset(
     {
@@ -45,6 +50,28 @@ _PROTECTED_SERVER_UPDATE_FIELDS = frozenset(
     }
 )
 
+_MANAGEMENT_PROFILE_BINDINGS = {
+    "none": {"mode": "none"},
+    "gpt-repo": {"mode": "adapter", "adapter": "gpt-repo"},
+    "gitnexus": {"mode": "adapter", "adapter": "gitnexus"},
+}
+
+_EMPTY_EQUIVALENT_SERVER_FIELDS = frozenset(
+    {"command", "description", "pipe_path", "tool_prefix", "url", "working_dir"}
+)
+
+
+def _server_values_match(field: str, current: object, proposed: object) -> bool:
+    """Treat empty form values as their stored empty-value equivalent."""
+    if field in _EMPTY_EQUIVALENT_SERVER_FIELDS:
+        return (current or "") == (proposed or "")
+    if field == "command_args":
+        return list(current or []) == list(proposed or [])
+    if field == "env_vars":
+        return dict(current or {}) == dict(proposed or {})
+    return current == proposed
+
+
 _PROCESS_DETAIL_STRING_FIELDS = frozenset(
     {
         "desired_state",
@@ -62,6 +89,9 @@ _PROCESS_DETAIL_INTEGER_FIELDS = frozenset(
         "active",
         "idle",
         "queue_depth",
+        "min_workers",
+        "max_workers",
+        "max_queue",
         "restart_count",
     }
 )
@@ -81,7 +111,11 @@ __all__ = [
     "api_update_mcp_server",
     "api_test_mcp_server",
     "api_get_mcp_server_tools",
+    "api_mcp_server_runtime",
     "api_mcp_server_process_action",
+    "api_control_plane_operation",
+    "api_control_plane_availability",
+    "api_update_management_profile",
     "api_whitelist_pending",
     "api_whitelist_servers_action",
     "api_whitelist_virtual_tools_action",
@@ -291,6 +325,177 @@ async def api_list_mcp_servers(request: Request) -> JSONResponse:
         server["virtual_tools_count"] = virtual_tool_counts.get(server["id"], 0)
 
     return JSONResponse({"servers": servers})
+
+
+@api_error_handler
+async def api_mcp_server_runtime(request: Request) -> JSONResponse:
+    """Return the gateway's live, server-scoped operations snapshot.
+
+    This deliberately avoids provider descriptors, entity rows, commands, and
+    credentials.  The Runtime view is about the gateway process, not backend
+    administration.
+    """
+    from authmcp_gateway.mcp.store import get_management_runtime_state, get_mcp_server
+    from authmcp_gateway.security.logger import get_server_request_metrics
+
+    config = get_config(request)
+    server_id = int(request.path_params["server_id"])
+    server = get_mcp_server(config.auth.sqlite_path, server_id)
+    if not server:
+        return JSONResponse({"error": "Server not found"}, status_code=404)
+    if (server.get("transport_type") or "http").lower() != "stdio":
+        return JSONResponse(
+            {"error": "Runtime details are available only for stdio servers"}, status_code=400
+        )
+
+    runtime = get_mcp_runtime(request)
+    process_detail = _safe_process_detail(runtime.process_manager, server_id)
+    process_detail = process_detail or {"aggregate": "unknown", "workers": []}
+    runtime_state = get_management_runtime_state(config.auth.sqlite_path, server_id)
+    server_fingerprint = str(server.get("config_fingerprint") or "")
+    applied_fingerprint = (
+        str(runtime_state.get("config_fingerprint") or "") if runtime_state else ""
+    )
+    applied = bool(
+        runtime_state and server_fingerprint and applied_fingerprint == server_fingerprint
+    )
+    management = server.get("management") if isinstance(server.get("management"), dict) else {}
+    managed = management.get("mode") not in {None, "none"}
+    runtime_fingerprint = applied_fingerprint or server_fingerprint
+    verified_this_boot = True
+    check_verified = getattr(
+        getattr(runtime, "control_plane", None), "is_runtime_revision_verified", None
+    )
+    if callable(check_verified):
+        verified_this_boot = bool(check_verified(server_id))
+    from authmcp_gateway.mcp.control_plane_contract import redact_audit_details
+
+    last_error = server.get("last_error")
+    redacted_error = redact_audit_details(last_error) if isinstance(last_error, str) else None
+
+    return JSONResponse(
+        {
+            "server_id": server_id,
+            "process": process_detail,
+            "health": {
+                "status": server.get("status") or "unknown",
+                "last_checked_at": server.get("last_health_check"),
+                "tools_count": server.get("tools_count"),
+                "last_error": redacted_error,
+            },
+            "traffic": get_server_request_metrics(config.auth.sqlite_path, server_id),
+            "configuration": {
+                "managed": managed,
+                "state": (
+                    "applied"
+                    if applied and verified_this_boot
+                    else (
+                        "restored"
+                        if applied
+                        else ("restart_required" if managed else "not_managed")
+                    )
+                ),
+                "generation": process_detail.get("generation"),
+                "fingerprint": (runtime_fingerprint[:12] if runtime_fingerprint else None),
+                "configured_fingerprint": (server_fingerprint[:12] if server_fingerprint else None),
+                "applied_fingerprint": (applied_fingerprint[:12] if applied_fingerprint else None),
+                "management_revision": (
+                    runtime_state.get("active_revision") if runtime_state else None
+                ),
+                "applied_at": runtime_state.get("applied_at") if runtime_state else None,
+            },
+        }
+    )
+
+
+@api_error_handler
+async def api_control_plane_operation(request: Request) -> JSONResponse:
+    """Execute one fixed, admin-only management operation."""
+    server_id = int(request.path_params["server_id"])
+    operation = str(request.path_params["operation"])
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError:
+        payload = {}
+    if not isinstance(payload, dict):
+        return JSONResponse({"error": "management params must be an object"}, status_code=400)
+    raw_correlation_id = request.headers.get("x-correlation-id")
+    correlation_id = (
+        raw_correlation_id
+        if raw_correlation_id and _CORRELATION_ID_RE.match(raw_correlation_id)
+        else uuid4().hex
+    )
+    try:
+        result = await get_control_plane_service(request).call(
+            server_id,
+            operation,
+            payload,
+            actor_user_id=int(request.state.user_id),
+            correlation_id=correlation_id,
+        )
+    except RuntimeError as exc:
+        code = getattr(exc, "code", "UNAVAILABLE")
+        status = {"VALIDATION_FAILED": 400, "CONFLICT": 409, "UNSUPPORTED": 422}.get(code, 503)
+        payload = {"error": "management request failed", "code": code}
+        if code == "VALIDATION_FAILED":
+            payload["field_errors"] = [{"field": "entity", "message": "Check the supplied values"}]
+        return JSONResponse(payload, status_code=status)
+    return JSONResponse(result)
+
+
+@api_error_handler
+async def api_control_plane_availability(request: Request) -> JSONResponse:
+    """Return only gateway-owned compatibility evidence for the Manage panel."""
+    server_id = int(request.path_params["server_id"])
+    try:
+        result = await get_control_plane_service(request).availability(server_id)
+    except RuntimeError:
+        result = {"available": False, "mode": "none", "reason": "management is unavailable"}
+    return JSONResponse(result)
+
+
+@api_error_handler
+async def api_update_management_profile(request: Request) -> JSONResponse:
+    """Bind one reviewed management profile and deliberately re-enter approval."""
+    from authmcp_gateway.mcp.store import (
+        get_mcp_server,
+        persist_management_config,
+        prepare_management_config,
+    )
+
+    server_id = int(request.path_params["server_id"])
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError:
+        return JSONResponse({"error": "Request body must be valid JSON"}, status_code=400)
+    profile = payload.get("profile") if isinstance(payload, dict) else None
+    if not isinstance(profile, str) or profile not in _MANAGEMENT_PROFILE_BINDINGS:
+        return JSONResponse({"error": "Choose a reviewed management profile"}, status_code=400)
+    db_path = get_config(request).auth.sqlite_path
+    server = get_mcp_server(db_path, server_id)
+    if not server:
+        return JSONResponse({"error": "Server not found"}, status_code=404)
+    try:
+        prepared = await asyncio.to_thread(
+            prepare_management_config, db_path, server_id, _MANAGEMENT_PROFILE_BINDINGS[profile]
+        )
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    runtime = get_mcp_runtime(request)
+    await runtime.block_and_stop_server(server_id)
+    try:
+        changed = persist_management_config(db_path, server_id, prepared)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    if not changed:
+        return JSONResponse({"error": "Server not found"}, status_code=404)
+    return JSONResponse(
+        {
+            "message": "Management profile saved; whitelist approval is required",
+            "profile": profile,
+            "approval_state": "pending",
+        }
+    )
 
 
 def _normalize_transport_payload(data: dict) -> dict:
@@ -622,17 +827,16 @@ async def api_delete_mcp_server(request: Request) -> JSONResponse:
 
     _config = get_config(request)
     server_id = int(request.path_params["server_id"])
+    runtime = get_mcp_runtime(request)
+    remove_server = getattr(runtime, "remove_server", None)
+    if callable(remove_server):
+        await remove_server(server_id)
+    else:
+        await runtime.block_and_stop_server(server_id)
 
     success = delete_mcp_server(_config.auth.sqlite_path, server_id)
 
     if success:
-        runtime = get_mcp_runtime(request)
-        remove_server = getattr(runtime, "remove_server", None)
-        if callable(remove_server):
-            await remove_server(server_id)
-        else:
-            await runtime.block_and_stop_server(server_id)
-
         return JSONResponse({"message": "Server deleted successfully"})
     else:
         return JSONResponse({"error": "Server not found"}, status_code=404)
@@ -641,13 +845,24 @@ async def api_delete_mcp_server(request: Request) -> JSONResponse:
 @api_error_handler
 async def api_update_mcp_server(request: Request) -> JSONResponse:
     """API: Update MCP server."""
-    from authmcp_gateway.mcp.store import get_mcp_server, update_mcp_server
+    from authmcp_gateway.mcp.store import (
+        get_mcp_server,
+        prepare_management_config,
+        update_mcp_server,
+    )
 
     _config = get_config(request)
     server_id = int(request.path_params["server_id"])
     data = await request.json()
     if not isinstance(data, dict):
         return JSONResponse({"error": "Request body must be a JSON object"}, status_code=400)
+
+    management_profile = data.pop("management_profile", None)
+    if management_profile is not None and (
+        not isinstance(management_profile, str)
+        or management_profile not in _MANAGEMENT_PROFILE_BINDINGS
+    ):
+        return JSONResponse({"error": "Choose a reviewed management profile"}, status_code=400)
 
     protected_fields = sorted(_PROTECTED_SERVER_UPDATE_FIELDS.intersection(data))
     if protected_fields:
@@ -674,6 +889,48 @@ async def api_update_mcp_server(request: Request) -> JSONResponse:
     merged = {**current, **data}
     normalized = _normalize_transport_payload(merged)
     data = {key: normalized.get(key) for key in requested_fields}
+    current_normalized = _normalize_transport_payload(dict(current))
+    data = {
+        key: value
+        for key, value in data.items()
+        if not _server_values_match(key, current_normalized.get(key), value)
+    }
+
+    prepared_management = None
+    if management_profile is not None:
+        candidate = {**current, **data}
+        try:
+            prepared_management = await asyncio.to_thread(
+                prepare_management_config,
+                _config.auth.sqlite_path,
+                server_id,
+                _MANAGEMENT_PROFILE_BINDINGS[management_profile],
+                server=candidate,
+            )
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        if prepared_management != (current.get("management") or {"mode": "none"}):
+            data["management_config"] = prepared_management
+        else:
+            prepared_management = None
+
+    effective_management = prepared_management or current.get("management") or {"mode": "none"}
+    if (normalized.get("transport_type") or "http").lower() != "stdio" and effective_management.get(
+        "mode"
+    ) != "none":
+        return JSONResponse(
+            {"error": "Clear the management profile before changing away from STDIO"},
+            status_code=400,
+        )
+
+    if not data and prepared_management is None:
+        return JSONResponse({"message": "No server changes detected"})
+
+    fenced_for_change = (
+        data.get("enabled") == 0 and current.get("enabled", True)
+    ) or prepared_management is not None
+    if fenced_for_change:
+        await get_mcp_runtime(request).block_and_stop_server(server_id)
 
     # Update server
     success = update_mcp_server(db_path=_config.auth.sqlite_path, server_id=server_id, **data)
@@ -684,14 +941,19 @@ async def api_update_mcp_server(request: Request) -> JSONResponse:
         if server and (
             not server.get("enabled", True) or server.get("approval_state") != "approved"
         ):
-            await runtime.block_and_stop_server(server_id)
+            if not fenced_for_change:
+                await runtime.block_and_stop_server(server_id)
         elif server:
             await runtime.reconcile_server(server)
 
         if server and server.get("approval_state") == "approved" and server.get("enabled", True):
             _schedule_health_check(_config.auth.sqlite_path, server_id)
 
-        return JSONResponse({"message": "Server updated successfully"})
+        approval_state = server.get("approval_state") if server else None
+        response = {"message": "Server updated successfully", "approval_state": approval_state}
+        if approval_state == "pending":
+            response["whitelist_url"] = f"/admin/whitelist?state=pending&server_id={server_id}"
+        return JSONResponse(response)
     else:
         return JSONResponse({"error": "Server not found"}, status_code=404)
 
@@ -848,9 +1110,23 @@ async def api_mcp_server_process_action(request: Request) -> JSONResponse:
             {"error": "Process actions are supported only for stdio transport"}, status_code=400
         )
 
-    process_manager = get_mcp_runtime(request).process_manager
+    runtime = get_mcp_runtime(request)
+    process_manager = runtime.process_manager
     if action in {"start", "restart"} and process_manager.is_blocked(server_id):
         return JSONResponse({"error": "STDIO server is blocked"}, status_code=403)
+    if action == "start" and process_manager.get_status(server_id) == "running":
+        return JSONResponse(
+            {
+                "message": "Process is already running",
+                "status": "running",
+                "management_warning": "Restart this server to apply pending management changes.",
+            }
+        )
+    expected_management_revision = None
+    control_plane = getattr(runtime, "control_plane", None)
+    capture_revision = getattr(control_plane, "capture_runtime_revision", None)
+    if action in {"start", "restart"} and callable(capture_revision):
+        expected_management_revision = await capture_revision(server_id)
     try:
         if action == "start":
             await process_manager.start_server(server_id, server)
@@ -867,7 +1143,9 @@ async def api_mcp_server_process_action(request: Request) -> JSONResponse:
             )
     except Exception as error:
         error_message = str(error).strip() or type(error).__name__
-        update_server_health(_config.auth.sqlite_path, server_id, status="error", error=error_message)
+        update_server_health(
+            _config.auth.sqlite_path, server_id, status="error", error=error_message
+        )
         return JSONResponse(
             {
                 "error": error_message,
@@ -876,6 +1154,10 @@ async def api_mcp_server_process_action(request: Request) -> JSONResponse:
             },
             status_code=502,
         )
+    finally:
+        control_plane = getattr(runtime, "control_plane", None)
+        if control_plane is not None:
+            await control_plane.invalidate(server_id)
 
     if action in {"start", "restart"}:
         if not mark_server_online_if_active(_config.auth.sqlite_path, server_id, tools_count):
@@ -892,11 +1174,25 @@ async def api_mcp_server_process_action(request: Request) -> JSONResponse:
                 },
                 status_code=409,
             )
+        record_applied = getattr(control_plane, "record_runtime_applied", None)
+        management_warning = None
+        if callable(record_applied):
+            try:
+                recorded = await record_applied(server_id, expected_management_revision)
+                if expected_management_revision and not recorded:
+                    management_warning = "Server started, but management changes remain pending."
+            except Exception:
+                logger.exception(
+                    "Could not persist management runtime state for server %s", server_id
+                )
+                management_warning = "Server started, but management state could not be saved."
 
     response: dict[str, object] = {
         "message": f"Process {action} requested",
         "status": process_manager.get_status(server_id),
     }
+    if action in {"start", "restart"} and management_warning:
+        response["management_warning"] = management_warning
     process_detail = _safe_process_detail(process_manager, server_id)
     if process_detail is not None:
         response["process_detail"] = process_detail
@@ -966,6 +1262,16 @@ async def api_whitelist_servers_action(request: Request) -> JSONResponse:
     approval_state = {"approve": "approved", "reject": "rejected", "revoke": "revoked"}.get(action)
     if not approval_state:
         return JSONResponse({"error": "Invalid action"}, status_code=400)
+    expected_fingerprint = payload.get("config_fingerprint")
+    if approval_state == "approved" and (
+        not isinstance(expected_fingerprint, str) or not expected_fingerprint
+    ):
+        return JSONResponse({"error": "Reload this server before approving it"}, status_code=400)
+
+    runtime = get_mcp_runtime(request)
+    fenced_for_revocation = approval_state != "approved"
+    if fenced_for_revocation:
+        await runtime.block_and_stop_server(server_id)
 
     success = update_server_approval(
         get_config(request).auth.sqlite_path,
@@ -974,16 +1280,18 @@ async def api_whitelist_servers_action(request: Request) -> JSONResponse:
         actor=actor,
         blocked_reason=reason,
         allowlist_policy=allowlist_policy,
+        expected_fingerprint=expected_fingerprint,
     )
     if not success:
         return JSONResponse(
-            {"error": "Server not found or does not match allowlist policy"},
-            status_code=400,
+            {
+                "error": "Server changed or does not match the allowlist policy; reload and review it again"
+            },
+            status_code=409,
         )
-    runtime = get_mcp_runtime(request)
     if approval_state == "approved":
         await runtime.allow_server(server_id)
-    else:
+    elif not fenced_for_revocation:
         await runtime.block_and_stop_server(server_id)
     return JSONResponse({"message": f"Server {approval_state}"})
 

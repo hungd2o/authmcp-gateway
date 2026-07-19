@@ -25,6 +25,8 @@ class MCPWorkerProtocol(Protocol):
         self, method: str, params: Dict[str, Any], *, timeout: float
     ) -> Dict[str, Any]: ...
 
+    async def send_notification(self, method: str, params: Dict[str, Any]) -> None: ...
+
 
 class ManagedStdioWorker(MCPWorkerProtocol):
     """A leased worker that owns one raw STDIO transport and request stream."""
@@ -37,6 +39,10 @@ class ManagedStdioWorker(MCPWorkerProtocol):
     @property
     def pid(self) -> int | None:
         return self.transport.pid
+
+    @property
+    def returncode(self) -> int | None:
+        return self.transport.returncode
 
     async def start(self) -> None:
         self.state = WorkerState.STARTING
@@ -63,6 +69,18 @@ class ManagedStdioWorker(MCPWorkerProtocol):
             response = await self.transport.send_request(payload, timeout)
             self.last_used_at = datetime.now(timezone.utc)
             return response
+        except BaseException:
+            self.state = WorkerState.UNHEALTHY
+            raise
+
+    async def send_notification(self, method: str, params: Dict[str, Any]) -> None:
+        if self.state is not WorkerState.BUSY:
+            raise RuntimeError("STDIO worker is not leased")
+        try:
+            await self.transport.send_notification(
+                {"jsonrpc": "2.0", "method": method, "params": params}
+            )
+            self.last_used_at = datetime.now(timezone.utc)
         except BaseException:
             self.state = WorkerState.UNHEALTHY
             raise

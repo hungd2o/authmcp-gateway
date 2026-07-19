@@ -94,3 +94,64 @@ def test_status_detail_exposes_runtime_counters_without_sensitive_configuration(
 
     assert detail == {"server_id": 4, "state": "stopped", "generation": 0, "workers": {}}
     assert not ({"command", "command_args", "env_vars", "working_dir"} & detail.keys())
+
+
+@pytest.mark.asyncio
+async def test_get_status_detail_exposes_live_worker_snapshot_and_restart_count():
+    manager = StdioProcessManager()
+    try:
+        await manager.start_server(6, _server_config())
+        first = manager.get_status_detail(6)
+
+        assert first["aggregate"] == "running"
+        assert first["pool_size"] == 1
+        assert first["restart_count"] == 0
+        assert first["workers"][0]["pid"] is not None
+        assert first["workers"][0]["uptime_secs"] is not None
+        assert not ({"command", "command_args", "env_vars", "working_dir"} & first.keys())
+
+        await manager.stop_server(6)
+        await manager.start_server(6, _server_config())
+        second = manager.get_status_detail(6)
+
+        assert second["aggregate"] == "running"
+        assert second["restart_count"] == 1
+    finally:
+        await manager.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_live_status_detail_exposes_safe_worker_operations_data():
+    manager = StdioProcessManager()
+    try:
+        await manager.start_server(8, _server_config())
+
+        detail = manager.get_status_detail(8)
+
+        assert detail["aggregate"] == "running"
+        assert detail["generation"] == 1
+        assert detail["max_workers"] >= 1
+        assert detail["workers"][0]["pid"] is not None
+        assert detail["workers"][0]["uptime_secs"] is not None
+        assert not ({"command", "command_args", "env_vars", "working_dir"} & detail.keys())
+    finally:
+        await manager.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_live_status_detail_reports_dead_workers_as_failed():
+    manager = StdioProcessManager()
+    try:
+        await manager.start_server(9, _server_config())
+        process = manager._pools[9].workers[0].transport._proc
+        assert process is not None
+        process.terminate()
+        await process.wait()
+
+        detail = manager.get_status_detail(9)
+
+        assert detail["aggregate"] == "failed"
+        assert detail["workers"][0]["state"] == "dead"
+        assert detail["workers"][0]["last_exit_code"] not in {None, 0}
+    finally:
+        await manager.stop_all()

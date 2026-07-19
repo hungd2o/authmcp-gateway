@@ -1,9 +1,13 @@
 """Database operations for MCP servers."""
 
+import hashlib
 import json
 import logging
+import shutil
 import sqlite3
-from datetime import datetime, timezone
+import subprocess
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, cast
 
 from authmcp_gateway.db import get_db
@@ -55,6 +59,11 @@ def _decrypt_server_dict(server: Dict[str, Any]) -> Dict[str, Any]:
             server["approval_metadata"] = json.loads(server["approval_metadata"])
         except json.JSONDecodeError:
             server["approval_metadata"] = {}
+    if isinstance(server.get("management_config"), str):
+        try:
+            server["management"] = json.loads(server["management_config"])
+        except json.JSONDecodeError:
+            server["management"] = {"mode": "none"}
     # Recompute risk_level from transport_type — corrects rows created before the
     # column existed whose DEFAULT 'low' is wrong for stdio/pipe transports.
     server["risk_level"] = default_risk_level(server.get("transport_type"))
@@ -118,7 +127,8 @@ def init_mcp_database(db_path: str) -> None:
                 config_fingerprint TEXT,
                 allowlist_policy TEXT,
                 approval_metadata TEXT,
-                blocked_reason TEXT
+                blocked_reason TEXT,
+                management_config TEXT NOT NULL DEFAULT '{"mode":"none"}'
             )
         """)
 
@@ -197,6 +207,85 @@ def init_mcp_database(db_path: str) -> None:
             "ON backend_mcp_token_audit(timestamp)"
         )
 
+        cursor.execute("PRAGMA user_version")
+        schema_version = cursor.fetchone()[0]
+        try:
+            cursor.execute(
+                "ALTER TABLE mcp_servers ADD COLUMN management_config "
+                "TEXT NOT NULL DEFAULT '{\"mode\":\"none\"}'"
+            )
+        except sqlite3.OperationalError:
+            pass
+        if schema_version < 1:
+            cursor.execute("PRAGMA user_version = 1")
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS management_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                mcp_server_id INTEGER NOT NULL,
+                actor_user_id INTEGER,
+                operation TEXT NOT NULL,
+                target_id_hash TEXT,
+                previous_revision TEXT,
+                revision TEXT,
+                idempotency_key TEXT,
+                correlation_id TEXT,
+                success INTEGER NOT NULL,
+                error_code TEXT,
+                details TEXT,
+                probe_evidence TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (mcp_server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS management_idempotency (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                mcp_server_id INTEGER NOT NULL,
+                operation TEXT NOT NULL,
+                request_fingerprint TEXT NOT NULL,
+                result_json TEXT,
+                status TEXT NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (mcp_server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS management_probe (
+                mcp_server_id INTEGER PRIMARY KEY,
+                adapter TEXT NOT NULL,
+                compatible INTEGER NOT NULL,
+                observed_package TEXT,
+                observed_version TEXT,
+                failure_reason TEXT,
+                checked_at TIMESTAMP NOT NULL,
+                FOREIGN KEY (mcp_server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS management_runtime_state (
+                mcp_server_id INTEGER PRIMARY KEY,
+                active_revision TEXT NOT NULL,
+                config_fingerprint TEXT NOT NULL,
+                applied_at TIMESTAMP NOT NULL,
+                FOREIGN KEY (mcp_server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
+            )
+            """
+        )
+        audit_columns = {
+            row[1] for row in cursor.execute("PRAGMA table_info(management_audit)").fetchall()
+        }
+        if "correlation_id" not in audit_columns:
+            cursor.execute("ALTER TABLE management_audit ADD COLUMN correlation_id TEXT")
+
         # Add refresh_token_encrypted column if missing (migration for existing DBs)
         try:
             cursor.execute("ALTER TABLE mcp_servers ADD COLUMN refresh_token_encrypted TEXT")
@@ -265,6 +354,14 @@ def init_mcp_database(db_path: str) -> None:
         )
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_virtual_tools_approval_state ON virtual_tools(approval_state)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_management_audit_server_timestamp "
+            "ON management_audit(mcp_server_id, timestamp)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_management_idempotency_expires "
+            "ON management_idempotency(expires_at)"
         )
 
         conn.commit()
@@ -571,6 +668,7 @@ def update_mcp_server(db_path: str, server_id: int, **fields) -> bool:
         "allowlist_policy",
         "approval_metadata",
         "blocked_reason",
+        "management_config",
     }
 
     # Reject any keys not in the whitelist
@@ -593,10 +691,17 @@ def update_mcp_server(db_path: str, server_id: int, **fields) -> bool:
         fields["allowlist_policy"] = json.dumps(fields["allowlist_policy"])
     if "approval_metadata" in fields and fields["approval_metadata"] is not None:
         fields["approval_metadata"] = json.dumps(fields["approval_metadata"])
+    if "management_config" in fields and fields["management_config"] is not None:
+        fields["management_config"] = json.dumps(fields["management_config"])
 
     current = get_mcp_server(db_path, server_id)
     if current:
         merged = {**current, **fields}
+        # `get_mcp_server` exposes parsed management alongside its serialized
+        # database column. A pending replacement must fingerprint the new
+        # serialized binding, never the stale parsed projection.
+        if "management_config" in fields:
+            merged.pop("management", None)
         if isinstance(merged.get("command_args"), str):
             merged["command_args"] = json.loads(merged["command_args"] or "[]")
         if isinstance(merged.get("env_vars"), str):
@@ -609,7 +714,7 @@ def update_mcp_server(db_path: str, server_id: int, **fields) -> bool:
         current_fingerprint = current.get("config_fingerprint")
         current_state = (current.get("approval_state") or APPROVAL_PENDING).lower()
         fingerprint_changed = current_fingerprint != new_fingerprint
-        
+
         if current_state == APPROVAL_APPROVED and fingerprint_changed:
             fields["approval_state"] = APPROVAL_PENDING
             fields["blocked_reason"] = "Configuration changed and requires whitelist re-approval"
@@ -650,16 +755,27 @@ def update_server_health(
         tools_count: Number of tools available
         error: Error message if any
     """
-    fields: Dict[str, Any] = {
-        "status": status,
-        "last_health_check": datetime.now(timezone.utc).isoformat(),
-        "last_error": error,
-    }
-
-    if tools_count is not None:
-        fields["tools_count"] = tools_count
-
-    update_mcp_server(db_path, server_id, **fields)
+    now = datetime.now(timezone.utc).isoformat()
+    with _db_conn(db_path) as conn:
+        cursor = conn.cursor()
+        if tools_count is None:
+            cursor.execute(
+                """
+                UPDATE mcp_servers
+                SET status = ?, last_health_check = ?, last_error = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (status, now, error, now, server_id),
+            )
+        else:
+            cursor.execute(
+                """
+                UPDATE mcp_servers
+                SET status = ?, last_health_check = ?, last_error = ?, tools_count = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (status, now, error, tools_count, now, server_id),
+            )
 
 
 def mark_server_online_if_active(db_path: str, server_id: int, tools_count: int) -> bool:
@@ -891,6 +1007,335 @@ def check_user_mcp_access(db_path: str, user_id: int, mcp_server_id: int) -> boo
 # Token Management & Audit (NEW)
 
 
+def get_management_config(db_path: str, server_id: int) -> Optional[Dict[str, Any]]:
+    """Return the gateway-owned management binding for one server."""
+    server = get_mcp_server(db_path, server_id)
+    if server is None:
+        return None
+    management = server.get("management")
+    return management if isinstance(management, dict) else {"mode": "none"}
+
+
+def prepare_management_config(
+    db_path: str,
+    server_id: int,
+    management: Dict[str, Any],
+    *,
+    server: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Validate and pin a reviewed binding without changing server state."""
+    mode = management.get("mode")
+    if mode not in {"none", "native", "adapter"}:
+        raise ValueError("management.mode must be none, native, or adapter")
+    if mode == "adapter" and not isinstance(management.get("adapter"), str):
+        raise ValueError("adapter mode requires a reviewed adapter name")
+    server = server or get_mcp_server(db_path, server_id)
+    if server is None:
+        raise ValueError("Server not found")
+    if mode != "none" and server.get("transport_type") != "stdio":
+        raise ValueError("control-plane management supports STDIO servers only")
+    if mode == "adapter":
+        from .control_plane_manifests import ManifestError, load_manifest
+
+        try:
+            profile = load_manifest(management["adapter"])
+        except ManifestError as exc:
+            raise ValueError("adapter is not a built-in reviewed profile") from exc
+        management = {**management, "manifest_hash": profile["manifest_hash"]}
+        if profile["driver"] == "command-v1":
+            executable = shutil.which(profile["probe"]["executable"])
+            if executable is None:
+                raise ValueError("management executable is unavailable")
+            path = str(Path(executable).resolve())
+            try:
+                result = subprocess.run(
+                    [path, "--version"], text=True, capture_output=True,
+                    timeout=10, shell=False, check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise ValueError("management executable is unavailable") from exc
+            version = result.stdout.strip()
+            if result.returncode != 0 or not version.startswith(profile["probe"]["version_prefix"]):
+                raise ValueError("management executable version is unsupported")
+            management = {
+                **management,
+                "executable_path": path,
+                "executable_sha256": _file_sha256(Path(path)),
+                "observed_version": version,
+            }
+    return management
+
+
+def persist_management_config(
+    db_path: str, server_id: int, management: Dict[str, Any]
+) -> bool:
+    """Persist a previously validated management binding."""
+    return update_mcp_server(db_path, server_id, management_config=management)
+
+
+def update_management_config(
+    db_path: str, server_id: int, management: Dict[str, Any]
+) -> bool:
+    """Validate, pin, and persist a reviewed binding."""
+    prepared = prepare_management_config(db_path, server_id, management)
+    return persist_management_config(db_path, server_id, prepared)
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(64 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def log_management_audit(
+    db_path: str,
+    mcp_server_id: int,
+    operation: str,
+    *,
+    actor_user_id: Optional[int] = None,
+    target_id_hash: Optional[str] = None,
+    previous_revision: Optional[str] = None,
+    revision: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
+    correlation_id: Optional[str] = None,
+    success: bool = True,
+    error_code: Optional[str] = None,
+    details: Optional[Dict[str, str]] = None,
+    probe_evidence: Optional[str] = None,
+) -> None:
+    """Write redacted control-plane evidence; never accept raw backend errors."""
+    from .control_plane_contract import (
+        CONTROL_PLANE_ERROR_CODES,
+        CONTROL_PLANE_MAX_ERROR_TEXT_CHARS,
+        sanitize_management_payload,
+        validate_idempotency_key,
+    )
+
+    if not operation or len(operation) > 120:
+        raise ValueError("operation must be a bounded non-empty string")
+    if error_code is not None and error_code not in CONTROL_PLANE_ERROR_CODES:
+        raise ValueError("unsupported management error code")
+    if idempotency_key is not None:
+        idempotency_key = validate_idempotency_key(idempotency_key)
+    if correlation_id is not None and (not correlation_id or len(correlation_id) > 120):
+        raise ValueError("correlation_id must be a bounded non-empty string")
+    encoded_details = json.dumps(sanitize_management_payload(details or {}), sort_keys=True)
+    if len(encoded_details) > CONTROL_PLANE_MAX_ERROR_TEXT_CHARS:
+        raise ValueError("management audit details exceed the safe limit")
+    if probe_evidence is not None and len(probe_evidence) > CONTROL_PLANE_MAX_ERROR_TEXT_CHARS:
+        raise ValueError("probe evidence exceeds the safe limit")
+    if probe_evidence is not None:
+        probe_evidence = sanitize_management_payload({"evidence": probe_evidence})["evidence"]
+    with _db_conn(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO management_audit (
+                mcp_server_id, actor_user_id, operation, target_id_hash,
+                previous_revision, revision, idempotency_key, correlation_id, success, error_code,
+                details, probe_evidence, timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                mcp_server_id,
+                actor_user_id,
+                operation,
+                target_id_hash,
+                previous_revision,
+                revision,
+                idempotency_key,
+                correlation_id,
+                1 if success else 0,
+                error_code,
+                encoded_details,
+                probe_evidence,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+    from authmcp_gateway.security.logger import run_log_maintenance_if_due
+
+    run_log_maintenance_if_due(db_path)
+
+
+def get_management_runtime_state(db_path: str, server_id: int) -> Optional[Dict[str, Any]]:
+    """Return the adapter revision last applied to this server runtime."""
+    with _db_conn(db_path, row_factory=sqlite3.Row) as conn:
+        row = conn.execute(
+            "SELECT * FROM management_runtime_state WHERE mcp_server_id = ?", (server_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def set_management_runtime_state(
+    db_path: str, server_id: int, active_revision: str, config_fingerprint: str
+) -> None:
+    """Persist the configuration revision that passed a successful process start."""
+    with _db_conn(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO management_runtime_state (
+                mcp_server_id, active_revision, config_fingerprint, applied_at
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(mcp_server_id) DO UPDATE SET
+                active_revision = excluded.active_revision,
+                config_fingerprint = excluded.config_fingerprint,
+                applied_at = excluded.applied_at
+            """,
+            (server_id, active_revision, config_fingerprint, datetime.now(timezone.utc).isoformat()),
+        )
+
+
+def clear_management_runtime_state(db_path: str, server_id: int) -> None:
+    """Remove a prior apply marker before attempting a fresh runtime start."""
+    with _db_conn(db_path) as conn:
+        conn.execute(
+            "DELETE FROM management_runtime_state WHERE mcp_server_id = ?", (server_id,)
+        )
+
+
+def get_management_idempotency(
+    db_path: str, idempotency_key: str
+) -> Optional[Dict[str, Any]]:
+    """Return a non-expired retry receipt for an idempotent mutation."""
+    from .control_plane_contract import validate_idempotency_key
+
+    idempotency_key = validate_idempotency_key(idempotency_key)
+    with _db_conn(db_path, row_factory=sqlite3.Row) as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM management_idempotency
+            WHERE idempotency_key = ? AND expires_at > ?
+            """,
+            (idempotency_key, datetime.now(timezone.utc).isoformat()),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def complete_management_idempotency(
+    db_path: str,
+    *,
+    idempotency_key: str,
+    mcp_server_id: int,
+    operation: str,
+    request_fingerprint: str,
+    status: str,
+    result: Dict[str, Any],
+) -> bool:
+    """Persist the one replayable result for a successfully reserved mutation."""
+    from .control_plane_contract import validate_idempotency_key
+
+    if status not in {"completed", "failed"}:
+        raise ValueError("invalid idempotency completion status")
+    result_json = json.dumps(result, sort_keys=True)
+    if len(result_json) > 8 * 1024:
+        raise ValueError("idempotency result exceeds the safe limit")
+    with _db_conn(db_path) as conn:
+        cursor = conn.execute(
+            """
+            UPDATE management_idempotency SET result_json = ?, status = ?
+            WHERE idempotency_key = ? AND mcp_server_id = ? AND operation = ?
+              AND request_fingerprint = ? AND status = 'pending'
+            """,
+            (result_json, status, validate_idempotency_key(idempotency_key), mcp_server_id,
+             operation, request_fingerprint),
+        )
+    return cursor.rowcount == 1
+
+
+def save_management_probe(
+    db_path: str,
+    server_id: int,
+    *,
+    adapter: str,
+    compatible: bool,
+    observed_package: str | None = None,
+    observed_version: str | None = None,
+    failure_reason: str | None = None,
+) -> None:
+    """Persist bounded adapter compatibility evidence independently of the binding."""
+    from .control_plane_contract import truncate_untrusted_text
+
+    with _db_conn(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO management_probe (
+                mcp_server_id, adapter, compatible, observed_package, observed_version,
+                failure_reason, checked_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(mcp_server_id) DO UPDATE SET
+                adapter=excluded.adapter, compatible=excluded.compatible,
+                observed_package=excluded.observed_package, observed_version=excluded.observed_version,
+                failure_reason=excluded.failure_reason, checked_at=excluded.checked_at
+            """,
+            (server_id, truncate_untrusted_text(adapter, limit=64), int(compatible),
+             truncate_untrusted_text(observed_package, limit=120) if observed_package else None,
+             truncate_untrusted_text(observed_version, limit=120) if observed_version else None,
+             truncate_untrusted_text(failure_reason, limit=512) if failure_reason else None,
+             datetime.now(timezone.utc).isoformat()),
+        )
+
+
+def get_management_probe(db_path: str, server_id: int) -> Optional[Dict[str, Any]]:
+    with _db_conn(db_path, row_factory=sqlite3.Row) as conn:
+        row = conn.execute(
+            "SELECT * FROM management_probe WHERE mcp_server_id = ?", (server_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def create_management_idempotency(
+    db_path: str,
+    *,
+    idempotency_key: str,
+    mcp_server_id: int,
+    operation: str,
+    request_fingerprint: str,
+    status: str = "pending",
+    result: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Atomically reserve a retry key; ``False`` means it already exists."""
+    from .control_plane_contract import validate_idempotency_key
+
+    idempotency_key = validate_idempotency_key(idempotency_key)
+    if not operation or len(operation) > 120 or len(request_fingerprint) > 128:
+        raise ValueError("operation or request fingerprint is invalid")
+    result_json = json.dumps(result) if result is not None else None
+    if result_json is not None and len(result_json) > 8 * 1024:
+        raise ValueError("idempotency result exceeds the safe limit")
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(hours=24)
+    with _db_conn(db_path) as conn:
+        # The global unique key must be reusable after its 24-hour retention
+        # window; remove only the expired row in the same SQLite transaction.
+        conn.execute(
+            "DELETE FROM management_idempotency WHERE idempotency_key = ? AND expires_at <= ?",
+            (idempotency_key, now.isoformat()),
+        )
+        cursor = conn.execute(
+            """
+            INSERT OR IGNORE INTO management_idempotency (
+                idempotency_key, mcp_server_id, operation, request_fingerprint,
+                result_json, status, expires_at, timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                idempotency_key,
+                mcp_server_id,
+                operation,
+                request_fingerprint,
+                result_json,
+                status,
+                expires_at.isoformat(),
+                now.isoformat(),
+            ),
+        )
+    from authmcp_gateway.security.logger import run_log_maintenance_if_due
+
+    run_log_maintenance_if_due(db_path)
+    return cursor.rowcount == 1
+
+
 def log_token_audit(
     db_path: str,
     mcp_server_id: int,
@@ -1111,6 +1556,7 @@ def update_server_approval(
     actor: str,
     blocked_reason: Optional[str] = None,
     allowlist_policy: Optional[Dict[str, Any]] = None,
+    expected_fingerprint: Optional[str] = None,
 ) -> bool:
     server = get_mcp_server(db_path, server_id)
     if not server:
@@ -1126,6 +1572,28 @@ def update_server_approval(
             policy = derive_server_allowlist_policy(server)
         if not server_matches_allowlist_policy(server, policy):
             return False
+
+        if expected_fingerprint is not None:
+            with _db_conn(db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    UPDATE mcp_servers
+                    SET approval_state = ?, approval_metadata = ?, blocked_reason = NULL,
+                        allowlist_policy = ?, updated_at = ?
+                    WHERE id = ? AND approval_state != ? AND config_fingerprint = ?
+                    """,
+                    (
+                        approval_state,
+                        json.dumps(metadata),
+                        json.dumps(policy),
+                        now,
+                        server_id,
+                        APPROVAL_APPROVED,
+                        expected_fingerprint,
+                    ),
+                )
+                return cursor.rowcount == 1
 
     updates: Dict[str, Any] = {
         "approval_state": approval_state,

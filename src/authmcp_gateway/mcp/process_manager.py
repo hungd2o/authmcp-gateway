@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from .stdio_lease import WorkerLease
@@ -25,6 +26,8 @@ class StdioProcessManager:
         self._transports: Dict[int, Any] = {}  # Legacy caller/test compatibility only.
         self._legacy_inflight: Dict[int, int] = {}
         self._legacy_idle: Dict[int, asyncio.Event] = {}
+        self._restart_counts: Dict[int, int] = {}
+        self._runtime_markers: Dict[int, tuple[int, int] | None] = {}
 
     def _lock(self, server_id: int) -> asyncio.Lock:
         return self._server_locks.setdefault(server_id, asyncio.Lock())
@@ -34,6 +37,23 @@ class StdioProcessManager:
         if self._legacy_inflight.get(server_id, 0) == 0:
             event.set()
         return event
+
+    def _record_running_instance(self, server_id: int, pool: ServerPool | None) -> None:
+        if pool is None:
+            return
+        marker = next(
+            (
+                (pool.generation, worker.pid)
+                for worker in pool.workers
+                if worker.pid is not None and worker.transport.is_running()
+            ),
+            None,
+        )
+        if marker is None or self._runtime_markers.get(server_id) == marker:
+            return
+        if server_id in self._runtime_markers:
+            self._restart_counts[server_id] = self._restart_counts.get(server_id, 0) + 1
+        self._runtime_markers[server_id] = marker
 
     def is_blocked(self, server_id: int) -> bool:
         return server_id in self._blocked_server_ids
@@ -88,6 +108,7 @@ class StdioProcessManager:
             if self.is_blocked(server_id):
                 await pool.block()
                 raise PermissionError(f"STDIO server {server_id} is blocked")
+            self._record_running_instance(server_id, pool)
             self._transports[server_id] = next(
                 worker.transport for worker in pool.workers if worker.transport.is_running()
             )
@@ -103,7 +124,9 @@ class StdioProcessManager:
             if pool is None:
                 raise RuntimeError(f"STDIO server {server_id} is not configured")
         await pool.reap_idle()
-        return await pool.acquire(purpose, timeout)
+        lease = await pool.acquire(purpose, timeout)
+        self._record_running_instance(server_id, pool)
+        return lease
 
     async def release(self, lease: WorkerLease, *, tainted: bool = False) -> None:
         await lease.release(tainted=tainted)
@@ -172,6 +195,8 @@ class StdioProcessManager:
             await self._stop_server_locked(server_id)
             self._pools.pop(server_id, None)
             self._transports.pop(server_id, None)
+            self._runtime_markers.pop(server_id, None)
+            self._restart_counts.pop(server_id, None)
 
     async def restart_server(self, server_id: int) -> None:
         async with self._lock(server_id):
@@ -185,7 +210,9 @@ class StdioProcessManager:
             self._pools.pop(server_id, None)
         await self.start_server(server_id, pool.server_config)
 
-    async def reconcile(self, server_id: int, server_config: Dict[str, Any]) -> bool:
+    async def reconcile(
+        self, server_id: int, server_config: Dict[str, Any], *, force_generation_swap: bool = False
+    ) -> bool:
         """Apply one configuration transition without dropping a healthy pool.
 
         Executable, arguments, working directory, and environment are security
@@ -197,7 +224,11 @@ class StdioProcessManager:
         async with self._lock(server_id):
             self._reject_if_closing()
             pool = self._pools.get(server_id)
-            if pool is not None and pool.fingerprint == config_fingerprint(config):
+            if (
+                pool is not None
+                and pool.fingerprint == config_fingerprint(config)
+                and not force_generation_swap
+            ):
                 return False
             if self.is_blocked(server_id):
                 return False
@@ -217,6 +248,7 @@ class StdioProcessManager:
             replacement.workers.append(worker)
             await replacement._start_worker(worker)
             self._pools[server_id] = replacement
+            self._record_running_instance(server_id, replacement)
             self._transports[server_id] = worker.transport
             await pool.stop()
             return True
@@ -248,6 +280,73 @@ class StdioProcessManager:
             "state": "blocked" if self.is_blocked(server_id) else "stopped",
             "generation": 0,
             "workers": {},
+        }
+
+    def get_status_detail(self, server_id: int) -> Dict[str, Any]:
+        """Return a safe, live operations snapshot without launch settings."""
+        if not (pool := self._pools.get(server_id)):
+            return {
+                "desired_state": "blocked" if self.is_blocked(server_id) else "stopped",
+                "pool_state": "blocked" if self.is_blocked(server_id) else "stopped",
+                "aggregate": "blocked" if self.is_blocked(server_id) else "stopped",
+                "generation": 0,
+                "pool_size": 0,
+                "active": 0,
+                "idle": 0,
+                "queue_depth": 0,
+                "max_workers": 0,
+                "min_workers": 0,
+                "max_queue": 0,
+                "restart_count": self._restart_counts.get(server_id, 0),
+                "workers": [],
+            }
+
+        now = datetime.now(timezone.utc)
+        workers = []
+        live_workers = []
+        for index, worker in enumerate(pool.workers, start=1):
+            is_live = worker.transport.is_running()
+            if is_live:
+                live_workers.append(worker)
+            uptime_secs = (
+                max(0, int((now - worker.started_at).total_seconds()))
+                if worker.started_at is not None
+                else None
+            )
+            workers.append(
+                {
+                    "worker_id": f"worker-{index}",
+                    "state": worker.state.value if is_live else "dead",
+                    "pid": worker.pid,
+                    "uptime_secs": uptime_secs,
+                    "last_exit_code": worker.returncode,
+                }
+            )
+        if self.is_blocked(server_id):
+            state = "blocked"
+        elif pool.state is PoolState.RUNNING and not live_workers:
+            state = (
+                "failed"
+                if any(worker.returncode not in {None, 0} for worker in pool.workers)
+                else "stopped"
+            )
+        else:
+            state = pool.state.value
+        return {
+            "desired_state": state,
+            "pool_state": state,
+            "aggregate": state,
+            "generation": pool.generation,
+            "pool_size": len(pool.workers),
+            "active": sum(worker.state.value == "busy" for worker in live_workers),
+            "idle": sum(worker.state.value == "ready" for worker in live_workers),
+            "queue_depth": pool._waiting,
+            "max_workers": pool.config.max_workers,
+            "min_workers": pool.config.min_workers,
+            "max_queue": pool.config.max_queue,
+            "restart_count": self._restart_counts.get(server_id, 0),
+            "config_fingerprint_short": pool.fingerprint[:12],
+            "workers": workers,
         }
 
     def list_running(self) -> Dict[int, str]:

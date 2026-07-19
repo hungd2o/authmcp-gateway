@@ -1,0 +1,40 @@
+{
+  "id": "gitnexus",
+  "version": "1.0.0",
+  "driver": "command-v1",
+  "probe": {"executable": "gitnexus", "version_prefix": "1.6."},
+  "commands": {
+    "entities_list": {
+      "argv": ["list"],
+      "parser": {
+        "kind": "textfsm-v1",
+        "required_pattern": "^\\s*Indexed Repositories\\s+\\(\\d+\\)\\s*$",
+        "template": "Value NAME (.+)\nValue PATH (.+)\nValue INDEXED (.+)\nValue COMMIT (\\S+)\nValue FILES (\\d+)\nValue SYMBOLS (\\d+)\nValue EDGES (\\d+)\nValue CLUSTERS (\\d+)\nValue PROCESSES (\\d+)\n\nStart\n  ^\\s*Indexed Repositories\\s+\\(\\d+\\)\\s*$$\n  ^\\s{2}${NAME}\\s*$$ -> Repo\n\nRepo\n  ^\\s+Path:\\s+${PATH}$$\n  ^\\s+Indexed:\\s+${INDEXED}$$\n  ^\\s+Commit:\\s+${COMMIT}$$\n  ^\\s+Stats:\\s+${FILES} files,\\s+${SYMBOLS} symbols,\\s+${EDGES} edges$$\n  ^\\s+Clusters:\\s+${CLUSTERS}$$\n  ^\\s+Processes:\\s+${PROCESSES}$$ -> Record Start\n",
+        "fields": {"name": "name", "path": "path", "commit": "commit", "files": "files", "symbols": "symbols", "edges": "edges", "clusters": "clusters", "processes": "processes"}
+      }
+    },
+    "actions": {
+      "index.analyze": {"argv": ["analyze", {"input": "path"}]},
+      "index.rebuild": {"argv": ["analyze", "--force", {"input": "path"}]},
+      "index.remove": {"argv": ["clean", "--force"], "cwd_input": "path"}
+    }
+  },
+  "descriptor": {
+    "extension": "com.authmcp/control-plane-v1",
+    "revision": "manifest",
+    "entities": [{
+      "type": "index",
+      "label": "Indexed repositories",
+      "id_field": "name",
+      "columns": [{"field": "name", "kind": "code"}, {"field": "path", "kind": "path"}, {"field": "files", "kind": "number"}, {"field": "symbols", "kind": "number"}, {"field": "status", "kind": "badge"}],
+      "schema": {"type": "object", "properties": {"name": {"type": "string", "maxLength": 120}, "path": {"type": "string", "maxLength": 8192}}, "required": ["name", "path"]},
+      "ops": ["list"]
+    }],
+    "actions": [
+      {"id": "index.analyze", "label": "Index repository", "icon": "scan-search", "target": "index", "risk": "mutating", "async": false, "params_schema": {"type": "object", "properties": {"path": {"type": "string", "maxLength": 8192}}, "required": ["path"]}},
+      {"id": "index.rebuild", "label": "Rebuild index", "icon": "rotate-cw", "target": "index", "risk": "destructive", "async": false, "params_schema": {"type": "object", "properties": {"path": {"type": "string", "maxLength": 8192}}, "required": ["path"]}},
+      {"id": "index.remove", "label": "Remove index", "icon": "trash-2", "target": "index", "risk": "destructive", "async": false, "params_schema": {"type": "object", "properties": {"path": {"type": "string", "maxLength": 8192}}, "required": ["path"]}}
+    ],
+    "status_fields": [{"field": "state", "kind": "badge"}]
+  }
+}

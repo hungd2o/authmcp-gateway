@@ -50,6 +50,16 @@ def build_server_fingerprint(server: Dict[str, Any]) -> str:
     else:
         payload["raw"] = server
 
+    management = server.get("management")
+    if not isinstance(management, dict):
+        raw_management = server.get("management_config")
+        if isinstance(raw_management, str):
+            try:
+                management = json.loads(raw_management)
+            except json.JSONDecodeError:
+                management = {"invalid": True}
+    payload["management"] = management if isinstance(management, dict) else {"mode": "none"}
+
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()
 

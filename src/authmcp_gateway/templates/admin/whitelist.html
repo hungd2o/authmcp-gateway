@@ -19,7 +19,7 @@
     <div class="bg-blue-50 border-l-4 border-blue-500 rounded-lg p-4 mb-6">
         <div class="flex items-start gap-3">
             <i data-lucide="info" class="w-5 h-5 text-blue-600 mt-0.5"></i>
-            <p class="text-sm text-blue-700">Servers and virtual tools must be <span class="font-semibold text-blue-900">approved</span> here before MCP clients can use them. Rejected or revoked items are blocked immediately.</p>
+            <p class="text-sm text-blue-700">Servers and virtual tools must be <span class="font-semibold text-blue-900">approved</span> here before MCP clients can use them. A management profile is part of the reviewed server configuration, so changing it returns the server here for approval.</p>
         </div>
     </div>
 
@@ -164,6 +164,12 @@
                             <span x-text="fmtWorkerOverride(server)"></span>
                         </div>
 
+                        <div class="mb-2 rounded-md border border-blue-100 bg-blue-50 px-2.5 py-2 text-xs text-blue-950">
+                            <span class="font-semibold">Management profile:</span>
+                            <span x-text="managementProfileLabel(server)"></span>
+                            <span x-show="server.management?.mode === 'adapter'" class="block mt-1 text-blue-800">This reviewed profile is included in the fingerprint below.</span>
+                        </div>
+
                         <!-- Fingerprint -->
                         <div class="text-xs text-gray-500 mb-2 flex items-center gap-1">
                             <span class="font-medium">Fingerprint:</span>
@@ -198,13 +204,13 @@
                         <!-- Action buttons (state-appropriate) -->
                         <div class="flex gap-2 flex-wrap">
                             <template x-if="server.approval_state === 'pending' || server.approval_state === 'rejected' || server.approval_state === 'revoked'">
-                                <button @click="actionServer(server.id, 'approve')" class="px-2 py-1 text-xs rounded bg-green-600 text-white hover:bg-green-700">Approve</button>
+                                <button @click="actionServer(server, 'approve')" class="px-2 py-1 text-xs rounded bg-green-600 text-white hover:bg-green-700">Approve</button>
                             </template>
                             <template x-if="server.approval_state === 'pending'">
-                                <button @click="actionServer(server.id, 'reject')" class="px-2 py-1 text-xs rounded bg-red-600 text-white hover:bg-red-700">Reject</button>
+                                <button @click="actionServer(server, 'reject')" class="px-2 py-1 text-xs rounded bg-red-600 text-white hover:bg-red-700">Reject</button>
                             </template>
                             <template x-if="server.approval_state === 'approved'">
-                                <button @click="actionServer(server.id, 'revoke')" class="px-2 py-1 text-xs rounded bg-amber-600 text-white hover:bg-amber-700">Revoke</button>
+                                <button @click="actionServer(server, 'revoke')" class="px-2 py-1 text-xs rounded bg-amber-600 text-white hover:bg-amber-700">Revoke</button>
                             </template>
                         </div>
                     </div>
@@ -398,11 +404,11 @@ function whitelistManager() {
             this.counts = newCounts;
         },
 
-        async actionServer(serverId, action) {
-            const res = await fetch(`/admin/api/whitelist/servers/${serverId}`, {
+        async actionServer(server, action) {
+            const res = await fetch(`/admin/api/whitelist/servers/${server.id}`, {
                 method: 'POST',
                 headers: this._headers({ 'Content-Type': 'application/json' }),
-                body: JSON.stringify({ action }),
+                body: JSON.stringify({ action, config_fingerprint: server.config_fingerprint }),
             });
             if (res.status === 401) {
                 this.lock('Whitelist token expired for this tab. Enter it again.');
@@ -498,6 +504,15 @@ function whitelistManager() {
             const minText = min == null ? 'default' : String(min);
             const maxText = max == null ? 'default' : String(max);
             return `min=${minText}, max=${maxText}`;
+        },
+
+        managementProfileLabel(server) {
+            if (server?.management?.mode !== 'adapter') return 'Not configured';
+            return server.management.adapter === 'gitnexus'
+                ? 'GitNexus · indexed repositories'
+                : server.management.adapter === 'gpt-repo'
+                    ? 'GPT Repo · registry'
+                    : 'Reviewed profile';
         },
 
         policyPairs(obj) {

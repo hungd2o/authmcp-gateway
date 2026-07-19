@@ -218,6 +218,11 @@ class AppConfig:
     mcp_log_db_max_mb: int = 200
     mcp_log_db_max_rows: int = 200000
     mcp_log_db_check_interval_seconds: int = 300
+    mgmt_audit_days_to_keep: int = 90
+    mgmt_audit_max_mb: int = 200
+    mgmt_audit_max_rows: int = 200000
+    mgmt_audit_archive_enabled: bool = True
+    mgmt_audit_archive_path: Optional[str] = "data/management-audit.jsonl"
     whitelist_token: Optional[str] = None
     whitelist_token_generated: bool = False
 
@@ -361,6 +366,13 @@ def load_config() -> AppConfig:
         mcp_log_db_max_mb=_env_int("MCP_LOG_DB_MAX_MB", 200),
         mcp_log_db_max_rows=_env_int("MCP_LOG_DB_MAX_ROWS", 200000),
         mcp_log_db_check_interval_seconds=_env_int("MCP_LOG_DB_CHECK_INTERVAL_SECONDS", 300),
+        mgmt_audit_days_to_keep=_env_int("MGMT_AUDIT_DAYS_TO_KEEP", 90),
+        mgmt_audit_max_mb=_env_int("MGMT_AUDIT_MAX_MB", 200),
+        mgmt_audit_max_rows=_env_int("MGMT_AUDIT_MAX_ROWS", 200000),
+        mgmt_audit_archive_enabled=_env_bool("MGMT_AUDIT_ARCHIVE_ENABLED", True),
+        mgmt_audit_archive_path=(
+            os.getenv("MGMT_AUDIT_ARCHIVE_PATH", "data/management-audit.jsonl").strip() or None
+        ),
         whitelist_token=os.getenv("MCP_WHITELIST_TOKEN", "").strip() or None,
     )
 

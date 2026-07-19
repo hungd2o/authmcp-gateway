@@ -64,6 +64,14 @@ def get_mcp_runtime(request: Request) -> "McpRuntime":
     return cast("McpRuntime", runtime)
 
 
+def get_control_plane_service(request: Request):
+    """Return the isolated admin management service."""
+    service = getattr(request.app.state, "control_plane_service", None)
+    if service is None:
+        raise RuntimeError("Control-plane service is not initialized")
+    return service
+
+
 def render_template(template_name: str, **context) -> HTMLResponse:
     """Render Jinja2 template with context.
 

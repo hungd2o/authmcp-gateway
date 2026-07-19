@@ -8,10 +8,12 @@ implicitly: `mcp/crypto.py` is initialised with a test secret so
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from authmcp_gateway.db import get_db
 from authmcp_gateway.mcp import store
 
 # ---------------------------------------------------------------------------
@@ -36,7 +38,7 @@ def mcp_db(initialized_db):
 
 
 def test_init_mcp_database_creates_tables(mcp_db):
-    """All four MCP tables exist after init."""
+    """MCP and control-plane persistence tables exist after init."""
     from authmcp_gateway.db import get_db
 
     expected = {
@@ -44,6 +46,9 @@ def test_init_mcp_database_creates_tables(mcp_db):
         "tool_mappings",
         "user_mcp_permissions",
         "backend_mcp_token_audit",
+        "management_audit",
+        "management_idempotency",
+        "management_runtime_state",
     }
     with get_db(mcp_db, row_factory=None) as conn:
         names = {
@@ -51,6 +56,188 @@ def test_init_mcp_database_creates_tables(mcp_db):
             for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
     assert expected.issubset(names)
+
+
+def test_init_mcp_database_adds_correlation_id_to_existing_management_audit(initialized_db):
+    from authmcp_gateway.db import get_db
+
+    store.init_mcp_database(initialized_db)
+    with get_db(initialized_db) as conn:
+        conn.execute("ALTER TABLE management_audit DROP COLUMN correlation_id")
+
+    store.init_mcp_database(initialized_db)
+    with get_db(initialized_db) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(management_audit)")}
+    assert "correlation_id" in columns
+
+
+def test_management_config_audit_and_idempotency_are_persisted(mcp_db):
+    from authmcp_gateway.db import get_db
+
+    sid = store.create_mcp_server(
+        mcp_db,
+        "managed",
+        "http://unused-for-stdio",
+        transport_type="stdio",
+        command="gpt-repo-mcp",
+    )
+    binding = {"mode": "adapter", "adapter": "gpt-repo"}
+    assert store.update_management_config(mcp_db, sid, binding)
+    persisted_binding = store.get_management_config(mcp_db, sid)
+    assert persisted_binding["mode"] == "adapter"
+    assert persisted_binding["adapter"] == "gpt-repo"
+    assert persisted_binding["manifest_hash"]
+
+    store.log_management_audit(
+        mcp_db,
+        sid,
+        "repository.create",
+        actor_user_id=7,
+        target_id_hash="sha256:target",
+        idempotency_key="123e4567-e89b-12d3-a456-426614174000",
+        correlation_id="management-request-1",
+        success=True,
+        details={"outcome": "created", "access_token": "must-not-persist"},
+        probe_evidence="gpt-repo 2.4.1",
+    )
+    assert store.create_management_idempotency(
+        mcp_db,
+        idempotency_key="123e4567-e89b-12d3-a456-426614174000",
+        mcp_server_id=sid,
+        operation="repository.create",
+        request_fingerprint="sha256:request",
+        result={"id": "repo-a"},
+    )
+    assert not store.create_management_idempotency(
+        mcp_db,
+        idempotency_key="123e4567-e89b-12d3-a456-426614174000",
+        mcp_server_id=sid,
+        operation="repository.create",
+        request_fingerprint="sha256:request",
+    )
+
+    assert store.get_management_idempotency(
+        mcp_db, "123e4567-e89b-12d3-a456-426614174000"
+    )["operation"] == "repository.create"
+    with get_db(mcp_db) as conn:
+        audit = conn.execute("SELECT * FROM management_audit WHERE mcp_server_id = ?", (sid,)).fetchone()
+    assert audit["target_id_hash"] == "sha256:target"
+    assert audit["correlation_id"] == "management-request-1"
+    assert "must-not-persist" not in audit["details"]
+
+
+def test_management_idempotency_requires_uuid_and_uses_fixed_ttl(mcp_db):
+    sid = store.create_mcp_server(mcp_db, "idempotency", "https://idempotency/mcp")
+
+    with pytest.raises(ValueError):
+        store.create_management_idempotency(
+            mcp_db,
+            idempotency_key="not-a-uuid",
+            mcp_server_id=sid,
+            operation="repository.create",
+            request_fingerprint="sha256:request",
+        )
+
+    assert store.create_management_idempotency(
+        mcp_db,
+        idempotency_key="123e4567-e89b-12d3-a456-426614174001",
+        mcp_server_id=sid,
+        operation="repository.create",
+        request_fingerprint="sha256:request",
+    )
+    receipt = store.get_management_idempotency(
+        mcp_db, "123e4567-e89b-12d3-a456-426614174001"
+    )
+    expires_at = datetime.fromisoformat(receipt["expires_at"])
+    assert timedelta(hours=23, minutes=59) < expires_at - datetime.now(timezone.utc) <= timedelta(hours=24)
+
+
+def test_expired_management_idempotency_key_can_be_reserved_again(mcp_db):
+    sid = store.create_mcp_server(mcp_db, "expired-key", "https://expired/mcp")
+    key = "123e4567-e89b-12d3-a456-426614174099"
+    assert store.create_management_idempotency(
+        mcp_db, idempotency_key=key, mcp_server_id=sid,
+        operation="repository.create", request_fingerprint="sha256:old",
+    )
+    with get_db(mcp_db) as conn:
+        conn.execute(
+            "UPDATE management_idempotency SET expires_at = ? WHERE idempotency_key = ?",
+            ((datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(), key),
+        )
+    assert store.create_management_idempotency(
+        mcp_db, idempotency_key=key, mcp_server_id=sid,
+        operation="repository.create", request_fingerprint="sha256:new",
+    )
+
+
+def test_management_config_rejects_non_stdio_backends(mcp_db):
+    sid = store.create_mcp_server(mcp_db, "http-managed", "https://managed/mcp")
+
+    with pytest.raises(ValueError, match="STDIO"):
+        store.update_management_config(mcp_db, sid, {"mode": "native"})
+
+
+@pytest.mark.asyncio
+async def test_gpt_repo_service_replays_durable_mutation_and_records_probe(mcp_db, tmp_path):
+    """Exercise the real SQLite receipt/audit path and a real registry replacement."""
+    from authmcp_gateway.db import get_db
+    from authmcp_gateway.mcp.control_plane_service import ControlPlaneService
+
+    package_dir = tmp_path / "gpt-repo"
+    package_dir.mkdir()
+    (package_dir / "package.json").write_text(
+        '{"name":"gpt-repo-mcp","version":"0.1.0"}', encoding="utf-8"
+    )
+    registry = tmp_path / "registry.json"
+    registry.write_text('{"repos":[],"limits":{}}', encoding="utf-8")
+    root = tmp_path / "repository"
+    root.mkdir()
+    sid = store.create_mcp_server(
+        mcp_db, "gpt-repo", "http://unused", transport_type="stdio", command="node",
+        working_dir=str(package_dir), env_vars={"GPT_REPO_CONFIG": str(registry)},
+    )
+    store.update_management_config(mcp_db, sid, {"mode": "adapter", "adapter": "gpt-repo"})
+    store.update_server_approval(mcp_db, sid, "approved", actor="test")
+
+    class _ProcessManager:
+        def status_detail(self, _server_id): return {"generation": 0}
+
+    class _Native:
+        async def invalidate(self, _server_id): return None
+
+    service = ControlPlaneService(mcp_db, _ProcessManager(), _Native())
+    assert (await service.availability(sid))["available"] is True
+    descriptor = await service.call(sid, "descriptor", {})
+    payload = {
+        "entity_type": "repository", "entity": {"alias": "repo-a", "path": str(root), "mode": "read"},
+        "revision": descriptor["revision"], "request_id": "request-a",
+        "idempotency_key": "123e4567-e89b-12d3-a456-426614174010",
+    }
+    created = await service.call(sid, "entities_create", payload, actor_user_id=9, correlation_id="corr-a")
+    replay = await service.call(sid, "entities_create", payload, actor_user_id=9, correlation_id="corr-a")
+
+    assert created == replay
+    assert json.loads(registry.read_text(encoding="utf-8"))["repos"][0]["repo_id"] == "repo-a"
+    reconciled = []
+    async def _reconcile(_server): reconciled.append(True)
+    service.set_reconcile_callback(_reconcile)
+    await service.call(sid, "reconcile", {
+        "revision": created["revision"], "request_id": "reconcile-a",
+        "idempotency_key": "123e4567-e89b-12d3-a456-426614174011",
+    })
+    active = await service.call(sid, "entities_list", {"entity_type": "repository"})
+    assert reconciled == [True] and active["result"]["items"][0]["status"] == "active"
+    rebooted_service = ControlPlaneService(mcp_db, _ProcessManager(), _Native())
+    rebooted_status = await rebooted_service.call(sid, "status_get", {})
+    assert rebooted_status["result"]["state"] == "active"
+    with pytest.raises(RuntimeError):
+        await service.call(sid, "entities_create", {**payload, "entity": {"alias": "repo-b", "path": str(root)}})
+    with get_db(mcp_db) as conn:
+        probe = conn.execute("SELECT compatible, observed_version FROM management_probe WHERE mcp_server_id = ?", (sid,)).fetchone()
+        audit = conn.execute("SELECT details, correlation_id FROM management_audit WHERE mcp_server_id = ? AND correlation_id = ?", (sid, "corr-a")).fetchone()
+    assert probe["compatible"] == 1 and probe["observed_version"] == "0.1.0"
+    assert audit["correlation_id"] == "corr-a"
+    assert str(root) not in audit["details"]
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +417,23 @@ def test_update_server_health_writes_error(mcp_db):
     assert server["last_error"] == "Connection refused"
 
 
+def test_health_write_never_reopens_whitelist_approval(mcp_db):
+    sid = store.create_mcp_server(
+        mcp_db, "health-safe", "", transport_type="stdio", command="gpt-repo"
+    )
+    assert store.update_server_approval(mcp_db, sid, "approved", actor="test")
+    with get_db(mcp_db) as conn:
+        conn.execute(
+            "UPDATE mcp_servers SET config_fingerprint = ? WHERE id = ?", ("stale", sid)
+        )
+
+    store.update_server_health(mcp_db, sid, status="online", tools_count=3)
+
+    server = store.get_mcp_server(mcp_db, sid)
+    assert server["approval_state"] == "approved"
+    assert server["config_fingerprint"] == "stale"
+
+
 def test_delete_mcp_server_removes_row(mcp_db):
     sid = store.create_mcp_server(mcp_db, "x", "https://x/mcp")
     assert store.delete_mcp_server(mcp_db, sid) is True
@@ -403,6 +607,36 @@ def test_update_mcp_server_resets_approval_when_config_changes(mcp_db):
     store.update_mcp_server(mcp_db, sid, url="https://risk/new")
     server = store.get_mcp_server(mcp_db, sid)
     assert server["approval_state"] == "pending"
+
+
+def test_management_profile_change_requires_whitelist_reapproval(mcp_db):
+    sid = store.create_mcp_server(
+        mcp_db, "managed", "http://unused", transport_type="stdio", command="gpt-repo"
+    )
+    assert store.update_server_approval(mcp_db, sid, "approved", actor="test")
+
+    assert store.update_management_config(mcp_db, sid, {"mode": "adapter", "adapter": "gpt-repo"})
+
+    server = store.get_mcp_server(mcp_db, sid)
+    assert server["approval_state"] == "pending"
+    assert server["management"]["manifest_hash"]
+
+
+def test_whitelist_approval_rejects_a_stale_config_fingerprint(mcp_db):
+    sid = store.create_mcp_server(mcp_db, "stale-review", "https://stale/mcp")
+    first = store.get_mcp_server(mcp_db, sid)
+    stale_fingerprint = first["config_fingerprint"]
+
+    store.update_mcp_server(mcp_db, sid, url="https://stale/changed")
+
+    assert not store.update_server_approval(
+        mcp_db,
+        sid,
+        "approved",
+        actor="reviewer",
+        expected_fingerprint=stale_fingerprint,
+    )
+    assert store.get_mcp_server(mcp_db, sid)["approval_state"] == "pending"
 
 
 def test_virtual_tools_default_pending_and_filtering(mcp_db):

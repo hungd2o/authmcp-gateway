@@ -95,6 +95,11 @@ class StdioTransport(McpTransport):
         return self._proc.pid if self._proc is not None else None
 
     @property
+    def returncode(self) -> int | None:
+        """Current process exit code when the child has exited."""
+        return self._proc.returncode if self._proc is not None else None
+
+    @property
     def stderr_tail(self) -> tuple[str, ...]:
         """Bounded diagnostics for internal use; callers must not expose it to users."""
         return tuple(self._stderr_tail)
@@ -142,7 +147,7 @@ class StdioTransport(McpTransport):
                     self._stderr_tail.append(
                         line[: self.STDERR_LINE_BYTES].decode("utf-8", errors="replace")
                     )
-        except (asyncio.CancelledError, Exception):
+        except Exception:
             # Stderr is diagnostic-only. Never surface child output because it can contain secrets.
             return
 
@@ -168,9 +173,16 @@ class StdioTransport(McpTransport):
                 raise ValueError("STDIO transport returned a non-object JSON-RPC response")
             return response
 
-    async def _read_stdout_line(
-        self, proc: asyncio.subprocess.Process, *, timeout: float
-    ) -> bytes:
+    async def send_notification(self, payload: Dict[str, Any]) -> None:
+        """Write a JSON-RPC notification without consuming a response."""
+        async with self._io_lock:
+            proc = self._proc
+            if self._closing or proc is None or proc.returncode is not None or proc.stdin is None:
+                raise RuntimeError("STDIO transport process is not running")
+            proc.stdin.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
+            await proc.stdin.drain()
+
+    async def _read_stdout_line(self, proc: asyncio.subprocess.Process, *, timeout: float) -> bytes:
         """Read a single newline-delimited JSON-RPC message without readline() limits."""
         if proc.stdout is None:
             raise RuntimeError("STDIO transport process is not available")

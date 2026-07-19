@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
+from starlette.testclient import TestClient
 from starlette.requests import Request
 
 from authmcp_gateway.admin import mcp_servers_api
@@ -147,6 +148,185 @@ async def test_runtime_reconciles_only_an_active_authorized_stdio_pool(monkeypat
         ("unblock", 9),
     ]
     assert proxy.invalidated == [9, 9]
+
+
+@pytest.mark.asyncio
+async def test_runtime_forced_reconcile_starts_or_generation_swaps(monkeypatch):
+    from authmcp_gateway.admin import routes
+    for name, value in vars(mcp_servers_api).items():
+        if callable(value) and (name.startswith("admin_") or name.startswith("api_")):
+            monkeypatch.setattr(routes, name, value, raising=False)
+    from authmcp_gateway.app import McpRuntime
+
+    class Manager:
+        def __init__(self): self.running, self.calls = False, []
+        async def unblock_server(self, server_id): self.calls.append(("unblock", server_id))
+        def requires_reapproval(self, _server_id): return False
+        def get_status(self, _server_id): return "running" if self.running else "stopped"
+        async def start_server(self, server_id, _server): self.running = True; self.calls.append(("start", server_id))
+        async def reconcile(self, server_id, _server, *, force_generation_swap=False): self.calls.append(("swap", server_id, force_generation_swap))
+
+    class Proxy:
+        def invalidate_cache(self, _server_id): pass
+
+    runtime = McpRuntime(Proxy(), Manager())
+    server = {"id": 10, "transport_type": "stdio", "enabled": True, "approval_state": "approved"}
+    await runtime.reconcile_server(server, force_restart=True)
+    await runtime.reconcile_server(server, force_restart=True)
+
+    assert runtime.process_manager.calls == [("unblock", 10), ("start", 10), ("unblock", 10), ("swap", 10, True)]
+
+
+def test_gateway_boot_does_not_rewrite_management_runtime_state(monkeypatch, tmp_path):
+    from authmcp_gateway.mcp import store
+
+    class DummySettings:
+        def get(self, *_args, default=None):
+            return default
+
+    class FakeHealthChecker:
+        def start(self): return None
+        async def stop(self): return None
+
+    class FakeTokenRefresher:
+        def start(self): return None
+        async def stop(self): return None
+
+    class FakeProcessManager:
+        instances = []
+
+        def __init__(self):
+            self.started = []
+            self.probed = []
+            FakeProcessManager.instances.append(self)
+
+        async def start_server(self, server_id, server):
+            self.started.append((server_id, server["id"]))
+
+        async def probe_tools(self, server_id, *, timeout):
+            self.probed.append((server_id, timeout))
+            return 3
+
+        async def stop_all(self):
+            return None
+
+    class FakeProxy:
+        instances = []
+
+        def __init__(self, *_args, **_kwargs):
+            self._session_ids = {}
+            self._session_recovery_locks = {}
+            FakeProxy.instances.append(self)
+
+        def invalidate_cache(self, _server_id):
+            return None
+
+        async def close(self):
+            return None
+
+    class FakeNativeClient:
+        instances = []
+
+        def __init__(self, *_args, **_kwargs):
+            FakeNativeClient.instances.append(self)
+
+        async def close(self):
+            return None
+
+    class FakeControlPlane:
+        instances = []
+
+        def __init__(self, *_args, **_kwargs):
+            self.capture_calls = []
+            self.record_calls = []
+            self.reconcile_callbacks = []
+            FakeControlPlane.instances.append(self)
+
+        def set_reconcile_callback(self, callback):
+            self.reconcile_callbacks.append(callback)
+
+        async def invalidate(self, _server_id):
+            return None
+
+        async def close(self):
+            return None
+
+        async def capture_runtime_revision(self, server_id):
+            self.capture_calls.append(server_id)
+            return "rev-before-boot"
+
+        async def record_runtime_applied(self, server_id, revision):
+            self.record_calls.append((server_id, revision))
+            return True
+
+    sqlite_path = tmp_path / "auth.db"
+    store.init_mcp_database(str(sqlite_path))
+    server_id = store.create_mcp_server(
+        str(sqlite_path),
+        name="booted-stdio",
+        url="http://unused",
+        transport_type="stdio",
+        command="python",
+    )
+    store.update_server_approval(str(sqlite_path), server_id, "approved", actor="test")
+
+    class DummyConfig:
+        auth = SimpleNamespace(
+            sqlite_path=str(sqlite_path),
+            allowed_scopes=set(),
+            password_min_length=8,
+            password_require_uppercase=False,
+            password_require_lowercase=False,
+            password_require_digit=False,
+            password_require_special=False,
+            allow_registration=False,
+            allow_dcr=False,
+        )
+        jwt = SimpleNamespace(
+            secret_key="secret",
+            algorithm="HS256",
+            access_token_expire_minutes=30,
+            refresh_token_expire_days=30,
+            enforce_single_session=False,
+        )
+        request_timeout_seconds = 1
+        static_bearer_tokens = []
+        trusted_ips = []
+        allowed_origins = []
+        auth_required = False
+        mcp_public_url = "http://example.test"
+        whitelist_token = "token"
+        rate_limit = SimpleNamespace(enabled=False)
+
+    from authmcp_gateway.admin import routes
+
+    for name, value in vars(mcp_servers_api).items():
+        if callable(value) and (name.startswith("admin_") or name.startswith("api_")):
+            monkeypatch.setattr(routes, name, value, raising=False)
+
+    monkeypatch.setattr("authmcp_gateway.app.initialize_settings", lambda *_args, **_kwargs: DummySettings())
+    monkeypatch.setattr("authmcp_gateway.app.initialize_health_checker", lambda **_kwargs: FakeHealthChecker())
+    monkeypatch.setattr("authmcp_gateway.app.initialize_token_refresher", lambda **_kwargs: FakeTokenRefresher())
+    monkeypatch.setattr("authmcp_gateway.app.initialize_token_manager", lambda **_kwargs: None)
+    monkeypatch.setattr("authmcp_gateway.app.StdioProcessManager", FakeProcessManager)
+    monkeypatch.setattr("authmcp_gateway.app.McpProxy", FakeProxy)
+    monkeypatch.setattr("authmcp_gateway.app.NativeManagementClient", FakeNativeClient)
+    monkeypatch.setattr("authmcp_gateway.app.ControlPlaneService", FakeControlPlane)
+    monkeypatch.setattr("authmcp_gateway.app.ensure_whitelist_token", lambda token: (token, False))
+    monkeypatch.setattr("authmcp_gateway.app.initialize_crypto", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("authmcp_gateway.app.set_middleware_config", lambda **_kwargs: None)
+
+    from authmcp_gateway.app import create_app
+
+    with TestClient(create_app(DummyConfig())):
+        pass
+
+    process_manager = FakeProcessManager.instances[-1]
+    control_plane = FakeControlPlane.instances[-1]
+    assert process_manager.started == [(server_id, server_id)]
+    assert process_manager.probed and process_manager.probed[0][0] == server_id
+    assert control_plane.capture_calls == []
+    assert control_plane.record_calls == []
 
 
 @pytest.mark.asyncio

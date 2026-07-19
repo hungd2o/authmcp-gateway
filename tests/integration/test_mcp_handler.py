@@ -10,6 +10,7 @@ or real DB beyond the `mcp_db` fixture for `_log_mcp` writes.
 from __future__ import annotations
 
 import json
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -199,6 +200,29 @@ async def test_dispatch_unknown_namespaced_method_returns_method_not_found(handl
     body = _body(response)
     assert body["error"]["code"] == -32601
     assert "Method not found" in body["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_control_plane_method_is_not_exposed_to_mcp_clients(
+    handler, fake_proxy, caplog
+):
+    caplog.set_level(logging.DEBUG, logger="authmcp_gateway.mcp.handler")
+    response = await handler.handle_request(
+        _make_request(
+            body={
+                "jsonrpc": "2.0",
+                "id": 0,
+                "method": "com.authmcp/control-plane-v1/entities/list",
+                "params": {"access_token": "must-not-appear-in-logs"},
+            }
+        )
+    )
+
+    body = _body(response)
+    assert body["id"] == 0
+    assert body["error"]["code"] == -32601
+    assert "must-not-appear-in-logs" not in caplog.text
+    fake_proxy.call_tool.assert_not_called()
 
 
 @pytest.mark.asyncio

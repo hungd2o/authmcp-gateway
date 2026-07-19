@@ -1,0 +1,55 @@
+{
+  "id": "gpt-repo",
+  "version": "0.1.0",
+  "driver": "structured-store-v1",
+  "probe": {"package_name": "gpt-repo-mcp", "package_version": "0.1.0"},
+  "bindings": {
+    "registry_path": [
+      {"from": "argument", "flag": "--config", "occurrence": "last", "allow_equals": true},
+      {"from": "environment", "keys": ["GPT_REPO_CONFIG", "REPO_READER_CONFIG"]},
+      {"from": "literal", "value": "./config.local.json"}
+    ],
+    "package_root": [
+      {"from": "working_dir"},
+      {"from": "parent", "binding": "registry_path"}
+    ]
+  },
+  "document": {
+    "binding": "registry_path",
+    "environment": ["GPT_REPO_CONFIG", "REPO_READER_CONFIG"],
+    "collection": "repos",
+    "id_field": "repo_id",
+    "fields": {"alias": "repo_id", "path": "root"},
+    "derived": {"display_name": "alias"},
+    "virtual_fields": {
+      "mode": {
+        "default": "read",
+        "rules": [
+          {"value": "ship", "all": [{"path": "writes.enabled", "equals": true}, {"path": "operations.enabled", "equals": true}]},
+          {"value": "write", "all": [{"path": "writes.enabled", "equals": true}]}
+        ],
+        "apply": {
+          "read": {"writes": {"enabled": false}, "operations": {"enabled": false}},
+          "write": {"writes": {"enabled": true, "allowed_globs": ["**"]}, "operations": {"enabled": false}},
+          "ship": {"writes": {"enabled": true, "allowed_globs": ["**"]}, "operations": {"enabled": true, "git_stage_enabled": true, "git_commit_enabled": true, "cleanup_enabled": true}}
+        }
+      }
+    },
+    "directory_field": "path",
+    "unique_fields": ["repo_id", "root"]
+  },
+  "descriptor": {
+    "extension": "com.authmcp/control-plane-v1",
+    "revision": "manifest",
+    "entities": [{
+      "type": "repository",
+      "label": "Repositories",
+      "id_field": "alias",
+      "columns": [{"field": "alias", "kind": "code"}, {"field": "path", "kind": "path"}, {"field": "mode", "kind": "badge"}, {"field": "status", "kind": "badge"}],
+      "schema": {"type": "object", "properties": {"alias": {"type": "string", "maxLength": 64, "pattern": "^[a-z0-9._-]+$"}, "path": {"type": "string", "maxLength": 8192}, "mode": {"type": "string", "enum": ["read", "write", "ship"]}}, "required": ["alias", "path", "mode"]},
+      "ops": ["list", "create", "update", "delete"]
+    }],
+    "actions": [],
+    "status_fields": [{"field": "state", "kind": "badge"}]
+  }
+}

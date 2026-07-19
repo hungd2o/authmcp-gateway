@@ -17,3 +17,11 @@
     to { opacity: 1; transform: translateY(0); }
 }
 .fade-in { animation: fadeIn 0.5s ease-out; }
+
+/* Keep each server's utility and process controls aligned as three fixed columns. */
+.server-control-cluster { width: 132px; }
+.server-control-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    place-items: center;
+}

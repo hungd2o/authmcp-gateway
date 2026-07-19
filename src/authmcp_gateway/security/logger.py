@@ -2,7 +2,10 @@
 
 import json
 import logging
+import math
+import os
 import sqlite3
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -11,7 +14,82 @@ from authmcp_gateway.db import get_db
 
 logger = logging.getLogger(__name__)
 
-_last_mcp_db_check_ts = 0.0
+_last_mcp_db_check_ts: dict[str, float] = {}
+_mcp_db_check_lock = threading.Lock()
+
+
+def run_log_maintenance_if_due(db_path: str) -> None:
+    """Run the shared, rate-limited retention and capacity check."""
+    from authmcp_gateway.config import get_config
+
+    config = get_config()
+    now = time.time()
+    interval = max(1, int(getattr(config, "mcp_log_db_check_interval_seconds", 300)))
+    db_key = os.path.normcase(os.path.abspath(db_path))
+    with _mcp_db_check_lock:
+        if now - _last_mcp_db_check_ts.get(db_key, 0.0) < interval:
+            return
+        _last_mcp_db_check_ts[db_key] = now
+    try:
+        with get_db(db_path, row_factory=None) as conn_check:
+            cur = conn_check.cursor()
+            cur.execute("PRAGMA page_count")
+            page_count = cur.fetchone()[0]
+            cur.execute("PRAGMA page_size")
+            page_size = cur.fetchone()[0]
+            db_mb = (page_count * page_size) / (1024 * 1024)
+            cur.execute("SELECT COUNT(*) FROM mcp_requests")
+            mcp_rows = cur.fetchone()[0]
+            cur.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'management_audit'"
+            )
+            management_audit_rows = 0
+            if cur.fetchone():
+                cur.execute("SELECT COUNT(*) FROM management_audit")
+                management_audit_rows = cur.fetchone()[0]
+
+        max_mb = getattr(config, "mcp_log_db_max_mb", 200)
+        max_rows = getattr(config, "mcp_log_db_max_rows", 200000)
+        management_max_mb = getattr(config, "mgmt_audit_max_mb", 200)
+        management_max_rows = getattr(config, "mgmt_audit_max_rows", 200000)
+        legacy_limits_exceeded = db_mb > max_mb or mcp_rows > max_rows
+        management_limits_exceeded = (
+            management_audit_rows > management_max_rows or db_mb > management_max_mb
+        )
+        if legacy_limits_exceeded:
+            logger.warning(
+                "MCP log DB limits exceeded (size=%.1fMB rows=%s); running cleanup",
+                db_mb,
+                mcp_rows,
+            )
+            cleanup_result = cleanup_old_logs(
+                db_path,
+                days_to_keep=getattr(config, "mcp_log_db_days_to_keep", 30),
+                management_max_rows=management_max_rows,
+                management_max_bytes=management_max_mb * 1024 * 1024,
+            )
+        else:
+            cleanup_result = cleanup_old_logs(
+                db_path,
+                include_legacy=False,
+                management_max_rows=management_max_rows,
+                management_max_bytes=management_max_mb * 1024 * 1024,
+            )
+        archive_unavailable = (
+            not (
+                getattr(config, "mgmt_audit_archive_enabled", True)
+                and getattr(config, "mgmt_audit_archive_path", None)
+            )
+            or "error" in cleanup_result
+        )
+        if management_limits_exceeded and archive_unavailable:
+            logger.warning(
+                "Management audit exceeds its retention capacity (rows=%s), "
+                "but archive-before-prune is unavailable; retaining records",
+                management_audit_rows,
+            )
+    except (sqlite3.Error, OSError) as exc:
+        logger.debug("MCP DB maintenance check failed: %s", exc)
 
 
 def log_security_event(
@@ -195,36 +273,7 @@ def log_mcp_request(
 
         # Periodic DB size/row check (runs rarely, separate connection)
         if db_logging_enabled:
-            global _last_mcp_db_check_ts
-            now = time.time()
-            interval = max(1, int(getattr(config, "mcp_log_db_check_interval_seconds", 300)))
-            if now - _last_mcp_db_check_ts >= interval:
-                _last_mcp_db_check_ts = now
-                try:
-                    with get_db(db_path, row_factory=None) as conn_check:
-                        cur = conn_check.cursor()
-                        cur.execute("PRAGMA page_count")
-                        page_count = cur.fetchone()[0]
-                        cur.execute("PRAGMA page_size")
-                        page_size = cur.fetchone()[0]
-                        db_mb = (page_count * page_size) / (1024 * 1024)
-                        cur.execute("SELECT COUNT(*) FROM mcp_requests")
-                        mcp_rows = cur.fetchone()[0]
-
-                    max_mb = getattr(config, "mcp_log_db_max_mb", 200)
-                    max_rows = getattr(config, "mcp_log_db_max_rows", 200000)
-                    if db_mb > max_mb or mcp_rows > max_rows:
-                        days = getattr(config, "mcp_log_db_days_to_keep", 30)
-                        logger.warning(
-                            f"MCP log DB limits exceeded (size={db_mb:.1f}MB rows={mcp_rows}); "
-                            f"running cleanup with days_to_keep={days}"
-                        )
-                        cleanup_old_logs(db_path, days_to_keep=days)
-                except (sqlite3.Error, OSError) as e:
-                    # PRAGMA queries + cleanup_old_logs (which writes an
-                    # archive file when configured). Either failing here is
-                    # non-critical; the log record itself is already saved.
-                    logger.debug(f"MCP DB size check failed: {e}")
+            run_log_maintenance_if_due(db_path)
 
         logger.debug(
             f"MCP request logged: {method} (tool={tool_name or 'N/A'}, "
@@ -235,7 +284,14 @@ def log_mcp_request(
         logger.error(f"Failed to log MCP request: {e}")
 
 
-def cleanup_old_logs(db_path: str, days_to_keep: int = 30) -> Dict[str, Any]:
+def cleanup_old_logs(
+    db_path: str,
+    days_to_keep: int = 30,
+    *,
+    include_legacy: bool = True,
+    management_max_rows: int | None = None,
+    management_max_bytes: int | None = None,
+) -> Dict[str, Any]:
     """Delete logs older than specified number of days.
 
     Args:
@@ -243,13 +299,17 @@ def cleanup_old_logs(db_path: str, days_to_keep: int = 30) -> Dict[str, Any]:
         days_to_keep: Number of days to keep logs (default: 30)
 
     Returns:
-        Dictionary with counts of deleted records per table
+        Dictionary with counts of deleted records per table. Set
+        ``include_legacy=False`` for periodic management-only maintenance;
+        legacy records then retain their historical threshold-triggered cleanup.
     """
     try:
         with get_db(db_path, row_factory=None) as conn:
             cursor = conn.cursor()
 
-            cutoff_date = (datetime.now(timezone.utc) - timedelta(days=days_to_keep)).isoformat()
+            now = datetime.now(timezone.utc)
+            now_iso = now.isoformat()
+            cutoff_date = (now - timedelta(days=days_to_keep)).isoformat()
 
             # Optional archive to file before deletion
             from authmcp_gateway.config import get_config
@@ -258,18 +318,31 @@ def cleanup_old_logs(db_path: str, days_to_keep: int = 30) -> Dict[str, Any]:
             archive_path = getattr(config, "mcp_log_db_archive_path", None)
             archive_enabled = getattr(config, "mcp_log_db_archive_enabled", False)
 
-            ALLOWED_TABLES = {"security_events", "mcp_requests", "auth_audit_log"}
+            ALLOWED_TABLES = {
+                "security_events",
+                "mcp_requests",
+                "auth_audit_log",
+                "management_audit",
+            }
 
-            def _archive_table(table_name: str) -> int:
-                if not (archive_enabled and archive_path):
+            def _table_exists(table_name: str) -> bool:
+                row = cursor.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table_name,)
+                ).fetchone()
+                return row is not None
+
+            def _archive_table(
+                table_name: str, cutoff: str, enabled: bool, path: Optional[str]
+            ) -> int:
+                if not (enabled and path):
                     return 0
                 if table_name not in ALLOWED_TABLES:
                     logger.error(f"Rejected invalid table name in cleanup: {table_name}")
                     return 0
-                cursor.execute(f"SELECT * FROM {table_name} WHERE timestamp < ?", (cutoff_date,))
+                cursor.execute(f"SELECT * FROM {table_name} WHERE timestamp < ?", (cutoff,))
                 columns = [d[0] for d in cursor.description]
                 archived = 0
-                with open(archive_path, "a", encoding="utf-8") as f:
+                with open(path, "a", encoding="utf-8") as f:
                     while True:
                         rows = cursor.fetchmany(500)
                         if not rows:
@@ -280,33 +353,130 @@ def cleanup_old_logs(db_path: str, days_to_keep: int = 30) -> Dict[str, Any]:
                             archived += 1
                 return archived
 
-            archived_security = _archive_table("security_events")
-            archived_mcp = _archive_table("mcp_requests")
-            archived_auth = _archive_table("auth_audit_log")
+            def _archive_management_ids(ids: list[int], path: Optional[str]) -> int:
+                if not ids or not path:
+                    return 0
+                marks = ",".join("?" for _ in ids)
+                cursor.execute(
+                    f"SELECT * FROM management_audit WHERE id IN ({marks}) ORDER BY id", ids
+                )
+                columns = [item[0] for item in cursor.description]
+                with open(path, "a", encoding="utf-8") as archive:
+                    for row in cursor.fetchall():
+                        archive.write(
+                            json.dumps(
+                                {"table": "management_audit", "row": dict(zip(columns, row))},
+                                ensure_ascii=False,
+                            )
+                            + "\n"
+                        )
+                return len(ids)
 
-            # Delete old security events
-            cursor.execute("DELETE FROM security_events WHERE timestamp < ?", (cutoff_date,))
-            security_deleted = cursor.rowcount
+            archived_security = archived_mcp = archived_auth = 0
+            security_deleted = mcp_deleted = auth_deleted = 0
+            if include_legacy:
+                archived_security = _archive_table(
+                    "security_events", cutoff_date, archive_enabled, archive_path
+                )
+                archived_mcp = _archive_table(
+                    "mcp_requests", cutoff_date, archive_enabled, archive_path
+                )
+                archived_auth = _archive_table(
+                    "auth_audit_log", cutoff_date, archive_enabled, archive_path
+                )
+                cursor.execute("DELETE FROM security_events WHERE timestamp < ?", (cutoff_date,))
+                security_deleted = cursor.rowcount
+                cursor.execute("DELETE FROM mcp_requests WHERE timestamp < ?", (cutoff_date,))
+                mcp_deleted = cursor.rowcount
+                cursor.execute("DELETE FROM auth_audit_log WHERE timestamp < ?", (cutoff_date,))
+                auth_deleted = cursor.rowcount
 
-            # Delete old MCP requests
-            cursor.execute("DELETE FROM mcp_requests WHERE timestamp < ?", (cutoff_date,))
-            mcp_deleted = cursor.rowcount
-
-            # Delete old auth audit logs
-            cursor.execute("DELETE FROM auth_audit_log WHERE timestamp < ?", (cutoff_date,))
-            auth_deleted = cursor.rowcount
+            idempotency_deleted = 0
+            audit_deleted = 0
+            archived_management_audit = 0
+            if _table_exists("management_idempotency"):
+                cursor.execute(
+                    "DELETE FROM management_idempotency WHERE expires_at < ?", (now_iso,)
+                )
+                idempotency_deleted = cursor.rowcount
+            if _table_exists("management_audit"):
+                audit_days = getattr(config, "mgmt_audit_days_to_keep", 90)
+                audit_cutoff = (now - timedelta(days=audit_days)).isoformat()
+                audit_archive_enabled = getattr(config, "mgmt_audit_archive_enabled", True)
+                audit_archive_path = getattr(config, "mgmt_audit_archive_path", None)
+                if audit_archive_enabled and audit_archive_path:
+                    archived_management_audit = _archive_table(
+                        "management_audit", audit_cutoff, True, audit_archive_path
+                    )
+                    cursor.execute(
+                        "DELETE FROM management_audit WHERE timestamp < ?", (audit_cutoff,)
+                    )
+                    audit_deleted = cursor.rowcount
+                    audit_columns = {
+                        row[1] for row in cursor.execute("PRAGMA table_info(management_audit)")
+                    }
+                    # Full-row accounting plus a conservative per-record allowance
+                    # keeps the configured cap below table/index storage in practice.
+                    byte_terms = [
+                        f"COALESCE(LENGTH(CAST({column} AS TEXT)), 0)" for column in audit_columns
+                    ]
+                    byte_expression = " + ".join(byte_terms) if byte_terms else "0"
+                    byte_expression = f"({byte_expression}) + 256"
+                    cursor.execute(
+                        f"SELECT COUNT(*), COALESCE(SUM({byte_expression}), 0) FROM management_audit"
+                    )
+                    audit_rows, audit_bytes = cursor.fetchone()
+                    max_rows = (
+                        management_max_rows
+                        if management_max_rows is not None
+                        else getattr(config, "mgmt_audit_max_rows", 200000)
+                    )
+                    max_bytes = (
+                        management_max_bytes
+                        if management_max_bytes is not None
+                        else getattr(config, "mgmt_audit_max_mb", 200) * 1024 * 1024
+                    )
+                    while audit_rows > max_rows or audit_bytes > max_bytes:
+                        by_rows = max(1, audit_rows - max_rows)
+                        by_bytes = max(
+                            1,
+                            int(audit_rows * max(0, audit_bytes - max_bytes) / max(audit_bytes, 1))
+                            + 1,
+                        )
+                        cursor.execute(
+                            "SELECT id FROM management_audit ORDER BY id LIMIT ?",
+                            (min(max(by_rows, by_bytes), 500),),
+                        )
+                        ids = [row[0] for row in cursor.fetchall()]
+                        archived_management_audit += _archive_management_ids(
+                            ids, audit_archive_path
+                        )
+                        marks = ",".join("?" for _ in ids)
+                        cursor.execute(f"DELETE FROM management_audit WHERE id IN ({marks})", ids)
+                        audit_deleted += cursor.rowcount
+                        cursor.execute(
+                            f"SELECT COUNT(*), COALESCE(SUM({byte_expression}), 0) FROM management_audit"
+                        )
+                        audit_rows, audit_bytes = cursor.fetchone()
 
         result = {
             "security_events": security_deleted,
             "mcp_requests": mcp_deleted,
             "auth_audit_log": auth_deleted,
-            "total": security_deleted + mcp_deleted + auth_deleted,
+            "management_audit": audit_deleted,
+            "management_idempotency": idempotency_deleted,
+            "total": security_deleted
+            + mcp_deleted
+            + auth_deleted
+            + audit_deleted
+            + idempotency_deleted,
         }
         if archive_enabled and archive_path:
             result["archived"] = {
                 "security_events": archived_security,
                 "mcp_requests": archived_mcp,
                 "auth_audit_log": archived_auth,
+                "management_audit": archived_management_audit,
             }
 
         logger.info(
@@ -471,6 +641,66 @@ def get_mcp_request_stats(db_path: str, last_hours: int = 24) -> Dict[str, Any]:
             "top_tools": [],
             "time_window_hours": last_hours,
         }
+
+
+def get_server_request_metrics(
+    db_path: str, server_id: int, *, last_hours: int = 1
+) -> Dict[str, Any]:
+    """Return recent, per-server request metrics when DB logging is available.
+
+    The gateway's file log is intentionally not parsed here: it can be rotated
+    and does not provide a stable source for an operations dashboard.  A null
+    metrics payload therefore means that request persistence is disabled or has
+    not collected any samples yet, never that there was no traffic.
+    """
+    from authmcp_gateway.config import get_config
+
+    if not getattr(get_config(), "mcp_log_db_enabled", False):
+        return {"available": False, "window_hours": last_hours}
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=last_hours)).isoformat()
+    try:
+        with get_db(db_path, row_factory=None) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT success, response_time_ms, error_message, timestamp
+                FROM mcp_requests
+                WHERE mcp_server_id = ? AND timestamp >= ?
+                ORDER BY timestamp DESC
+                LIMIT 500
+                """,
+                (server_id, cutoff),
+            )
+            rows = cursor.fetchall()
+    except sqlite3.Error:
+        return {"available": False, "window_hours": last_hours}
+
+    latencies = sorted(int(row[1]) for row in rows if isinstance(row[1], int) and row[1] >= 0)
+
+    def percentile(percent: float) -> int | None:
+        if not latencies:
+            return None
+        index = max(0, min(len(latencies) - 1, math.ceil(len(latencies) * percent) - 1))
+        return latencies[index]
+
+    last_timeout_at = next(
+        (
+            row[3]
+            for row in rows
+            if not bool(row[0]) and isinstance(row[2], str) and "timeout" in row[2].lower()
+        ),
+        None,
+    )
+    return {
+        "available": True,
+        "window_hours": last_hours,
+        "requests": len(rows),
+        "errors": sum(not bool(row[0]) for row in rows),
+        "p50_ms": percentile(0.50),
+        "p95_ms": percentile(0.95),
+        "last_timeout_at": last_timeout_at,
+    }
 
 
 def get_mcp_requests(

@@ -5,6 +5,7 @@ import json
 from authmcp_gateway.db import get_db
 from authmcp_gateway.security.logger import (
     cleanup_old_logs,
+    get_server_request_metrics,
     get_mcp_request_stats,
     get_security_events,
     log_security_event,
@@ -148,6 +149,35 @@ def test_get_mcp_request_stats(db_path):
     assert stats["successful_requests"] == 2
     assert stats["failed_requests"] == 1
     assert stats["success_rate"] == round(2 / 3 * 100, 2)
+
+
+def test_get_server_request_metrics_uses_persisted_samples_only(db_path, monkeypatch):
+    _create_tables(db_path)
+    from datetime import datetime, timezone
+    import authmcp_gateway.config
+
+    class _Config:
+        mcp_log_db_enabled = True
+
+    monkeypatch.setattr(authmcp_gateway.config, "get_config", lambda: _Config())
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db(db_path, row_factory=None) as conn:
+        conn.executemany(
+            "INSERT INTO mcp_requests (timestamp, mcp_server_id, success, response_time_ms, error_message) VALUES (?, ?, ?, ?, ?)",
+            [(now, 4, 1, 10, None), (now, 4, 1, 30, None), (now, 4, 0, 70, "request timeout")],
+        )
+
+    metrics = get_server_request_metrics(db_path, 4)
+
+    assert metrics == {
+        "available": True,
+        "window_hours": 1,
+        "requests": 3,
+        "errors": 1,
+        "p50_ms": 30,
+        "p95_ms": 70,
+        "last_timeout_at": now,
+    }
 
 
 def test_cleanup_archives(db_path, tmp_path, monkeypatch):

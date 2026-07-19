@@ -14,6 +14,7 @@ from starlette.responses import JSONResponse, Response
 from authmcp_gateway.utils import get_request_ip
 
 from ._exceptions import PROXY_DISCOVERY_DB_ERRORS
+from .control_plane_contract import is_control_plane_method
 from .proxy import (
     McpProxy,
     PromptNotFoundError,
@@ -46,13 +47,26 @@ class McpHandler:
             method = data.get("method")
             params = data.get("params", {})
 
+            user_id = getattr(request.state, "user_id", None)
+
+            if is_control_plane_method(method):
+                logger.warning("Rejected control-plane method on model-facing MCP route: %s", method)
+                self._log_mcp(
+                    method=str(method),
+                    user_id=user_id,
+                    success=False,
+                    error_message="Control-plane namespace is not available on model-facing MCP routes",
+                    request_id=jsonrpc_id,
+                    request=request,
+                )
+                return self._error_response(jsonrpc_id, -32601, "Method not found")
+
             logger.debug(
                 f"MCP request: method={method}, params={params}, server_name={server_name}"
             )
 
-            user_id = getattr(request.state, "user_id", None)
-
             # --- Dispatch ---
+
             if method == "initialize":
                 return await self._handle_initialize(
                     jsonrpc_id, params, user_id, server_name, request

@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+from uuid import uuid4
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AbstractSet
@@ -26,11 +27,13 @@ from .auth.user_store import init_database
 from .config import get_config
 from .csrf import CSRFMiddleware
 from .mcp.crypto import initialize_crypto
+from .mcp.control_plane_native_client import NativeManagementClient
+from .mcp.control_plane_service import ControlPlaneService
 from .mcp.handler import McpHandler
 from .mcp.health import initialize_health_checker
 from .mcp.process_manager import StdioProcessManager
 from .mcp.proxy import McpProxy
-from .mcp.store import init_mcp_database, list_mcp_servers
+from .mcp.store import init_mcp_database, list_mcp_servers, mark_server_online_if_active
 from .mcp.token_manager import initialize_token_manager
 from .mcp.token_refresher import initialize_token_refresher
 from .mcp.trust import ensure_whitelist_token
@@ -63,29 +66,53 @@ input, textarea, select, button {
 class McpRuntime:
     """Own the shared MCP proxy and STDIO lifecycle for one application."""
 
-    def __init__(self, proxy: McpProxy, process_manager: StdioProcessManager):
+    def __init__(self, proxy: McpProxy, process_manager: StdioProcessManager, control_plane=None):
         self.proxy = proxy
         self.process_manager = process_manager
+        self.control_plane = control_plane
 
     async def block_and_stop_server(self, server_id: int) -> None:
         """Fail closed, stop the server, and evict its request state."""
+        if self.control_plane:
+            fence = getattr(self.control_plane, "fence", None)
+            if callable(fence):
+                await fence(server_id)
         await self.process_manager.block_and_stop_server(server_id)
         self.proxy.invalidate_cache(server_id)
+        if self.control_plane:
+            await self.control_plane.invalidate(server_id)
 
     async def remove_server(self, server_id: int) -> None:
         """Remove a deleted server's pool before evicting its request state."""
+        if self.control_plane:
+            fence = getattr(self.control_plane, "fence", None)
+            if callable(fence):
+                await fence(server_id)
         await self.process_manager.block_server(server_id)
         await self.process_manager.stop_and_remove(server_id, blocked=True)
         self.proxy.invalidate_cache(server_id)
+        if self.control_plane:
+            await self.control_plane.invalidate(server_id)
 
     async def allow_server(self, server_id: int) -> None:
         """Allow an explicitly re-approved server to start again."""
         await self.process_manager.unblock_server(server_id)
         self.proxy.invalidate_cache(server_id)
+        if self.control_plane:
+            await self.control_plane.invalidate(server_id)
+            unfence = getattr(self.control_plane, "unfence", None)
+            if callable(unfence):
+                unfence(server_id)
 
-    async def reconcile_server(self, server: dict) -> None:
+    async def reconcile_server(
+        self, server: dict, *, force_restart: bool = False, control_plane_lifecycle: bool = True
+    ) -> None:
         """Reconcile a STDIO server while preserving safe live generations."""
         server_id = int(server["id"])
+        if self.control_plane and control_plane_lifecycle:
+            fence = getattr(self.control_plane, "fence", None)
+            if callable(fence):
+                await fence(server_id)
         if (server.get("transport_type") or "http").lower() != "stdio":
             await self.remove_server(server_id)
             return
@@ -99,7 +126,10 @@ class McpRuntime:
                 reconcile = getattr(self.process_manager, "reconcile", None)
                 if reconcile is not None:
                     await self.process_manager.unblock_server(server_id)
-                    await reconcile(server_id, server)
+                    if force_restart and self.process_manager.get_status(server_id) != "running":
+                        await self.process_manager.start_server(server_id, server)
+                    else:
+                        await reconcile(server_id, server, force_generation_swap=force_restart)
                 elif self.process_manager.get_status(server_id) == "running":
                     # Compatibility with lightweight runtime fakes used by
                     # external integrations before staged reconciliation.
@@ -109,10 +139,18 @@ class McpRuntime:
                 else:
                     await self.process_manager.unblock_server(server_id)
         self.proxy.invalidate_cache(server_id)
+        if self.control_plane and control_plane_lifecycle:
+            await self.control_plane.invalidate(server_id)
+            if server.get("enabled", True) and server.get("approval_state") == "approved":
+                unfence = getattr(self.control_plane, "unfence", None)
+                if callable(unfence):
+                    unfence(server_id)
 
     async def close(self) -> None:
         """Release application-owned MCP resources during shutdown."""
         await self.process_manager.stop_all()
+        if self.control_plane:
+            await self.control_plane.close()
         await self.proxy.close()
 
 
@@ -248,7 +286,16 @@ def create_app(config=None):
     mcp_proxy = McpProxy(
         config.auth.sqlite_path, timeout=proxy_timeout, process_manager=process_manager
     )
-    mcp_runtime = McpRuntime(mcp_proxy, process_manager)
+    control_plane_service = ControlPlaneService(
+        config.auth.sqlite_path, process_manager,
+        NativeManagementClient(timeout=proxy_timeout, boot_id=uuid4().hex),
+    )
+    mcp_runtime = McpRuntime(mcp_proxy, process_manager, control_plane_service)
+    control_plane_service.set_reconcile_callback(
+        lambda server: mcp_runtime.reconcile_server(
+            server, force_restart=True, control_plane_lifecycle=False
+        )
+    )
     mcp_handler = McpHandler(config.auth.sqlite_path, proxy=mcp_proxy)
 
     # Initialize health checker
@@ -527,16 +574,31 @@ def create_app(config=None):
 
         try:
             servers = list_mcp_servers(config.auth.sqlite_path, enabled_only=True)
-            for server in servers:
+        except Exception as e:
+            servers = []
+            logger.warning(f"STDIO auto-start skipped: {e}")
+        for server in servers:
+            try:
                 if (
                     (server.get("transport_type") or "http").lower() == "stdio"
                     and server.get("enabled", True)
                     and server.get("approval_state") == "approved"
                 ):
                     await process_manager.start_server(server["id"], server)
-            logger.info("✓ STDIO prewarm complete")
-        except Exception as e:
-            logger.warning(f"STDIO auto-start skipped: {e}")
+                    tools_count = await process_manager.probe_tools(
+                        int(server["id"]), timeout=float(server.get("timeout") or 10)
+                    )
+                    # App boot should restore the runtime process only; it must not
+                    # rewrite management reconciliation state, otherwise a pending
+                    # restart banner is lost across a gateway reboot.
+                    mark_server_online_if_active(
+                        config.auth.sqlite_path, int(server["id"]), tools_count
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"STDIO prewarm failed for server {server.get('id')}: {e}"
+                )
+        logger.info("✓ STDIO prewarm complete")
 
         # Start rate limiter cleanup task
         cleanup_task = None
@@ -735,6 +797,11 @@ def create_app(config=None):
                 methods=["GET"],
             ),
             Route(
+                "/admin/api/mcp-servers/{server_id:int}/runtime",
+                admin_routes.api_mcp_server_runtime,
+                methods=["GET"],
+            ),
+            Route(
                 "/admin/api/mcp-servers/{server_id:int}/virtual-tools",
                 admin_routes.api_create_virtual_tool,
                 methods=["POST"],
@@ -747,6 +814,21 @@ def create_app(config=None):
             Route(
                 "/admin/api/mcp-servers/{server_id:int}/process/{action:str}",
                 admin_routes.api_mcp_server_process_action,
+                methods=["POST"],
+            ),
+            Route(
+                "/admin/api/mcp-servers/{server_id:int}/management/availability",
+                admin_routes.api_control_plane_availability,
+                methods=["GET"],
+            ),
+            Route(
+                "/admin/api/mcp-servers/{server_id:int}/management/profile",
+                admin_routes.api_update_management_profile,
+                methods=["POST"],
+            ),
+            Route(
+                "/admin/api/mcp-servers/{server_id:int}/management/{operation:str}",
+                admin_routes.api_control_plane_operation,
                 methods=["POST"],
             ),
             Route(
@@ -883,6 +965,7 @@ def create_app(config=None):
     app.state.config = config
     app.state.auth_db_path = config.auth.sqlite_path
     app.state.mcp_runtime = mcp_runtime
+    app.state.control_plane_service = control_plane_service
     app.state.mcp_proxy = mcp_proxy
 
     # Mount static files with cache headers

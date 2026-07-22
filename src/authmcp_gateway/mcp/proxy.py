@@ -36,6 +36,7 @@ from .store import (
 )
 from .templating import resolve_template_string, resolve_templated_value
 from .transports import HttpTransport, McpTransport, PipeTransport
+from .transports.stdio_transport import _minimal_subprocess_env
 from .trust import approval_is_active
 
 logger = logging.getLogger(__name__)
@@ -1136,10 +1137,13 @@ class McpProxy:
         if not command:
             raise ToolNotFoundError("Virtual tool command is missing")
         command_args = [str(arg) for arg in (command_config.get("command_args") or [])]
-        env = os.environ.copy()
-        env.update(
-            {str(key): str(value) for key, value in (command_config.get("env_vars") or {}).items()}
-        )
+        
+        explicit_env = {
+            str(key): str(value)
+            for key, value in (command_config.get("env_vars") or {}).items()
+        }
+        env = _minimal_subprocess_env(explicit_env)
+        
         process = await asyncio.create_subprocess_exec(
             command,
             *command_args,

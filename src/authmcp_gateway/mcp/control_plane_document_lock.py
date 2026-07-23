@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import os
+import shutil
 import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 _LOCKS: dict[Path, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
@@ -63,27 +68,31 @@ def _write_owner(lock_path: Path) -> None:
 
 
 def _release_lock_directory(lock_path: Path) -> None:
-    (lock_path / _LOCK_OWNER_FILENAME).unlink(missing_ok=True)
-    lock_path.rmdir()
+    try:
+        (lock_path / _LOCK_OWNER_FILENAME).unlink(missing_ok=True)
+        lock_path.rmdir()
+    except OSError:
+        logger.exception("Failed to release management document lock: %s", lock_path)
+        raise
 
 
 def _reclaim_if_stale(lock_path: Path) -> bool:
     owner_path = lock_path / _LOCK_OWNER_FILENAME
+    owner_pid: int | None = None
     try:
         owner_pid_text, owner_time_text = owner_path.read_text(encoding="utf-8").split(":", 1)
         owner_pid, owner_time = int(owner_pid_text), float(owner_time_text)
     except (OSError, ValueError):
-        # No parseable owner marker (older holder, or a race while it was
-        # being written): fall back to the normal retry/timeout loop rather
-        # than guessing this is stale.
-        return False
+        try:
+            owner_time = lock_path.stat().st_mtime
+        except OSError:
+            return False
     if time.time() - owner_time < _LOCK_TIMEOUT_SECONDS:
         return False
-    if _pid_is_alive(owner_pid):
+    if owner_pid is not None and _pid_is_alive(owner_pid):
         return False
     try:
-        owner_path.unlink(missing_ok=True)
-        lock_path.rmdir()
+        shutil.rmtree(lock_path)
     except OSError:
         # Another process/thread may have reclaimed or released it first;
         # let the caller's normal retry loop sort out who wins.

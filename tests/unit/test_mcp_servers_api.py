@@ -125,15 +125,6 @@ def test_management_ui_uses_only_fixed_renderers_and_cancellable_polling():
     assert "x-html" not in template
 
 
-def test_whitelist_displays_the_reviewed_management_profile():
-    template = Path("src/authmcp_gateway/templates/admin/whitelist.html").read_text(
-        encoding="utf-8"
-    )
-    assert "Management profile:" in template
-    assert "managementProfileLabel(server)" in template
-    assert "included in the fingerprint" in template
-
-
 def test_endpoint_copy_looks_up_the_path_within_its_endpoint_container():
     template = Path("src/authmcp_gateway/templates/admin/mcp_servers.html").read_text(
         encoding="utf-8"

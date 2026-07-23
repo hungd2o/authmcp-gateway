@@ -2,10 +2,17 @@
 
 import os
 import secrets
+import stat
 import sys
+import tempfile
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import List, Optional, Set
+from urllib.parse import urlsplit
 
+from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -44,6 +51,128 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _append_env_value(name: str, value: str) -> bool:
+    """Persist a generated secret in an existing local ``.env`` file.
+
+    The application must keep generated credential-encryption keys stable
+    across restarts, but should not create a new configuration file solely for
+    this setting. Existing values are never overwritten.
+    """
+    env_path = Path(".env")
+    try:
+        if env_path.exists():
+            metadata = env_path.lstat()
+            if not stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+                raise OSError(".env must be a regular file, not a link")
+            if os.name != "nt" and metadata.st_mode & 0o077:
+                raise OSError(".env must not be readable by group or other users")
+            open_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(env_path, open_flags)
+            with os.fdopen(descriptor, "r", encoding="utf-8") as env_file:
+                content = env_file.read()
+        else:
+            content = ""
+        if any(line.strip().startswith(f"{name}=") for line in content.splitlines()):
+            return True
+        updated = content + ("\n" if content and not content.endswith("\n") else "") + f"{name}={value}\n"
+        descriptor, temporary_name = tempfile.mkstemp(prefix=".env.", dir=".", text=True)
+        try:
+            if os.name != "nt":
+                os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as env_file:
+                env_file.write(updated)
+                env_file.flush()
+                os.fsync(env_file.fileno())
+            os.replace(temporary_name, env_path)
+            if os.name != "nt":
+                directory = os.open(".", os.O_RDONLY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
+        except Exception:
+            Path(temporary_name).unlink(missing_ok=True)
+            raise
+        return True
+    except OSError as exc:
+        print(f"\n⚠️  Warning: Could not persist {name} to .env: {exc}", file=sys.stderr)
+        return False
+
+
+def _read_env_value(name: str) -> Optional[str]:
+    env_path = Path(".env")
+    if not env_path.is_file():
+        return None
+    try:
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            key, separator, value = line.partition("=")
+            if separator and key.strip() == name:
+                return value.strip() or None
+    except OSError:
+        return None
+    return None
+
+
+def initialize_whitelist_credential_key() -> str:
+    """Create and persist the Whitelist encryption key on explicit request.
+
+    Configuration loading must be read-only: silently creating a key during
+    startup can make credentials unrecoverable when the local environment file
+    is not the configuration source.  The CLI calls this deliberate bootstrap
+    operation instead.
+    """
+    with _credential_key_lock():
+        existing = os.getenv("WHITELIST_CREDENTIAL_ENCRYPTION_KEY") or _read_env_value(
+            "WHITELIST_CREDENTIAL_ENCRYPTION_KEY"
+        )
+        key = (existing or Fernet.generate_key().decode("ascii")).strip()
+        try:
+            Fernet(key.encode("ascii"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "WHITELIST_CREDENTIAL_ENCRYPTION_KEY must be a valid Fernet key"
+            ) from exc
+        if not _append_env_value("WHITELIST_CREDENTIAL_ENCRYPTION_KEY", key):
+            raise ValueError("Unable to persist WHITELIST_CREDENTIAL_ENCRYPTION_KEY to .env")
+        return key
+
+
+@contextmanager
+def _credential_key_lock():
+    """Serialize first-run key generation across independent worker processes."""
+    lock_path = Path(".env.whitelist-credential-key.lock")
+    deadline = time.monotonic() + 5
+    with lock_path.open("a+b") as lock_file:
+        while True:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    lock_file.seek(0)
+                    lock_file.write(b"0")
+                    lock_file.flush()
+                    lock_file.seek(0)
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise ValueError(
+                        "Timed out waiting to initialize WHITELIST_CREDENTIAL_ENCRYPTION_KEY"
+                    )
+                time.sleep(0.05)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 @dataclass
 class JWTConfig:
     """JWT token configuration."""
@@ -64,19 +193,10 @@ class JWTConfig:
                 # Auto-generate secret key
                 self.secret_key = secrets.token_urlsafe(32)
 
-                # Auto-create .env file if it doesn't exist
-                env_path = ".env"
-                if not os.path.exists(env_path):
+                if not os.path.exists(".env"):
                     try:
-                        with open(env_path, "w", encoding="utf-8") as f:
-                            f.write("# AuthMCP Gateway Configuration\n")
-                            f.write("# Auto-generated on first run\n\n")
-                            f.write(f"JWT_SECRET_KEY={self.secret_key}\n\n")
-                            f.write("# Uncomment to customize:\n")
-                            f.write("# HOST=0.0.0.0\n")
-                            f.write("# PORT=8000\n")
-                            f.write("# AUTH_SQLITE_PATH=data/auth.db\n")
-                            f.write("# PASSWORD_REQUIRE_SPECIAL=false\n")
+                        if not _append_env_value("JWT_SECRET_KEY", self.secret_key):
+                            raise OSError("secret persistence was refused")
                         print("\n" + "=" * 60, file=sys.stderr)
                         print("✓ Created .env file with generated JWT_SECRET_KEY", file=sys.stderr)
                         print("=" * 60 + "\n", file=sys.stderr)
@@ -92,6 +212,7 @@ class JWTConfig:
                             file=sys.stderr,
                         )
                 else:
+                    _append_env_value("JWT_SECRET_KEY", self.secret_key)
                     # .env exists but no JWT_SECRET_KEY - show warning
                     print("\n" + "=" * 60, file=sys.stderr)
                     print("⚠️  WARNING: Auto-generated JWT_SECRET_KEY", file=sys.stderr)
@@ -160,6 +281,52 @@ class RateLimitConfig:
 
 
 @dataclass
+class WhitelistAuthConfig:
+    """Whitelist second-factor session configuration (passkey/TOTP layer)."""
+
+    session_minutes: int = 15
+    passkey_fresh_seconds: int = 120
+    webauthn_rp_ids: List[str] = field(default_factory=list)
+    webauthn_allowed_origins: List[str] = field(default_factory=list)
+    credential_encryption_key: Optional[str] = None
+
+    def __post_init__(self):
+        if self.session_minutes <= 0 or self.session_minutes > 120:
+            raise ValueError("WHITELIST_SESSION_MINUTES must be between 1 and 120")
+        if self.passkey_fresh_seconds <= 0 or self.passkey_fresh_seconds > 600:
+            raise ValueError("WHITELIST_PASSKEY_FRESH_SECONDS must be between 1 and 600")
+        for origin in self.webauthn_allowed_origins:
+            parsed = urlsplit(origin)
+            try:
+                port = parsed.port
+            except ValueError as exc:
+                raise ValueError("WEBAUTHN_ALLOWED_ORIGINS contains an invalid port") from exc
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.hostname
+                or port is not None
+                and not 1 <= port <= 65535
+                or parsed.path
+                or parsed.query
+                or parsed.fragment
+                or parsed.username
+                or parsed.password
+            ):
+                raise ValueError(
+                    "WEBAUTHN_ALLOWED_ORIGINS values must be complete origins, for example "
+                    "https://admin.example.com"
+                )
+        if not self.credential_encryption_key:
+            return
+        try:
+            Fernet(self.credential_encryption_key.encode("ascii"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "WHITELIST_CREDENTIAL_ENCRYPTION_KEY must be a valid Fernet key"
+            ) from exc
+
+
+@dataclass
 class AppConfig:
     """Complete application configuration."""
 
@@ -225,6 +392,19 @@ class AppConfig:
     mgmt_audit_archive_path: Optional[str] = "data/management-audit.jsonl"
     whitelist_token: Optional[str] = None
     whitelist_token_generated: bool = False
+    whitelist_auth: WhitelistAuthConfig = field(default_factory=WhitelistAuthConfig)
+
+    def __post_init__(self) -> None:
+        """Derive WebAuthn defaults from the configured canonical public URL."""
+        parsed = urlsplit(self.mcp_public_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname or not parsed.netloc:
+            return
+        if not self.whitelist_auth.webauthn_rp_ids:
+            self.whitelist_auth.webauthn_rp_ids = [parsed.hostname.lower()]
+        if not self.whitelist_auth.webauthn_allowed_origins:
+            self.whitelist_auth.webauthn_allowed_origins = [
+                f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+            ]
 
     @property
     def retrieval_config_ttl(self) -> float:
@@ -374,6 +554,14 @@ def load_config() -> AppConfig:
             os.getenv("MGMT_AUDIT_ARCHIVE_PATH", "data/management-audit.jsonl").strip() or None
         ),
         whitelist_token=os.getenv("MCP_WHITELIST_TOKEN", "").strip() or None,
+        whitelist_auth=WhitelistAuthConfig(
+            session_minutes=_env_int("WHITELIST_SESSION_MINUTES", 15),
+            passkey_fresh_seconds=_env_int("WHITELIST_PASSKEY_FRESH_SECONDS", 120),
+            webauthn_rp_ids=_env_list("WEBAUTHN_RP_IDS"),
+            webauthn_allowed_origins=_env_list("WEBAUTHN_ALLOWED_ORIGINS"),
+            credential_encryption_key=os.getenv("WHITELIST_CREDENTIAL_ENCRYPTION_KEY", "").strip()
+            or None,
+        ),
     )
 
     return app_config

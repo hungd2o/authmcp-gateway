@@ -460,6 +460,9 @@ async def test_execute_virtual_tool_http_call_supports_path_query_and_headers(mo
     monkeypatch.setattr(
         "authmcp_gateway.mcp.proxy.get_mcp_server", lambda *_args, **_kwargs: source_server
     )
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.proxy.validate_virtual_http_destination", lambda *_args: None
+    )
 
     class FakeAsyncClient:
         def __init__(self, *args, **kwargs):
@@ -522,6 +525,9 @@ async def test_execute_virtual_tool_http_call_uses_body_template(monkeypatch, db
 
     monkeypatch.setattr(
         "authmcp_gateway.mcp.proxy.get_mcp_server", lambda *_args, **_kwargs: source_server
+    )
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.proxy.validate_virtual_http_destination", lambda *_args: None
     )
 
     class FakeAsyncClient:

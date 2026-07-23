@@ -23,7 +23,9 @@ from .auth import dcr_endpoints
 from .auth import endpoints as auth_endpoints
 from .auth.authorize_endpoint import authorize_page
 from .auth.oauth_code_flow import create_authorization_code_table
+from .auth.totp import initialize_whitelist_crypto
 from .auth.user_store import init_database
+from .auth.whitelist_store import init_whitelist_database
 from .config import get_config
 from .csrf import CSRFMiddleware
 from .mcp.crypto import initialize_crypto
@@ -252,10 +254,17 @@ def create_app(config=None):
     if config is None:
         config = get_config()
 
+    if not config.whitelist_auth.credential_encryption_key:
+        raise ValueError(
+            "WHITELIST_CREDENTIAL_ENCRYPTION_KEY is required. "
+            "Run 'authmcp-gateway init-whitelist-security' or configure it explicitly."
+        )
+
     # Initialize database
     init_database(config.auth.sqlite_path)
     create_authorization_code_table(config.auth.sqlite_path)
     init_mcp_database(config.auth.sqlite_path)
+    init_whitelist_database(config.auth.sqlite_path)
     logger.info(f"✓ Database initialized: {config.auth.sqlite_path}")
 
     # Initialize settings manager
@@ -272,6 +281,15 @@ def create_app(config=None):
 
     # Initialize token encryption
     initialize_crypto(config.jwt.secret_key)
+    initialize_whitelist_crypto(config.whitelist_auth.credential_encryption_key)
+    from authmcp_gateway.mcp.store import migrate_whitelist_approval_fingerprints
+
+    migrated_fingerprints = migrate_whitelist_approval_fingerprints(config.auth.sqlite_path)
+    if migrated_fingerprints:
+        logger.warning(
+            "%s Whitelist approvals require review after the fingerprint-policy update",
+            migrated_fingerprints,
+        )
     logger.info("✓ Token encryption initialized")
 
     # Read timeout settings (per-server overrides are in DB, global defaults here)
@@ -287,7 +305,8 @@ def create_app(config=None):
         config.auth.sqlite_path, timeout=proxy_timeout, process_manager=process_manager
     )
     control_plane_service = ControlPlaneService(
-        config.auth.sqlite_path, process_manager,
+        config.auth.sqlite_path,
+        process_manager,
         NativeManagementClient(timeout=proxy_timeout, boot_id=uuid4().hex),
     )
     mcp_runtime = McpRuntime(mcp_proxy, process_manager, control_plane_service)
@@ -595,9 +614,7 @@ def create_app(config=None):
                         config.auth.sqlite_path, int(server["id"]), tools_count
                     )
             except Exception as e:
-                logger.warning(
-                    f"STDIO prewarm failed for server {server.get('id')}: {e}"
-                )
+                logger.warning(f"STDIO prewarm failed for server {server.get('id')}: {e}")
         logger.info("✓ STDIO prewarm complete")
 
         # Start rate limiter cleanup task
@@ -661,6 +678,32 @@ def create_app(config=None):
             Route("/mcp/{server_name}/messages", mcp_server_messages_endpoint, methods=["POST"]),
             Route("/mcp/{server_name}", mcp_server_endpoint, methods=["GET", "POST"]),
             Route("/mcp", mcp_gateway_endpoint, methods=["GET", "POST"]),
+            Route("/whitelist/recover", admin_routes.whitelist_recovery_page, methods=["GET"]),
+            Route(
+                "/whitelist/recovery/claim",
+                admin_routes.api_whitelist_recovery_claim,
+                methods=["POST"],
+            ),
+            Route(
+                "/whitelist/recovery/passkeys/register/options",
+                admin_routes.api_whitelist_recovery_passkey_options,
+                methods=["POST"],
+            ),
+            Route(
+                "/whitelist/recovery/passkeys/register/verify",
+                admin_routes.api_whitelist_recovery_passkey_verify,
+                methods=["POST"],
+            ),
+            Route(
+                "/whitelist/recovery/totp/reset",
+                admin_routes.api_whitelist_recovery_totp_reset,
+                methods=["POST"],
+            ),
+            Route(
+                "/whitelist/recovery/rotate",
+                admin_routes.api_whitelist_recovery_rotate,
+                methods=["POST"],
+            ),
             # Auth endpoints
             Route("/auth/register", auth_endpoints.register, methods=["POST"]),
             Route("/auth/login", auth_endpoints.login, methods=["POST"]),
@@ -832,7 +875,102 @@ def create_app(config=None):
                 methods=["POST"],
             ),
             Route(
-                "/admin/api/whitelist/pending", admin_routes.api_whitelist_pending, methods=["GET"]
+                "/admin/api/whitelist/session", admin_routes.api_whitelist_session, methods=["GET"]
+            ),
+            Route(
+                "/admin/api/whitelist/unlock/legacy",
+                admin_routes.api_whitelist_unlock_legacy,
+                methods=["POST"],
+            ),
+            Route("/admin/api/whitelist/lock", admin_routes.api_whitelist_lock, methods=["POST"]),
+            Route(
+                "/admin/api/whitelist/security-methods/status",
+                admin_routes.api_whitelist_security_methods_status,
+                methods=["GET"],
+            ),
+            Route("/admin/api/whitelist/items", admin_routes.api_whitelist_items, methods=["GET"]),
+            Route(
+                "/admin/api/whitelist/servers/{server_id:int}/review",
+                admin_routes.api_whitelist_server_review,
+                methods=["GET"],
+            ),
+            Route(
+                "/admin/api/whitelist/virtual-tools/{tool_id:int}/review",
+                admin_routes.api_whitelist_virtual_tool_review,
+                methods=["GET"],
+            ),
+            Route(
+                "/admin/api/whitelist/passkeys",
+                admin_routes.api_whitelist_passkeys,
+                methods=["GET"],
+            ),
+            Route(
+                "/admin/api/whitelist/passkeys/register/options",
+                admin_routes.api_whitelist_passkey_registration_options,
+                methods=["POST"],
+            ),
+            Route(
+                "/admin/api/whitelist/passkeys/register/verify",
+                admin_routes.api_whitelist_passkey_registration_verify,
+                methods=["POST"],
+            ),
+            Route(
+                "/admin/api/whitelist/passkeys/authenticate/options",
+                admin_routes.api_whitelist_passkey_authentication_options,
+                methods=["POST"],
+            ),
+            Route(
+                "/admin/api/whitelist/passkeys/authenticate/verify",
+                admin_routes.api_whitelist_passkey_authentication_verify,
+                methods=["POST"],
+            ),
+            Route(
+                "/admin/api/whitelist/passkeys/{credential_id:str}",
+                admin_routes.api_whitelist_passkey_rename,
+                methods=["PATCH"],
+            ),
+            Route(
+                "/admin/api/whitelist/passkeys/{credential_id:str}",
+                admin_routes.api_whitelist_passkey_revoke,
+                methods=["DELETE"],
+            ),
+            Route(
+                "/admin/api/whitelist/totp", admin_routes.api_whitelist_totp_status, methods=["GET"]
+            ),
+            Route(
+                "/admin/api/whitelist/totp/setup",
+                admin_routes.api_whitelist_totp_setup,
+                methods=["POST"],
+            ),
+            Route(
+                "/admin/api/whitelist/totp/confirm",
+                admin_routes.api_whitelist_totp_confirm,
+                methods=["POST"],
+            ),
+            Route(
+                "/admin/api/whitelist/totp/verify",
+                admin_routes.api_whitelist_totp_verify,
+                methods=["POST"],
+            ),
+            Route(
+                "/admin/api/whitelist/totp",
+                admin_routes.api_whitelist_totp_remove,
+                methods=["DELETE"],
+            ),
+            Route(
+                "/admin/api/whitelist/authorize/prepare",
+                admin_routes.api_whitelist_authorize_prepare,
+                methods=["POST"],
+            ),
+            Route(
+                "/admin/api/whitelist/authorize/verify",
+                admin_routes.api_whitelist_authorize_verify,
+                methods=["POST"],
+            ),
+            Route(
+                "/admin/api/whitelist/recovery/status",
+                admin_routes.api_whitelist_recovery_status,
+                methods=["GET"],
             ),
             Route(
                 "/admin/api/whitelist/servers/{server_id:int}",

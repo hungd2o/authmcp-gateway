@@ -23,6 +23,7 @@ from ._exceptions import (
     PROXY_TOKEN_REFRESH_ERRORS,
     PROXY_TRANSPORT_ERRORS,
 )
+from .outbound_network_policy import OutboundDestinationError, validate_virtual_http_destination
 from .process_manager import get_process_manager
 from .stdio_pool_config import WorkerPoolOverloadedError, config_fingerprint
 from .store import (
@@ -932,6 +933,10 @@ class McpProxy:
                 raise ToolNotFoundError(
                     f"Virtual tool '{virtual_tool['name']}' has no URL configured"
                 )
+            try:
+                validate_virtual_http_destination(str(request_cfg.get("url") or ""), url)
+            except OutboundDestinationError as exc:
+                raise PermissionError(str(exc)) from exc
             payload = arguments or {}
             query_params = self._resolve_virtual_http_query(
                 method=method,
@@ -946,7 +951,7 @@ class McpProxy:
                 context=context,
             )
             async with httpx.AsyncClient(
-                timeout=float(source_server.get("timeout") or self.timeout)
+                timeout=float(source_server.get("timeout") or self.timeout), follow_redirects=False
             ) as client:
                 resp = await client.request(
                     method,

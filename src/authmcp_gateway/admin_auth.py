@@ -106,6 +106,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
             request.state.user_id = user_id
             request.state.username = payload.get("username")
             request.state.is_superuser = True
+            request.state.admin_session_jti = jti
 
             return await call_next(request)
 

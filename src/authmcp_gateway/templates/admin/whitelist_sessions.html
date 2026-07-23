@@ -1,0 +1,1700 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Whitelist approvals{% endblock %}
+
+{% block extra_styles %}
+.whitelist-root .bg-gray-800 { background-color: #1f2937; }
+.whitelist-root .bg-violet-600 { background-color: #7c3aed; }
+.whitelist-root .bg-white\/70 { background-color: rgba(255, 255, 255, 0.7); }
+.whitelist-root .border-amber-300 { border-color: #fcd34d; }
+.whitelist-root .border-dashed { border-style: dashed; }
+.whitelist-root .border-l-amber-400 { border-left-color: #fbbf24; }
+.whitelist-root .border-l-red-400 { border-left-color: #f87171; }
+.whitelist-root .border-l-gray-400 { border-left-color: #9ca3af; }
+.whitelist-root .contents { display: contents; }
+.whitelist-root .flex-col-reverse { flex-direction: column-reverse; }
+.whitelist-root .gap-5 { gap: 1.25rem; }
+.whitelist-root .left-3 { left: 0.75rem; }
+.whitelist-root .right-1\.5 { right: 0.375rem; }
+.whitelist-root .top-1\.5 { top: 0.375rem; }
+.whitelist-root .top-3 { top: 0.75rem; }
+.whitelist-root .max-h-56 { max-height: 14rem; }
+.whitelist-root .max-h-\[calc\(90vh-150px\)\] { max-height: calc(90vh - 150px); }
+.whitelist-root .min-h-\[72px\] { min-height: 72px; }
+.whitelist-root .min-w-max { min-width: max-content; }
+.whitelist-root .pl-9 { padding-left: 2.25rem; }
+.whitelist-root .pr-9 { padding-right: 2.25rem; }
+.whitelist-root .self-start { align-self: flex-start; }
+.whitelist-root .text-gray-100 { color: #f3f4f6; }
+.whitelist-root .text-red-900 { color: #7f1d1d; }
+.whitelist-root .text-violet-600 { color: #7c3aed; }
+.whitelist-root .tracking-widest { letter-spacing: 0.1em; }
+.whitelist-root button, .whitelist-root a { touch-action: manipulation; }
+.whitelist-root [role="dialog"] { overscroll-behavior: contain; }
+.whitelist-root .whitelist-entry { content-visibility: auto; contain-intrinsic-size: 0 220px; }
+.whitelist-root .hover\:bg-amber-100:hover { background-color: #fef3c7; }
+.whitelist-root .hover\:bg-gray-900:hover { background-color: #111827; }
+.whitelist-root .hover\:bg-violet-50:hover { background-color: #f5f3ff; }
+.whitelist-root .hover\:bg-violet-700:hover { background-color: #6d28d9; }
+.whitelist-root .hover\:border-blue-300:hover { border-color: #93c5fd; }
+.whitelist-root .hover\:text-amber-700:hover { color: #b45309; }
+.whitelist-root .hover\:text-blue-700:hover { color: #1d4ed8; }
+.whitelist-root .hover\:text-gray-800:hover { color: #1f2937; }
+.whitelist-root .focus\:ring-amber-500:focus { --tw-ring-color: #f59e0b; }
+.whitelist-root .focus\:ring-blue-200:focus { --tw-ring-color: #bfdbfe; }
+.whitelist-root .focus\:ring-gray-500:focus { --tw-ring-color: #6b7280; }
+.whitelist-root .focus\:ring-violet-200:focus { --tw-ring-color: #ddd6fe; }
+.whitelist-root .focus\:ring-white:focus { --tw-ring-color: #ffffff; }
+.whitelist-root .focus-within\:ring-2:focus-within { box-shadow: 0 0 0 2px var(--whitelist-focus-color, #3b82f6); }
+.whitelist-root .focus-within\:ring-red-500:focus-within { --whitelist-focus-color: #ef4444; }
+@media (min-width: 640px) {
+    .whitelist-root .sm\:flex-none { flex: none; }
+    .whitelist-root .sm\:gap-4 { gap: 1rem; }
+    .whitelist-root .sm\:items-end { align-items: flex-end; }
+    .whitelist-root .sm\:items-start { align-items: flex-start; }
+    .whitelist-root .sm\:justify-between { justify-content: space-between; }
+    .whitelist-root .sm\:justify-end { justify-content: flex-end; }
+    .whitelist-root .sm\:max-w-xs { max-width: 20rem; }
+    .whitelist-root .sm\:p-4 { padding: 1rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .whitelist-root *, .whitelist-root *::before, .whitelist-root *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+{% endblock %}
+
+{% block content %}
+<div
+    x-data="whitelistSessionManager()"
+    x-init="init()"
+    @keydown.escape.window="handleEscape()"
+    class="whitelist-root space-y-6"
+>
+    <header class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+            <div class="flex items-center gap-3">
+                <span class="rounded-xl bg-blue-100 p-2.5 text-blue-700">
+                    <i data-lucide="list-checks" class="h-7 w-7"></i>
+                </span>
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-900">Whitelist approvals</h1>
+                    <p class="mt-1 text-gray-600">Control exactly which MCP servers and virtual tools may operate.</p>
+                </div>
+            </div>
+        </div>
+        <div x-show="verified" x-cloak class="flex flex-wrap gap-2">
+            <button
+                type="button"
+                @click="openSecurityMethods()"
+                class="inline-flex items-center justify-center gap-2 rounded-lg border border-blue-200 bg-white px-4 py-2.5 text-sm font-semibold text-blue-800 shadow-sm transition-colors hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            >
+                <i data-lucide="fingerprint" class="h-4 w-4"></i>
+                Security methods
+            </button>
+            <button
+                type="button"
+                @click="lockNow()"
+                :disabled="verificationBusy || actionBusy"
+                class="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+                <i data-lucide="lock" class="h-4 w-4"></i>
+                Lock actions
+            </button>
+        </div>
+    </header>
+
+    <section
+        class="overflow-hidden rounded-xl border shadow-sm"
+        :class="verified ? 'border-emerald-200 bg-emerald-50' : 'border-blue-200 bg-white'"
+        aria-labelledby="whitelist-verification-heading"
+    >
+        <div class="p-5 sm:p-6">
+            <div class="flex items-start gap-3 sm:gap-4">
+                <span
+                    class="flex-shrink-0 rounded-full p-2.5"
+                    :class="verified ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'"
+                >
+                    <i :data-lucide="verified ? 'shield-check' : 'shield'" class="h-5 w-5"></i>
+                </span>
+                <div class="min-w-0 flex-1">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <h2 id="whitelist-verification-heading" class="text-lg font-bold text-gray-900">
+                            <span x-text="verified ? 'Whitelist actions are unlocked' : 'Confirm it is you before reviewing actions'"></span>
+                        </h2>
+                        <span
+                            x-show="verified"
+                            x-cloak
+                            class="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-800"
+                        >Verified</span>
+                    </div>
+
+                    <div x-show="verified" x-cloak>
+                        <p class="mt-1 text-sm leading-relaxed text-emerald-900">
+                            Verified with <span class="font-semibold" x-text="sessionMethodLabel()"></span> until
+                            <span class="font-semibold" x-text="formatExpiry(expiresAt)"></span>.
+                            High-risk local-process approvals still require a fresh passkey.
+                        </p>
+                    </div>
+
+                    <div x-show="verified && !securityStatus.has_passkey_for_current_rp && !dismissedPasskeyOnboarding" x-cloak class="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+                        <p class="font-bold">Set up a passkey for this site</p>
+                        <p class="mt-1">Your current verification works for this session, but this site has no passkey. Passkeys are required for high-risk local-process approvals and fresh credential removal.</p>
+                        <div class="mt-3 flex flex-wrap gap-2"><button type="button" @click="openSecurityMethods()" class="rounded-lg bg-amber-700 px-3 py-2 text-xs font-bold text-white hover:bg-amber-800">Set up passkey</button><button type="button" @click="dismissedPasskeyOnboarding = true" class="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-amber-900 hover:bg-amber-100">Dismiss for this session</button></div>
+                    </div>
+
+                    <div x-show="!verified" x-cloak class="mt-1">
+                        <p class="text-sm leading-relaxed text-gray-600">
+                            This extra check protects approve, reject, and revoke actions even when your admin session is already open.
+                        </p>
+
+                        <div
+                            x-show="pendingAction"
+                            class="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+                            role="status"
+                        >
+                            <div class="flex items-start gap-2">
+                                <i data-lucide="clock-3" class="mt-0.5 h-4 w-4 flex-shrink-0"></i>
+                                <p>
+                                    <span class="font-semibold">Your review is waiting.</span>
+                                    Verify first; the current configuration will be shown again before anything changes.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div class="mt-5 grid gap-3 lg:grid-cols-2">
+                            <button
+                                type="button"
+                                @click="verifyWithPasskey()"
+                                :disabled="verificationBusy || !passkeySupported"
+                                class="flex min-h-[72px] items-center gap-3 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 px-4 py-3 text-left text-white shadow-sm transition-colors hover:from-blue-700 hover:to-cyan-700 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                <span class="rounded-lg bg-white/15 p-2"><i data-lucide="fingerprint" class="h-5 w-5"></i></span>
+                                <span>
+                                    <span class="block font-bold" x-text="verificationMode === 'passkey' ? 'Waiting for passkey…' : 'Verify with passkey'"></span>
+                                    <span class="mt-0.5 block text-xs text-white/80">Fastest and required for high-risk approvals</span>
+                                </span>
+                            </button>
+
+                            <button
+                                type="button"
+                                @click="showTotpUnlock = !showTotpUnlock; showLegacyUnlock = false; refreshIcons()"
+                                :aria-expanded="showTotpUnlock"
+                                aria-controls="totp-unlock-panel"
+                                :disabled="verificationBusy"
+                                class="flex min-h-[72px] items-center gap-3 rounded-xl border border-gray-300 bg-white px-4 py-3 text-left text-gray-900 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                <span class="rounded-lg bg-violet-100 p-2 text-violet-700"><i data-lucide="smartphone" class="h-5 w-5"></i></span>
+                                <span>
+                                    <span class="block font-bold">Use authenticator code</span>
+                                    <span class="mt-0.5 block text-xs text-gray-500">Fallback for routine whitelist actions</span>
+                                </span>
+                            </button>
+                        </div>
+
+                        <p x-show="!passkeySupported" class="mt-3 text-sm text-amber-800">
+                            Passkeys are unavailable in this browser or connection. Use an authenticator code or the legacy token.
+                        </p>
+
+                        <form
+                            id="totp-unlock-panel"
+                            x-show="showTotpUnlock"
+                            x-cloak
+                            @submit.prevent="verifyWithTotp()"
+                            class="mt-4 rounded-xl border border-violet-200 bg-violet-50 p-4"
+                        >
+                            <label for="whitelist-totp-code" class="block text-sm font-semibold text-gray-900">Six-digit authenticator code</label>
+                            <p class="mt-1 text-xs text-gray-600">Use the current code from the authenticator app configured for this admin account.</p>
+                            <div class="mt-3 flex flex-col gap-3 sm:flex-row">
+                                <input
+                                    id="whitelist-totp-code"
+                                    x-model="totpCode"
+                                    @input="totpCode = totpCode.replace(/\D/g, '').slice(0, 6)"
+                                    type="text"
+                                    inputmode="numeric"
+                                    autocomplete="one-time-code"
+                                    name="totp_code"
+                                    spellcheck="false"
+                                    pattern="[0-9]{6}"
+                                    maxlength="6"
+                                    placeholder="Six-digit code…"
+                                    class="w-full rounded-lg border border-gray-300 px-3 py-2.5 font-mono text-lg tracking-widest focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-200 sm:max-w-xs"
+                                >
+                                <button
+                                    type="submit"
+                                    :disabled="verificationBusy || totpCode.length !== 6"
+                                    class="inline-flex items-center justify-center gap-2 rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-violet-700 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                    <i data-lucide="shield-check" class="h-4 w-4"></i>
+                                    <span x-text="verificationMode === 'totp' ? 'Checking…' : 'Verify code'"></span>
+                                </button>
+                            </div>
+                        </form>
+
+                        <div class="mt-4 border-t border-gray-200 pt-4">
+                            <button
+                                type="button"
+                                @click="showLegacyUnlock = !showLegacyUnlock; showTotpUnlock = false; refreshIcons()"
+                                :aria-expanded="showLegacyUnlock"
+                                aria-controls="legacy-unlock-panel"
+                                class="inline-flex items-center gap-2 rounded-md px-1 py-1 text-sm font-semibold text-gray-600 hover:text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            >
+                                <i data-lucide="key-round" class="h-4 w-4"></i>
+                                Use legacy whitelist token
+                                <i data-lucide="chevron-down" class="h-4 w-4 transition-transform" :class="showLegacyUnlock && 'rotate-180'"></i>
+                            </button>
+                            <form
+                                id="legacy-unlock-panel"
+                                x-show="showLegacyUnlock"
+                                x-cloak
+                                @submit.prevent="verifyWithLegacyToken()"
+                                class="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-4"
+                            >
+                                <label for="whitelist-bootstrap" class="block text-sm font-semibold text-gray-900">Legacy whitelist token</label>
+                                <p class="mt-1 text-xs text-gray-600">Migration fallback only. The token is exchanged once for a short-lived, HttpOnly browser session.</p>
+                                <div class="mt-3 flex flex-col gap-3 sm:flex-row">
+                                    <input
+                                        id="whitelist-bootstrap"
+                                        x-model="bootstrapValue"
+                                        type="password"
+                                        autocomplete="off"
+                                        name="legacy_whitelist_token"
+                                        spellcheck="false"
+                                        placeholder="Enter current token…"
+                                        class="w-full rounded-lg border border-gray-300 px-3 py-2.5 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                                    >
+                                    <button
+                                        type="submit"
+                                        :disabled="verificationBusy || !bootstrapValue.trim()"
+                                        class="inline-flex items-center justify-center gap-2 rounded-lg bg-gray-800 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                        <span x-text="verificationMode === 'legacy' ? 'Checking…' : 'Verify token'"></span>
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+
+                    <div
+                        x-show="verificationError"
+                        x-cloak
+                        class="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-800"
+                        role="alert"
+                        aria-live="assertive"
+                        x-text="verificationError"
+                    ></div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <div x-show="verified" x-cloak class="space-y-6">
+        <section class="rounded-xl border border-blue-100 bg-blue-50 p-4" aria-label="Action meanings">
+            <div class="grid gap-3 md:grid-cols-3">
+                <div class="flex items-start gap-3 rounded-lg bg-white/70 p-3">
+                    <span class="rounded-full bg-emerald-100 p-2 text-emerald-700"><i data-lucide="check" class="h-4 w-4"></i></span>
+                    <div><h2 class="text-sm font-bold text-gray-900">Approve</h2><p class="mt-0.5 text-xs leading-relaxed text-gray-600">Allows the reviewed configuration to operate. A changed fingerprint must be reviewed again.</p></div>
+                </div>
+                <div class="flex items-start gap-3 rounded-lg bg-white/70 p-3">
+                    <span class="rounded-full bg-amber-100 p-2 text-amber-700"><i data-lucide="x" class="h-4 w-4"></i></span>
+                    <div><h2 class="text-sm font-bold text-gray-900">Reject</h2><p class="mt-0.5 text-xs leading-relaxed text-gray-600">Denies a pending request. It can still be reviewed and approved later.</p></div>
+                </div>
+                <div class="flex items-start gap-3 rounded-lg bg-white/70 p-3">
+                    <span class="rounded-full bg-red-100 p-2 text-red-700"><i data-lucide="shield-off" class="h-4 w-4"></i></span>
+                    <div><h2 class="text-sm font-bold text-gray-900">Revoke</h2><p class="mt-0.5 text-xs leading-relaxed text-gray-600">Removes an existing approval. Revoked servers are blocked and stopped immediately.</p></div>
+                </div>
+            </div>
+        </section>
+
+        <section class="rounded-xl border border-gray-200 bg-white shadow-sm">
+            <div class="flex flex-col gap-4 border-b border-gray-200 p-4 sm:flex-row sm:items-end sm:justify-between sm:p-5">
+                <div class="min-w-0 overflow-x-auto">
+                    <nav class="flex min-w-max gap-1" role="tablist" aria-label="Whitelist state">
+                        <template x-for="tab in tabs" :key="tab.state">
+                            <button
+                                type="button"
+                                role="tab"
+                                @click="selectTab(tab.state)"
+                                :aria-selected="activeTab === tab.state"
+                                class="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                :class="activeTab === tab.state ? 'bg-blue-100 text-blue-800' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'"
+                            >
+                                <span x-text="tab.label"></span>
+                                <span class="rounded-full px-2 py-0.5 text-xs" :class="activeTab === tab.state ? 'bg-blue-200 text-blue-900' : 'bg-gray-100 text-gray-600'" x-text="counts[tab.state] ?? 0"></span>
+                            </button>
+                        </template>
+                    </nav>
+                </div>
+                <div class="w-full sm:max-w-xs">
+                    <label for="whitelist-search" class="sr-only">Search whitelist entries</label>
+                    <div class="relative">
+                        <i data-lucide="search" class="pointer-events-none absolute left-3 top-3 h-4 w-4 text-gray-400"></i>
+                        <input
+                            id="whitelist-search"
+                            x-model.debounce.150ms="searchQuery"
+                            type="search"
+                            autocomplete="off"
+                            name="whitelist_search"
+                            placeholder="Search name, type, command…"
+                            class="w-full rounded-lg border border-gray-300 py-2.5 pl-9 pr-9 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        >
+                        <button
+                            x-show="searchQuery"
+                            x-cloak
+                            type="button"
+                            @click="searchQuery = ''"
+                            class="absolute right-1.5 top-1.5 rounded-md p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            aria-label="Clear search"
+                        ><i data-lucide="x" class="h-4 w-4"></i></button>
+                    </div>
+                </div>
+            </div>
+
+            <div x-show="loadingItems" class="p-8 text-center" role="status" aria-live="polite">
+                <i data-lucide="loader-circle" class="mx-auto h-7 w-7 animate-spin text-blue-600"></i>
+                <p class="mt-3 text-sm font-medium text-gray-600">Loading current whitelist entries…</p>
+            </div>
+
+            <div x-show="!loadingItems" x-cloak class="grid gap-5 p-4 lg:grid-cols-2 sm:p-5">
+                <section class="overflow-hidden rounded-xl border border-gray-200 bg-gray-50" aria-labelledby="server-list-heading">
+                    <header class="flex items-center justify-between gap-3 bg-gradient-to-r from-blue-600 to-cyan-600 px-4 py-3.5 text-white">
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="server" class="h-5 w-5"></i>
+                            <h2 id="server-list-heading" class="font-bold">MCP servers</h2>
+                        </div>
+                        <span class="rounded-full bg-white/15 px-2.5 py-1 text-xs font-bold" x-text="filteredServers().length"></span>
+                    </header>
+                    <div class="space-y-3 p-3 sm:p-4">
+                        <div x-show="filteredServers().length === 0" class="rounded-lg border border-dashed border-gray-300 bg-white px-4 py-8 text-center">
+                            <i data-lucide="inbox" class="mx-auto h-6 w-6 text-gray-400"></i>
+                            <p class="mt-2 text-sm font-medium text-gray-600" x-text="searchQuery ? 'No servers match this search.' : 'No servers in this state.'"></p>
+                        </div>
+                        <template x-for="server in filteredServers()" :key="server.id">
+                            <article class="whitelist-entry rounded-lg border border-gray-200 border-l-4 bg-white p-4 shadow-sm" :class="cardClass(server.approval_state)">
+                                <div class="flex flex-wrap items-start gap-2">
+                                    <div class="min-w-0 flex-1">
+                                        <h3 class="break-words font-bold text-gray-900" x-text="server.name || 'Unnamed server'"></h3>
+                                        <p x-show="server.description" class="mt-1 line-clamp-2 text-xs leading-relaxed text-gray-500" x-text="server.description"></p>
+                                    </div>
+                                    <span class="rounded-full px-2 py-0.5 text-xs font-bold capitalize" :class="badgeClass(server.approval_state)" x-text="server.approval_state"></span>
+                                </div>
+                                <div class="mt-3 flex flex-wrap gap-2">
+                                    <span class="rounded bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-700" x-text="(server.transport_type || 'http').toUpperCase()"></span>
+                                    <span class="rounded px-2 py-1 text-xs font-bold" :class="isHighRisk('server', server) ? 'bg-red-100 text-red-800' : 'bg-emerald-100 text-emerald-800'" x-text="isHighRisk('server', server) ? 'High risk · local execution' : 'Standard risk'"></span>
+                                    <span x-show="server.enabled === 0 || server.enabled === false" class="rounded bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-600">Disabled</span>
+                                </div>
+                                <dl class="mt-3 space-y-2 text-xs text-gray-600">
+                                    <div><dt class="inline font-semibold text-gray-700">Destination:</dt> <dd class="inline break-all" x-text="server.destination"></dd></div>
+                                    <div><dt class="inline font-semibold text-gray-700">Arguments / environment:</dt> <dd class="inline" x-text="`${server.argument_count || 0} / ${server.environment?.count || 0}`"></dd></div>
+                                    <div><dt class="inline font-semibold text-gray-700">Workers:</dt> <dd class="inline" x-text="`${server.worker_pool?.min ?? 'default'}–${server.worker_pool?.max ?? 'default'}`"></dd></div>
+                                    <div><dt class="inline font-semibold text-gray-700">Fingerprint:</dt> <dd class="inline font-mono" x-text="shortFingerprint(server.config_fingerprint)"></dd></div>
+                                </dl>
+                                <div x-show="server.blocked_reason" class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+                                    <span class="font-bold">Current note:</span> <span x-text="server.blocked_reason"></span>
+                                </div>
+                                <div class="mt-4 space-y-2 border-t border-gray-100 pt-3">
+                                    <button type="button" @click="openActionReview('server', server, 'view')" class="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm font-bold text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"><i data-lucide="eye" class="h-4 w-4"></i>Review full configuration</button>
+                                    <div class="flex gap-2">
+                                    <button
+                                        x-show="server.approval_state !== 'approved'"
+                                        type="button"
+                                        @click="openActionReview('server', server, 'approve')"
+                                        class="inline-flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2.5 text-sm font-bold text-white transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                                    ><i data-lucide="clipboard-check" class="h-4 w-4"></i>Review approval</button>
+                                    <button
+                                        x-show="server.approval_state === 'pending'"
+                                        type="button"
+                                        @click="openActionReview('server', server, 'reject')"
+                                        class="inline-flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg border border-red-300 bg-white px-3 py-2.5 text-sm font-bold text-red-700 transition-colors hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
+                                    ><i data-lucide="x-circle" class="h-4 w-4"></i>Review rejection</button>
+                                    </div>
+                                    <button
+                                        x-show="server.approval_state === 'approved'"
+                                        type="button"
+                                        @click="openActionReview('server', server, 'revoke')"
+                                        class="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-red-300 bg-white px-3 py-2.5 text-sm font-bold text-red-700 transition-colors hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 sm:flex-none"
+                                    ><i data-lucide="shield-off" class="h-4 w-4"></i>Review revocation</button>
+                                </div>
+                            </article>
+                        </template>
+                    </div>
+                </section>
+
+                <section class="overflow-hidden rounded-xl border border-gray-200 bg-gray-50" aria-labelledby="tool-list-heading">
+                    <header class="flex items-center justify-between gap-3 bg-gradient-to-r from-violet-600 to-purple-600 px-4 py-3.5 text-white">
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="wrench" class="h-5 w-5"></i>
+                            <h2 id="tool-list-heading" class="font-bold">Virtual tools</h2>
+                        </div>
+                        <span class="rounded-full bg-white/15 px-2.5 py-1 text-xs font-bold" x-text="filteredTools().length"></span>
+                    </header>
+                    <div class="space-y-3 p-3 sm:p-4">
+                        <div x-show="filteredTools().length === 0" class="rounded-lg border border-dashed border-gray-300 bg-white px-4 py-8 text-center">
+                            <i data-lucide="inbox" class="mx-auto h-6 w-6 text-gray-400"></i>
+                            <p class="mt-2 text-sm font-medium text-gray-600" x-text="searchQuery ? 'No virtual tools match this search.' : 'No virtual tools in this state.'"></p>
+                        </div>
+                        <template x-for="tool in filteredTools()" :key="tool.id">
+                            <article class="whitelist-entry rounded-lg border border-gray-200 border-l-4 bg-white p-4 shadow-sm" :class="cardClass(tool.approval_state)">
+                                <div class="flex flex-wrap items-start gap-2">
+                                    <div class="min-w-0 flex-1">
+                                        <h3 class="break-words font-bold text-gray-900" x-text="tool.name || 'Unnamed virtual tool'"></h3>
+                                        <p x-show="tool.description" class="mt-1 line-clamp-2 text-xs leading-relaxed text-gray-500" x-text="tool.description"></p>
+                                    </div>
+                                    <span class="rounded-full px-2 py-0.5 text-xs font-bold capitalize" :class="badgeClass(tool.approval_state)" x-text="tool.approval_state"></span>
+                                </div>
+                                <div class="mt-3 flex flex-wrap gap-2">
+                                    <span class="rounded bg-violet-100 px-2 py-1 text-xs font-semibold text-violet-800" x-text="humanize(tool.execution_type || 'tool')"></span>
+                                    <span class="rounded px-2 py-1 text-xs font-bold" :class="isHighRisk('virtual_tool', tool) ? 'bg-red-100 text-red-800' : 'bg-emerald-100 text-emerald-800'" x-text="isHighRisk('virtual_tool', tool) ? 'High risk · local execution' : 'Standard risk'"></span>
+                                </div>
+                                <dl class="mt-3 space-y-2 text-xs text-gray-600">
+                                    <div><dt class="inline font-semibold text-gray-700">Source server:</dt> <dd class="inline" x-text="tool.source_server_name || 'Unknown'"></dd></div>
+                                    <div><dt class="inline font-semibold text-gray-700">Editor mode:</dt> <dd class="inline" x-text="tool.editor_mode"></dd></div>
+                                    <div><dt class="inline font-semibold text-gray-700">Fingerprint:</dt> <dd class="inline font-mono" x-text="shortFingerprint(tool.config_fingerprint)"></dd></div>
+                                </dl>
+                                <div x-show="tool.blocked_reason" class="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+                                    <span class="font-bold">Current note:</span> <span x-text="tool.blocked_reason"></span>
+                                </div>
+                                <div class="mt-4 space-y-2 border-t border-gray-100 pt-3">
+                                    <button type="button" @click="openActionReview('virtual_tool', tool, 'view')" class="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm font-bold text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"><i data-lucide="eye" class="h-4 w-4"></i>Review full configuration</button>
+                                    <div class="flex gap-2">
+                                    <button
+                                        x-show="tool.approval_state !== 'approved'"
+                                        type="button"
+                                        @click="openActionReview('virtual_tool', tool, 'approve')"
+                                        class="inline-flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2.5 text-sm font-bold text-white transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                                    ><i data-lucide="clipboard-check" class="h-4 w-4"></i>Review approval</button>
+                                    <button
+                                        x-show="tool.approval_state === 'pending'"
+                                        type="button"
+                                        @click="openActionReview('virtual_tool', tool, 'reject')"
+                                        class="inline-flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg border border-red-300 bg-white px-3 py-2.5 text-sm font-bold text-red-700 transition-colors hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
+                                    ><i data-lucide="x-circle" class="h-4 w-4"></i>Review rejection</button>
+                                    </div>
+                                    <button
+                                        x-show="tool.approval_state === 'approved'"
+                                        type="button"
+                                        @click="openActionReview('virtual_tool', tool, 'revoke')"
+                                        class="inline-flex flex-1 items-center justify-center gap-2 rounded-lg border border-red-300 bg-white px-3 py-2.5 text-sm font-bold text-red-700 transition-colors hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 sm:flex-none"
+                                    ><i data-lucide="shield-off" class="h-4 w-4"></i>Review revocation</button>
+                                </div>
+                            </article>
+                        </template>
+                    </div>
+                </section>
+            </div>
+        </section>
+    </div>
+
+    <!-- Review modal: no state-changing request is sent before this explicit review. -->
+    <div
+        x-show="showActionModal"
+        x-cloak
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="whitelist-action-title"
+        x-effect="if (showActionModal) { $nextTick(() => { window._whitelistActionTrap = trapFocus($el); }) } else if (window._whitelistActionTrap) { window._whitelistActionTrap.release(); window._whitelistActionTrap = null; }"
+        class="fixed inset-0 z-50 overflow-y-auto"
+    >
+        <div class="flex min-h-screen items-end justify-center sm:items-center">
+            <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" @click="closeActionModal()"></div>
+            <div class="relative z-10 w-full max-w-3xl overflow-hidden rounded-t-2xl border-t-2 border-blue-100 bg-white shadow-2xl sm:my-8 sm:max-h-[90vh] sm:rounded-xl sm:border-2">
+                <header class="flex items-start justify-between gap-4 bg-gradient-to-r from-blue-700 via-blue-600 to-cyan-600 px-5 py-4 text-white sm:px-6">
+                    <div class="min-w-0">
+                        <p class="text-xs font-bold uppercase tracking-wider text-white/75">Review before changing access</p>
+                        <h2 id="whitelist-action-title" class="mt-1 flex items-center gap-2 text-xl font-bold">
+                            <i :data-lucide="actionIcon()" class="h-5 w-5 flex-shrink-0"></i>
+                            <span class="truncate" x-text="actionTitle()"></span>
+                        </h2>
+                    </div>
+                    <button
+                        type="button"
+                        @click="closeActionModal()"
+                        :disabled="actionBusy"
+                        class="rounded-lg p-2 text-white/80 transition-colors hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-white disabled:opacity-50"
+                        aria-label="Close review"
+                    ><i data-lucide="x" class="h-5 w-5"></i></button>
+                </header>
+
+                <div class="max-h-[calc(90vh-150px)] space-y-5 overflow-y-auto p-4 sm:p-6">
+                    <section class="rounded-xl border p-4" :class="review.action === 'approve' ? 'border-blue-200 bg-blue-50' : 'border-red-200 bg-red-50'">
+                        <div class="flex items-start gap-3">
+                            <span class="rounded-full p-2" :class="review.action === 'approve' ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-700'">
+                                <i :data-lucide="actionIcon()" class="h-5 w-5"></i>
+                            </span>
+                            <div>
+                                <h3 class="font-bold text-gray-900" x-text="actionOutcomeHeading()"></h3>
+                                <p class="mt-1 text-sm leading-relaxed text-gray-700" x-text="actionOutcomeDescription()"></p>
+                                <p class="mt-2 text-xs font-semibold text-gray-600">
+                                    State: <span class="capitalize" x-text="review.item?.approval_state || 'unknown'"></span>
+                                    <span aria-hidden="true"> → </span>
+                                    <span class="capitalize" x-text="resultState()"></span>
+                                </p>
+                            </div>
+                        </div>
+                    </section>
+
+                    <template x-for="section in (review.item?.sections || [])" :key="section.key">
+                        <section class="overflow-hidden rounded-xl border border-gray-200 bg-white">
+                            <header class="border-b border-gray-200 bg-gray-50 px-4 py-3">
+                                <h3 class="font-bold text-gray-900" x-text="section.title"></h3>
+                                <p x-show="section.warning" class="mt-1 text-xs font-semibold text-amber-800" x-text="section.warning"></p>
+                            </header>
+                            <dl class="divide-y divide-gray-100 text-sm">
+                                <template x-for="field in section.fields" :key="field.key">
+                                    <div class="grid gap-1 px-4 py-3 sm:grid-cols-3">
+                                        <dt class="font-semibold text-gray-500" x-text="field.label"></dt>
+                                        <dd class="min-w-0 break-words text-gray-900 sm:col-span-2">
+                                            <template x-if="field.display_type === 'json' || field.display_type === 'environment' || field.display_type === 'list'"><pre class="max-h-56 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-gray-900 p-3 text-xs text-gray-100" x-text="formatJson(field.value)"></pre></template>
+                                            <template x-if="!['json', 'environment', 'list'].includes(field.display_type)"><span :class="field.display_type === 'code' ? 'font-mono' : ''" x-text="field.value"></span></template>
+                                        </dd>
+                                    </div>
+                                </template>
+                            </dl>
+                        </section>
+                    </template>
+
+                    <section x-show="reviewIsHighRisk()" class="rounded-xl border-2 border-red-300 bg-red-50 p-4" aria-labelledby="high-risk-heading">
+                        <div class="flex items-start gap-3">
+                            <span class="rounded-full bg-red-100 p-2 text-red-700"><i data-lucide="triangle-alert" class="h-5 w-5"></i></span>
+                            <div class="min-w-0 flex-1">
+                                <h3 id="high-risk-heading" class="font-bold text-red-900">High risk: this approval can run a local process</h3>
+                                <p class="mt-1 text-sm leading-relaxed text-red-800">
+                                    Review the command, arguments, working directory, environment fields, and fingerprint below. A fresh passkey is required specifically for this approval.
+                                </p>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="overflow-hidden rounded-xl border border-gray-200" aria-labelledby="reviewed-config-heading">
+                        <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 bg-gray-50 px-4 py-3">
+                            <h3 id="reviewed-config-heading" class="font-bold text-gray-900">Configuration being reviewed</h3>
+                            <span class="rounded-full px-2.5 py-1 text-xs font-bold" :class="reviewIsHighRisk() ? 'bg-red-100 text-red-800' : 'bg-emerald-100 text-emerald-800'" x-text="reviewIsHighRisk() ? 'High risk' : 'Standard risk'"></span>
+                        </div>
+                        <dl class="divide-y divide-gray-100 text-sm">
+                            <div class="grid gap-1 px-4 py-3 sm:grid-cols-3"><dt class="font-semibold text-gray-500">Item</dt><dd class="break-words font-bold text-gray-900 sm:col-span-2" x-text="review.item?.name || 'Unnamed item'"></dd></div>
+                            <div class="grid gap-1 px-4 py-3 sm:grid-cols-3"><dt class="font-semibold text-gray-500">Type</dt><dd class="text-gray-900 sm:col-span-2" x-text="reviewKindLabel()"></dd></div>
+                            <template x-if="review.kind === 'server'">
+                                <div class="divide-y divide-gray-100 contents">
+                                    <div class="grid gap-1 px-4 py-3 sm:grid-cols-3"><dt class="font-semibold text-gray-500">Transport</dt><dd class="font-semibold uppercase text-gray-900 sm:col-span-2" x-text="review.item?.transport_type || 'http'"></dd></div>
+                                    <div x-show="review.item?.url" class="grid gap-1 px-4 py-3 sm:grid-cols-3"><dt class="font-semibold text-gray-500">Endpoint</dt><dd class="break-all text-gray-900 sm:col-span-2" x-text="review.item?.url"></dd></div>
+                                    <div x-show="review.item?.command" class="grid gap-1 px-4 py-3 sm:grid-cols-3"><dt class="font-semibold text-gray-500">Command</dt><dd class="break-all font-mono text-gray-900 sm:col-span-2" x-text="review.item?.command"></dd></div>
+                                    <div x-show="commandArgs(review.item).length" class="grid gap-1 px-4 py-3 sm:grid-cols-3"><dt class="font-semibold text-gray-500">Arguments</dt><dd class="sm:col-span-2"><ol class="space-y-1 font-mono text-xs text-gray-900"><template x-for="(argument, index) in commandArgs(review.item)" :key="index"><li class="break-all rounded bg-gray-100 px-2 py-1"><span class="mr-2 text-gray-400" x-text="index + 1"></span><span x-text="argument"></span></li></template></ol></dd></div>
+                                    <div x-show="review.item?.working_dir" class="grid gap-1 px-4 py-3 sm:grid-cols-3"><dt class="font-semibold text-gray-500">Working directory</dt><dd class="break-all font-mono text-gray-900 sm:col-span-2" x-text="review.item?.working_dir"></dd></div>
+                                    <div x-show="review.item?.pipe_path" class="grid gap-1 px-4 py-3 sm:grid-cols-3"><dt class="font-semibold text-gray-500">Pipe path</dt><dd class="break-all font-mono text-gray-900 sm:col-span-2" x-text="review.item?.pipe_path"></dd></div>
+                                    <div x-show="review.item?.expose_port" class="grid gap-1 px-4 py-3 sm:grid-cols-3"><dt class="font-semibold text-gray-500">Exposed port</dt><dd class="font-mono text-gray-900 sm:col-span-2" x-text="review.item?.expose_port"></dd></div>
+                                    <div x-show="environmentEntries(review.item).length" class="grid gap-1 px-4 py-3 sm:grid-cols-3"><dt class="font-semibold text-gray-500">Environment</dt><dd class="sm:col-span-2"><div class="space-y-1"><template x-for="entry in environmentEntries(review.item)" :key="entry[0]"><div class="flex flex-wrap justify-between gap-2 rounded bg-gray-100 px-2 py-1 font-mono text-xs"><span class="break-all font-bold" x-text="entry[0]"></span><span class="break-all text-gray-600" x-text="formatValue(entry[1])"></span></div></template></div></dd></div>
+                                </div>
+                            </template>
+                            <template x-if="review.kind === 'virtual_tool'">
+                                <div class="divide-y divide-gray-100 contents">
+                                    <div class="grid gap-1 px-4 py-3 sm:grid-cols-3"><dt class="font-semibold text-gray-500">Execution type</dt><dd class="font-semibold text-gray-900 sm:col-span-2" x-text="humanize(review.item?.execution_type || 'tool')"></dd></div>
+                                    <div class="grid gap-1 px-4 py-3 sm:grid-cols-3"><dt class="font-semibold text-gray-500">Source server</dt><dd class="text-gray-900 sm:col-span-2" x-text="review.item?.source_server_name || 'Unknown'"></dd></div>
+                                    <div class="grid gap-1 px-4 py-3 sm:grid-cols-3"><dt class="font-semibold text-gray-500">Configuration</dt><dd class="sm:col-span-2"><pre class="max-h-56 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-gray-900 p-3 text-xs text-gray-100" x-text="formatJson(review.item?.config || {})"></pre></dd></div>
+                                </div>
+                            </template>
+                            <div class="grid gap-1 px-4 py-3 sm:grid-cols-3"><dt class="font-semibold text-gray-500">Configuration fingerprint</dt><dd class="break-all font-mono text-xs font-semibold text-gray-900 sm:col-span-2" x-text="review.item?.config_fingerprint || 'Unavailable'"></dd></div>
+                        </dl>
+                    </section>
+
+                    <div x-show="review.action !== 'approve'">
+                        <label for="whitelist-action-reason" class="block text-sm font-bold text-gray-900">
+                            Reason <span class="font-normal text-gray-500">(required, 5–500 characters; stored with the decision)</span>
+                        </label>
+                        <textarea
+                            id="whitelist-action-reason"
+                            x-model="review.reason"
+                            name="reason"
+                            autocomplete="off"
+                            maxlength="500"
+                            rows="3"
+                            :placeholder="review.action === 'reject' ? 'Why is this request being rejected?' : 'Why is this approval being revoked?'"
+                            class="mt-2 w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        ></textarea>
+                        <p class="mt-1 text-right text-xs text-gray-500"><span x-text="review.reason.length"></span>/500</p>
+                    </div>
+
+                    <label x-show="review.action === 'approve'" class="flex cursor-pointer items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 p-4 focus-within:ring-2 focus-within:ring-blue-500">
+                        <input x-model="approvalAcknowledged" type="checkbox" name="approval_acknowledgement" class="mt-0.5 h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                        <span class="text-sm leading-relaxed text-gray-800"><span class="font-bold">I reviewed this exact configuration and its operating consequences.</span> I understand a change to it requires a new review.</span>
+                    </label>
+
+                    <label x-show="reviewIsHighRisk()" class="flex cursor-pointer items-start gap-3 rounded-xl border border-red-200 bg-white p-4 focus-within:ring-2 focus-within:ring-red-500">
+                        <input x-model="highRiskAcknowledged" type="checkbox" name="high_risk_acknowledgement" class="mt-0.5 h-5 w-5 rounded border-gray-300 text-red-600 focus:ring-red-500">
+                        <span class="text-sm leading-relaxed text-gray-800">
+                            <span class="font-bold">I reviewed the exact local command and fingerprint shown above.</span>
+                            I understand this approval permits AuthMCP Gateway to start that process.
+                        </span>
+                    </label>
+
+                    <div
+                        x-show="actionError"
+                        x-cloak
+                        class="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-800"
+                        role="alert"
+                        aria-live="assertive"
+                        x-text="actionError"
+                    ></div>
+                </div>
+
+                <footer class="flex flex-col-reverse gap-3 border-t border-gray-200 bg-gray-50 px-4 py-4 sm:flex-row sm:justify-end sm:px-6">
+                    <button
+                        type="button"
+                        @click="closeActionModal()"
+                        :disabled="actionBusy"
+                        class="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-bold text-gray-700 transition-colors hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 disabled:opacity-50"
+                    ><span x-text="review.action === 'view' ? 'Close review' : 'Cancel — make no change'"></span></button>
+                    <button
+                        x-show="review.action !== 'view'"
+                        type="button"
+                        @click="confirmReviewedAction()"
+                        :disabled="actionBusy || (review.action === 'approve' && !approvalAcknowledged) || (reviewIsHighRisk() && !highRiskAcknowledged) || (review.action !== 'approve' && review.reason.trim().length < 5)"
+                        class="inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-bold text-white transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                        :class="review.action === 'approve' ? 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500' : 'bg-red-600 hover:bg-red-700 focus:ring-red-500'"
+                    >
+                        <i :data-lucide="actionBusy ? 'loader-circle' : actionIcon()" class="h-4 w-4" :class="actionBusy && 'animate-spin'"></i>
+                        <span x-text="actionButtonLabel()"></span>
+                    </button>
+                </footer>
+            </div>
+        </div>
+    </div>
+
+    <!-- Security methods modal follows the same bottom-sheet/desktop-dialog pattern as other admin pages. -->
+    <div
+        x-show="showSecurityModal"
+        x-cloak
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="security-methods-title"
+        x-effect="if (showSecurityModal) { $nextTick(() => { window._whitelistSecurityTrap = trapFocus($el); }) } else if (window._whitelistSecurityTrap) { window._whitelistSecurityTrap.release(); window._whitelistSecurityTrap = null; }"
+        class="fixed inset-0 z-50 overflow-y-auto"
+    >
+        <div class="flex min-h-screen items-end justify-center sm:items-center">
+            <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" @click="closeSecurityMethods()"></div>
+            <div class="relative z-10 w-full max-w-3xl overflow-hidden rounded-t-2xl border-t-2 border-blue-100 bg-gray-50 shadow-2xl sm:my-8 sm:max-h-[90vh] sm:rounded-xl sm:border-2">
+                <header class="flex items-start justify-between gap-4 bg-gradient-to-r from-blue-700 via-blue-600 to-cyan-600 px-5 py-4 text-white sm:px-6">
+                    <div>
+                        <p class="text-xs font-bold uppercase tracking-wider text-white/75">Whitelist protection</p>
+                        <h2 id="security-methods-title" class="mt-1 flex items-center gap-2 text-xl font-bold"><i data-lucide="fingerprint" class="h-5 w-5"></i>Security methods</h2>
+                    </div>
+                    <button type="button" @click="closeSecurityMethods()" :disabled="securityBusy" class="rounded-lg p-2 text-white/80 hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-white disabled:opacity-50" aria-label="Close security methods"><i data-lucide="x" class="h-5 w-5"></i></button>
+                </header>
+
+                <div class="max-h-[calc(90vh-82px)] space-y-4 overflow-y-auto p-4 sm:p-6">
+                    <div class="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-relaxed text-blue-900">
+                        Passkeys and authenticator codes unlock routine whitelist actions. Only a passkey can authorize approval of a local process.
+                    </div>
+
+                    <div x-show="securityLoading" class="rounded-xl border border-gray-200 bg-white p-8 text-center" role="status">
+                        <i data-lucide="loader-circle" class="mx-auto h-7 w-7 animate-spin text-blue-600"></i>
+                        <p class="mt-3 text-sm font-medium text-gray-600">Loading security methods…</p>
+                    </div>
+
+                    <div x-show="!securityLoading" x-cloak class="space-y-4">
+                        <section class="rounded-xl border border-gray-200 bg-white shadow-sm" aria-labelledby="passkeys-heading">
+                            <div class="flex flex-col gap-3 border-b border-gray-200 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
+                                <div>
+                                    <h3 id="passkeys-heading" class="flex items-center gap-2 font-bold text-gray-900"><i data-lucide="fingerprint" class="h-5 w-5 text-blue-600"></i>Passkeys</h3>
+                                    <p class="mt-1 text-sm text-gray-600">Fast verification with phishing-resistant device or platform credentials.</p>
+                                </div>
+                                <span class="self-start rounded-full bg-blue-100 px-2.5 py-1 text-xs font-bold text-blue-800"><span x-text="passkeys.length"></span> registered</span>
+                            </div>
+                            <div class="space-y-3 p-4 sm:p-5">
+                                <p x-show="passkeys.length === 0" class="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                                    No passkey is registered. Add one before approving any local-process server or tool.
+                                </p>
+                                <template x-for="passkey in passkeys" :key="passkey.credential_id">
+                                    <div class="rounded-lg border border-gray-200 p-3">
+                                        <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                            <div class="min-w-0">
+                                                <p class="font-bold text-gray-900" x-text="passkey.label || passkeyFallbackLabel(passkey)"></p>
+                                                <p class="mt-1 text-xs text-gray-500">Added <span x-text="formatDate(passkey.created_at)"></span><span x-show="passkey.last_used_at"> · Last used <span x-text="formatDate(passkey.last_used_at)"></span></span></p>
+                                            </div>
+                                            <div class="flex flex-wrap gap-2">
+                                                <button type="button" @click="beginPasskeyRename(passkey)" class="rounded-lg border border-gray-300 px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">Rename</button>
+                                                <button type="button" @click="pendingPasskeyRevoke = passkey.credential_id; refreshIcons()" class="rounded-lg border border-red-300 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500">Remove</button>
+                                            </div>
+                                        </div>
+                                        <form x-show="editingPasskeyId === passkey.credential_id" x-cloak @submit.prevent="savePasskeyLabel(passkey)" class="mt-3 flex flex-col gap-2 rounded-lg bg-gray-50 p-3 sm:flex-row">
+                                            <label :for="`passkey-label-${passkey.credential_id}`" class="sr-only">Passkey name</label>
+                                            <input :id="`passkey-label-${passkey.credential_id}`" x-model="passkeyDrafts[passkey.credential_id]" name="passkey_label" autocomplete="off" maxlength="80" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="Passkey name…">
+                                            <button type="submit" :disabled="securityBusy || !(passkeyDrafts[passkey.credential_id] || '').trim()" class="rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50">Save</button>
+                                            <button type="button" @click="editingPasskeyId = null" class="rounded-lg border border-gray-300 px-3 py-2 text-sm font-bold text-gray-700 hover:bg-white">Cancel</button>
+                                        </form>
+                                        <div x-show="pendingPasskeyRevoke === passkey.credential_id" x-cloak class="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
+                                            <p class="text-sm font-bold text-red-900">Remove this passkey?</p>
+                                            <p class="mt-1 text-xs leading-relaxed text-red-800">It can no longer unlock whitelist actions. The final passkey cannot be removed unless an unconsumed local recovery link is active.</p>
+                                            <div class="mt-3 flex flex-wrap gap-2">
+                                                <button type="button" @click="revokePasskey(passkey)" :disabled="securityBusy" class="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700 disabled:opacity-50">Yes, remove passkey</button>
+                                                <button type="button" @click="pendingPasskeyRevoke = null" :disabled="securityBusy" class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50">Keep passkey</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </template>
+
+                                <form @submit.prevent="registerPasskey()" class="rounded-lg border border-dashed border-blue-300 bg-blue-50 p-4">
+                                    <label for="new-passkey-label" class="block text-sm font-bold text-gray-900">Add a passkey</label>
+                                    <p class="mt-1 text-xs text-gray-600">Give it a recognizable name so you can safely remove the right device later.</p>
+                                    <div class="mt-3 flex flex-col gap-2 sm:flex-row">
+                                        <input id="new-passkey-label" x-model="newPasskeyLabel" name="new_passkey_label" autocomplete="off" maxlength="80" placeholder="e.g. Work laptop…" class="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200">
+                                        <button type="submit" :disabled="securityBusy || !passkeySupported || !newPasskeyLabel.trim()" class="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"><i data-lucide="plus" class="h-4 w-4"></i><span x-text="securityOperation === 'register-passkey' ? 'Waiting…' : 'Register passkey'"></span></button>
+                                    </div>
+                                </form>
+                            </div>
+                        </section>
+
+                        <section class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:p-5" aria-labelledby="totp-heading">
+                            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                    <h3 id="totp-heading" class="flex items-center gap-2 font-bold text-gray-900"><i data-lucide="smartphone" class="h-5 w-5 text-violet-600"></i>Authenticator app</h3>
+                                    <p class="mt-1 text-sm text-gray-600">Fallback for routine actions; it cannot authorize local-process approvals.</p>
+                                </div>
+                                <span class="self-start rounded-full px-2.5 py-1 text-xs font-bold" :class="totpConfigured ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-700'" x-text="totpConfigured ? 'Configured' : 'Not configured'"></span>
+                            </div>
+
+                            <div x-show="!totpConfigured && !totpSetupSecret" class="mt-4">
+                                <button type="button" @click="startTotpSetup()" :disabled="securityBusy" class="inline-flex items-center gap-2 rounded-lg border border-violet-300 bg-white px-4 py-2.5 text-sm font-bold text-violet-800 hover:bg-violet-50 focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50"><i data-lucide="plus" class="h-4 w-4"></i>Set up authenticator</button>
+                            </div>
+
+                            <div x-show="totpSetupSecret" x-cloak class="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                                <div class="flex items-start gap-2 text-amber-900"><i data-lucide="eye" class="mt-0.5 h-4 w-4"></i><p class="text-sm"><span class="font-bold">Shown only during this setup.</span> Add the secret to your authenticator, then confirm with its current code.</p></div>
+                                <img x-show="totpSetupQrDataUri" :src="totpSetupQrDataUri" alt="Authenticator setup QR code" class="mt-3 h-40 w-40 rounded-lg border border-amber-300 bg-white p-2">
+                                <label for="totp-secret" class="mt-4 block text-xs font-bold uppercase tracking-wide text-amber-900">Setup secret</label>
+                                <div class="mt-1 flex gap-2">
+                                    <input id="totp-secret" :value="totpSetupSecret" name="totp_secret" autocomplete="off" spellcheck="false" readonly class="min-w-0 flex-1 rounded-lg border border-amber-300 bg-white px-3 py-2 font-mono text-sm text-gray-900">
+                                    <button type="button" @click="copyText(totpSetupSecret, 'Authenticator secret copied.')" class="rounded-lg border border-amber-300 bg-white px-3 py-2 text-amber-900 hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-500" aria-label="Copy authenticator secret"><i data-lucide="copy" class="h-4 w-4"></i></button>
+                                </div>
+                                <button type="button" @click="copyText(totpSetupUrl, 'Authenticator setup URI copied.')" class="mt-2 text-xs font-bold text-amber-900 underline hover:text-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500">Copy setup URI instead</button>
+                                <form @submit.prevent="confirmTotpSetup()" class="mt-4 flex flex-col gap-2 sm:flex-row">
+                                    <label for="totp-confirm-code" class="sr-only">Confirm authenticator code</label>
+                                    <input id="totp-confirm-code" x-model="totpSetupCode" @input="totpSetupCode = totpSetupCode.replace(/\D/g, '').slice(0, 6)" name="totp_setup_code" inputmode="numeric" autocomplete="one-time-code" spellcheck="false" maxlength="6" placeholder="Six-digit code…" class="w-full rounded-lg border border-amber-300 px-3 py-2.5 font-mono tracking-widest focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-200 sm:max-w-xs">
+                                    <button type="submit" :disabled="securityBusy || totpSetupCode.length !== 6" class="rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-violet-700 disabled:opacity-50">Confirm setup</button>
+                                    <button type="button" @click="clearTotpSetup()" :disabled="securityBusy" class="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50">Cancel</button>
+                                </form>
+                            </div>
+
+                            <div x-show="totpConfigured" x-cloak class="mt-4">
+                                <button x-show="!confirmTotpRemoval" type="button" @click="confirmTotpRemoval = true" :disabled="securityBusy || sessionMethod !== 'passkey'" class="rounded-lg border border-red-300 bg-white px-4 py-2.5 text-sm font-bold text-red-700 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:cursor-not-allowed disabled:opacity-50">Remove authenticator</button>
+                                <p x-show="sessionMethod !== 'passkey'" class="mt-2 text-xs text-amber-800">Lock actions and verify with a passkey before removing the authenticator credential.</p>
+                                <div x-show="confirmTotpRemoval" x-cloak class="rounded-lg border border-red-200 bg-red-50 p-3">
+                                    <p class="text-sm font-bold text-red-900">Remove authenticator fallback?</p>
+                                    <p class="mt-1 text-xs text-red-800">Authenticator codes will stop unlocking whitelist actions. Passkeys are not affected.</p>
+                                    <div class="mt-3 flex gap-2"><button type="button" @click="removeTotp()" :disabled="securityBusy" class="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700 disabled:opacity-50">Yes, remove authenticator</button><button type="button" @click="confirmTotpRemoval = false" :disabled="securityBusy" class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50">Keep authenticator</button></div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:p-5" aria-labelledby="recovery-heading">
+                            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                    <h3 id="recovery-heading" class="flex items-center gap-2 font-bold text-gray-900"><i data-lucide="life-buoy" class="h-5 w-5 text-amber-600"></i>Local recovery</h3>
+                                    <p class="mt-1 text-sm text-gray-600">Break-glass recovery runs only from this machine and can restore security methods, never approve MCP access.</p>
+                                </div>
+                                <span class="self-start rounded-full px-2.5 py-1 text-xs font-bold" :class="recoveryAvailable ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-700'" x-text="recoveryAvailable ? 'One-time link ready' : 'No active link'"></span>
+                            </div>
+                            <p class="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs leading-relaxed text-gray-600">Use the local <code class="rounded bg-gray-200 px-1 py-0.5">authmcp-gateway recover</code> command to create or rotate a five-minute, one-time recovery link.</p>
+                        </section>
+                    </div>
+
+                    <div x-show="securityError" x-cloak class="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-800" role="alert" aria-live="assertive" x-text="securityError"></div>
+
+                    <div class="flex justify-end border-t border-gray-200 pt-4">
+                        <button type="button" @click="closeSecurityMethods()" :disabled="securityBusy" class="rounded-lg bg-gray-800 px-4 py-2.5 text-sm font-bold text-white hover:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 disabled:opacity-50">Done</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function base64UrlToBuffer(value) {
+    const normalized = String(value).replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
+    const binary = atob(padded);
+    return Uint8Array.from(binary, character => character.charCodeAt(0)).buffer;
+}
+
+function bufferToBase64Url(value) {
+    if (value == null) return null;
+    const bytes = new Uint8Array(value);
+    let binary = '';
+    bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function decodePublicKeyOptions(options) {
+    const decoded = { ...options, challenge: base64UrlToBuffer(options.challenge) };
+    if (options.user?.id) decoded.user = { ...options.user, id: base64UrlToBuffer(options.user.id) };
+    for (const field of ['allowCredentials', 'excludeCredentials']) {
+        if (Array.isArray(options[field])) {
+            decoded[field] = options[field].map(item => ({ ...item, id: base64UrlToBuffer(item.id) }));
+        }
+    }
+    return decoded;
+}
+
+function serializeCredential(credential) {
+    const response = { clientDataJSON: bufferToBase64Url(credential.response.clientDataJSON) };
+    if ('attestationObject' in credential.response) {
+        response.attestationObject = bufferToBase64Url(credential.response.attestationObject);
+        if (typeof credential.response.getTransports === 'function') {
+            response.transports = credential.response.getTransports();
+        }
+    } else {
+        response.authenticatorData = bufferToBase64Url(credential.response.authenticatorData);
+        response.signature = bufferToBase64Url(credential.response.signature);
+        response.userHandle = bufferToBase64Url(credential.response.userHandle);
+    }
+    return {
+        id: credential.id,
+        rawId: bufferToBase64Url(credential.rawId),
+        type: credential.type,
+        authenticatorAttachment: credential.authenticatorAttachment || null,
+        clientExtensionResults: credential.getClientExtensionResults(),
+        response,
+    };
+}
+
+function webAuthnErrorMessage(error, fallback) {
+    if (error?.name === 'NotAllowedError' || error?.name === 'AbortError') {
+        return 'The passkey prompt was cancelled or timed out. No change was made.';
+    }
+    if (error?.name === 'SecurityError') {
+        return 'Passkey verification is not allowed for this address or connection.';
+    }
+    return error?.message || fallback;
+}
+
+function whitelistSessionManager() {
+    return {
+        verified: false,
+        sessionMethod: null,
+        expiresAt: null,
+        passkeySupported: false,
+        verificationBusy: false,
+        verificationMode: null,
+        verificationError: '',
+        showTotpUnlock: false,
+        showLegacyUnlock: false,
+        totpCode: '',
+        bootstrapValue: '',
+        pendingAction: null,
+        sessionPoll: null,
+
+        loadingItems: false,
+        activeTab: 'pending',
+        searchQuery: '',
+        servers: [],
+        virtualTools: [],
+        counts: { all: 0, pending: 0, approved: 0, rejected: 0, revoked: 0 },
+        tabs: [
+            { state: 'pending', label: 'Pending' },
+            { state: 'approved', label: 'Approved' },
+            { state: 'rejected', label: 'Rejected' },
+            { state: 'revoked', label: 'Revoked' },
+            { state: 'all', label: 'All' },
+        ],
+
+        showActionModal: false,
+        review: { kind: null, item: null, action: null, reason: '' },
+        approvalAcknowledged: false,
+        highRiskAcknowledged: false,
+        actionBusy: false,
+        actionPhase: '',
+        actionError: '',
+
+        showSecurityModal: false,
+        securityLoading: false,
+        securityBusy: false,
+        securityOperation: '',
+        securityError: '',
+        passkeys: [],
+        passkeyDrafts: {},
+        newPasskeyLabel: '',
+        editingPasskeyId: null,
+        pendingPasskeyRevoke: null,
+        totpConfigured: false,
+        totpSetupSecret: '',
+        totpSetupUrl: '',
+        totpSetupQrDataUri: '',
+        totpSetupCode: '',
+        confirmTotpRemoval: false,
+        recoveryAvailable: false,
+        securityStatus: { passkey_supported: false, has_passkey_for_current_rp: false, has_any_passkey: false, totp_configured: false, legacy_bootstrap_available: false, current_rp_id: '', current_origin: '' },
+        dismissedPasskeyOnboarding: false,
+
+        async init() {
+            this.passkeySupported = Boolean(window.PublicKeyCredential && navigator.credentials);
+            const params = new URLSearchParams(window.location.search);
+            const requestedState = params.get('state');
+            if (this.tabs.some(tab => tab.state === requestedState)) this.activeTab = requestedState;
+            await this.loadSecurityStatus();
+            await this.refreshSession(false);
+            this.sessionPoll = pollWhileVisible(() => this.refreshSession(false), 30000);
+            this.refreshIcons();
+        },
+
+        refreshIcons() {
+            setTimeout(() => {
+                lucide.createIcons();
+                document.querySelectorAll('.whitelist-root svg.lucide').forEach(icon => icon.setAttribute('aria-hidden', 'true'));
+            }, 0);
+        },
+
+        async responseData(response) {
+            return response.json().catch(() => ({}));
+        },
+
+        async loadSecurityStatus() {
+            try {
+                const response = await fetch('/admin/api/whitelist/security-methods/status');
+                const data = await this.responseData(response);
+                if (response.ok) this.securityStatus = { ...this.securityStatus, ...data };
+            } catch (_error) { /* The locked page remains usable with its safe fallback. */ }
+        },
+
+        async refreshSession(showMessage = true) {
+            try {
+                const response = await fetch('/admin/api/whitelist/session');
+                if (!response.ok) return;
+                const data = await this.responseData(response);
+                const session = data.whitelist_session || {};
+                if (!session.verified) {
+                    if (this.verified) this.setLocked(showMessage ? 'Whitelist verification expired. Verify again to continue.' : '');
+                    return;
+                }
+                this.applySession(session);
+                if (!this.servers.length && !this.virtualTools.length && !this.loadingItems) {
+                    await this.loadItems(this.activeTab, false);
+                }
+            } catch (_error) {
+                if (showMessage) showToast('Could not check whitelist verification status.', 'error');
+            }
+        },
+
+        applySession(session) {
+            this.verified = Boolean(session?.verified);
+            this.sessionMethod = session?.method || null;
+            this.expiresAt = session?.expires_at || null;
+            this.verificationError = '';
+        },
+
+        async completeVerification(data, message) {
+            const session = data.whitelist_session || {};
+            if (!session.verified) throw new Error('Whitelist verification was not established.');
+            this.applySession(session);
+            this.totpCode = '';
+            this.bootstrapValue = '';
+            this.showTotpUnlock = false;
+            this.showLegacyUnlock = false;
+            await this.loadItems(this.activeTab, true);
+            showToast(message);
+            await this.resumePendingAction();
+        },
+
+        async verifyWithPasskey() {
+            if (this.verificationBusy) return;
+            if (!this.passkeySupported) {
+                this.verificationError = 'Passkeys are unavailable in this browser or connection.';
+                return;
+            }
+            this.verificationBusy = true;
+            this.verificationMode = 'passkey';
+            this.verificationError = '';
+            try {
+                const optionsResponse = await fetch('/admin/api/whitelist/passkeys/authenticate/options', { method: 'POST' });
+                const optionsData = await this.responseData(optionsResponse);
+                if (!optionsResponse.ok) throw new Error(optionsData.error || 'Passkey verification could not start.');
+                const credential = await navigator.credentials.get({ publicKey: decodePublicKeyOptions(optionsData.publicKey) });
+                const verifyResponse = await fetch('/admin/api/whitelist/passkeys/authenticate/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ credential: serializeCredential(credential) }),
+                });
+                const verifyData = await this.responseData(verifyResponse);
+                if (!verifyResponse.ok) throw new Error(verifyData.error || 'Passkey verification failed.');
+                await this.completeVerification(verifyData, 'Whitelist actions verified with passkey.');
+            } catch (error) {
+                this.verificationError = webAuthnErrorMessage(error, 'Passkey verification failed.');
+            } finally {
+                this.verificationBusy = false;
+                this.verificationMode = null;
+                this.refreshIcons();
+            }
+        },
+
+        async verifyWithTotp() {
+            if (this.verificationBusy || this.totpCode.length !== 6) return;
+            this.verificationBusy = true;
+            this.verificationMode = 'totp';
+            this.verificationError = '';
+            try {
+                const response = await fetch('/admin/api/whitelist/totp/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code: this.totpCode }),
+                });
+                const data = await this.responseData(response);
+                if (!response.ok) throw new Error(data.error || 'Authenticator code was not accepted.');
+                await this.completeVerification(data, 'Whitelist actions verified with authenticator code.');
+            } catch (error) {
+                this.verificationError = error.message || 'Authenticator verification failed.';
+            } finally {
+                this.verificationBusy = false;
+                this.verificationMode = null;
+            }
+        },
+
+        async verifyWithLegacyToken() {
+            if (this.verificationBusy || !this.bootstrapValue.trim()) return;
+            this.verificationBusy = true;
+            this.verificationMode = 'legacy';
+            this.verificationError = '';
+            const token = this.bootstrapValue.trim();
+            this.bootstrapValue = '';
+            try {
+                const response = await fetch('/admin/api/whitelist/unlock/legacy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token }),
+                });
+                const data = await this.responseData(response);
+                if (!response.ok) throw new Error(data.error || 'Legacy whitelist token was not accepted.');
+                await this.completeVerification(data, 'Whitelist actions verified with legacy token.');
+            } catch (error) {
+                this.verificationError = error.message || 'Legacy token verification failed.';
+            } finally {
+                this.verificationBusy = false;
+                this.verificationMode = null;
+            }
+        },
+
+        async lockNow() {
+            if (this.verificationBusy || this.actionBusy) return;
+            try {
+                await fetch('/admin/api/whitelist/lock', { method: 'POST' });
+            } finally {
+                this.setLocked();
+                showToast('Whitelist actions locked.');
+            }
+        },
+
+        setLocked(message = '') {
+            if (this.showActionModal && this.review.item) this.rememberCurrentReview();
+            this.closeActionModal(true);
+            this.closeSecurityMethods(true);
+            this.verified = false;
+            this.sessionMethod = null;
+            this.expiresAt = null;
+            this.servers = [];
+            this.virtualTools = [];
+            this.verificationError = message;
+            this.refreshIcons();
+        },
+
+        async selectTab(state) {
+            if (this.loadingItems || this.activeTab === state) return;
+            this.activeTab = state;
+            this.syncUrlState();
+            await this.loadItems(state, true);
+        },
+
+        syncUrlState() {
+            const url = new URL(window.location.href);
+            if (this.activeTab === 'pending') url.searchParams.delete('state');
+            else url.searchParams.set('state', this.activeTab);
+            window.history.replaceState({}, document.title, url);
+        },
+
+        async loadItems(state = this.activeTab, showErrors = true) {
+            this.loadingItems = true;
+            try {
+                const currentUrl = state === 'all' ? '/admin/api/whitelist/items' : `/admin/api/whitelist/items?state=${encodeURIComponent(state)}`;
+                const currentResponse = await fetch(currentUrl);
+                if (currentResponse.status === 401) {
+                    this.setLocked(showErrors ? 'Whitelist verification expired. Verify again to continue.' : '');
+                    return false;
+                }
+                const currentData = await this.responseData(currentResponse);
+                if (!currentResponse.ok) throw new Error(currentData.error || 'Could not load whitelist entries.');
+
+                this.applySession(currentData.whitelist_session || {});
+                this.servers = this.sortEntries(currentData.servers || []);
+                this.virtualTools = this.sortEntries(currentData.virtual_tools || []);
+
+                let allData = currentData;
+                if (state !== 'all') {
+                    const allResponse = await fetch('/admin/api/whitelist/items');
+                    if (allResponse.ok) allData = await this.responseData(allResponse);
+                }
+                this.updateCounts(allData);
+                this.refreshIcons();
+                return true;
+            } catch (error) {
+                if (showErrors) showToast(error.message || 'Could not load whitelist entries.', 'error');
+                return false;
+            } finally {
+                this.loadingItems = false;
+            }
+        },
+
+        updateCounts(data) {
+            const combined = [...(data.servers || []), ...(data.virtual_tools || [])];
+            const next = { all: combined.length };
+            for (const state of ['pending', 'approved', 'rejected', 'revoked']) {
+                next[state] = combined.filter(item => item.approval_state === state).length;
+            }
+            this.counts = next;
+        },
+
+        filteredServers() {
+            return this.filterEntries(this.servers);
+        },
+
+        filteredTools() {
+            return this.filterEntries(this.virtualTools);
+        },
+
+        filterEntries(entries) {
+            const query = this.searchQuery.trim().toLowerCase();
+            if (!query) return entries;
+            return entries.filter(item => [
+                item.name,
+                item.description,
+                item.transport_type,
+                item.execution_type,
+                item.command,
+                item.url,
+                item.source_server_name,
+            ].some(value => String(value || '').toLowerCase().includes(query)));
+        },
+
+        async openActionReview(kind, item, action) {
+            if (!this.verified) {
+                this.pendingAction = { kind, id: item.id, action, fingerprint: item.config_fingerprint, reason: '' };
+                this.verificationError = 'Verify whitelist actions, then review this item again.';
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+                return;
+            }
+            this.actionError = '';
+            try {
+                const route = kind === 'server' ? `/admin/api/whitelist/servers/${item.id}/review` : `/admin/api/whitelist/virtual-tools/${item.id}/review`;
+                const response = await fetch(route);
+                const data = await this.responseData(response);
+                if (response.status === 401) { this.setLocked('Whitelist verification expired. Verify again to continue.'); return; }
+                if (!response.ok) throw new Error(data.error || 'Could not load the current configuration.');
+                this.review = { kind, item: data.review, action, reason: '' };
+            } catch (error) {
+                showToast(error.message || 'Could not load the current configuration.', 'error');
+                return;
+            }
+            this.approvalAcknowledged = false;
+            this.highRiskAcknowledged = false;
+            this.actionPhase = '';
+            this.showActionModal = true;
+            this.refreshIcons();
+        },
+
+        closeActionModal(force = false) {
+            if (this.actionBusy && !force) return;
+            this.showActionModal = false;
+            this.approvalAcknowledged = false;
+            this.highRiskAcknowledged = false;
+            this.actionError = '';
+            this.actionPhase = '';
+            if (!force) this.review = { kind: null, item: null, action: null, reason: '' };
+        },
+
+        rememberCurrentReview() {
+            if (!this.review.item) return;
+            this.pendingAction = {
+                kind: this.review.kind,
+                id: this.review.item.id,
+                action: this.review.action,
+                fingerprint: this.review.item.config_fingerprint,
+                reason: this.review.reason,
+            };
+        },
+
+        async resumePendingAction() {
+            const pending = this.pendingAction;
+            if (!pending || !this.verified) return;
+            this.pendingAction = null;
+            let item = (pending.kind === 'server' ? this.servers : this.virtualTools).find(candidate => candidate.id === pending.id);
+            if (!item) {
+                try {
+                    const response = await fetch('/admin/api/whitelist/items');
+                    if (response.ok) {
+                        const data = await this.responseData(response);
+                        item = (pending.kind === 'server' ? data.servers : data.virtual_tools || []).find(candidate => candidate.id === pending.id);
+                    }
+                } catch (_error) { /* A clear not-found message is shown below. */ }
+            }
+            if (!item) {
+                showToast('The item waiting for review no longer exists or is no longer available.', 'warning');
+                return;
+            }
+            await this.openActionReview(pending.kind, item, pending.action);
+            this.review.reason = pending.reason || '';
+            if (item.config_fingerprint !== pending.fingerprint) {
+                this.actionError = 'The configuration changed while verification was restored. Review the updated details before continuing.';
+                showToast('Configuration changed. Review the updated details.', 'warning');
+            } else {
+                showToast('Verification restored. Confirm the reviewed action when ready.', 'info');
+            }
+        },
+
+        async confirmReviewedAction() {
+            if (this.actionBusy || !this.review.item) return;
+            if (this.review.action === 'view') { this.closeActionModal(); return; }
+            if (this.review.action === 'approve' && !this.approvalAcknowledged) {
+                this.actionError = 'Confirm that you reviewed the exact configuration and its consequences.';
+                return;
+            }
+            if (this.review.action !== 'approve' && this.review.reason.trim().length < 5) {
+                this.actionError = 'Provide a clear reason of at least 5 characters.';
+                return;
+            }
+            if (this.reviewIsHighRisk() && !this.highRiskAcknowledged) {
+                this.actionError = 'Confirm that you reviewed the local command and fingerprint.';
+                return;
+            }
+            this.actionBusy = true;
+            this.actionError = '';
+            try {
+                let authorizationId = null;
+                if (this.reviewIsHighRisk()) {
+                    this.actionPhase = 'passkey';
+                    authorizationId = await this.createHighRiskAuthorization();
+                    if (authorizationId == null) return;
+                }
+                this.actionPhase = 'apply';
+                await this.submitReviewedAction(authorizationId);
+            } catch (error) {
+                this.actionError = webAuthnErrorMessage(error, 'The whitelist action could not be completed.');
+            } finally {
+                this.actionBusy = false;
+                this.actionPhase = '';
+                this.refreshIcons();
+            }
+        },
+
+        async createHighRiskAuthorization() {
+            if (!this.passkeySupported) throw new Error('A supported passkey browser is required for this high-risk approval.');
+            const prepareResponse = await fetch('/admin/api/whitelist/authorize/prepare', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'approve', resource_type: this.review.kind, resource_id: this.review.item.id }),
+            });
+            if (prepareResponse.status === 401) {
+                this.deferCurrentReviewForVerification();
+                return null;
+            }
+            const prepareData = await this.responseData(prepareResponse);
+            if (!prepareResponse.ok) throw new Error(prepareData.error || 'Fresh passkey authorization could not start.');
+            const credential = await navigator.credentials.get({ publicKey: decodePublicKeyOptions(prepareData.webauthn_options) });
+            const verifyResponse = await fetch('/admin/api/whitelist/authorize/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ challenge_id: prepareData.challenge_id, webauthn_response: serializeCredential(credential) }),
+            });
+            if (verifyResponse.status === 401) {
+                const verifyData = await this.responseData(verifyResponse);
+                throw new Error(verifyData.error || 'Fresh passkey authorization was rejected.');
+            }
+            const verifyData = await this.responseData(verifyResponse);
+            if (!verifyResponse.ok) throw new Error(verifyData.error || 'Fresh passkey authorization failed.');
+            return verifyData.authorization_id;
+        },
+
+        async submitReviewedAction(authorizationId) {
+            const path = this.review.kind === 'server'
+                ? `/admin/api/whitelist/servers/${this.review.item.id}`
+                : `/admin/api/whitelist/virtual-tools/${this.review.item.id}`;
+            const payload = {
+                action: this.review.action,
+                config_fingerprint: this.review.item.config_fingerprint,
+            };
+            if (this.review.reason.trim()) payload.reason = this.review.reason.trim();
+            if (authorizationId != null) payload.authorization_id = authorizationId;
+
+            const response = await fetch(path, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const data = await this.responseData(response);
+            if (response.status === 401) {
+                this.deferCurrentReviewForVerification();
+                return;
+            }
+            if (response.status === 409) {
+                const message = data.error || 'The configuration changed. Reload and review it again.';
+                await this.loadItems(this.activeTab, false);
+                await this.openActionReview(this.review.kind, this.review.item, this.review.action);
+                this.actionError = `${message} Your acknowledgements were reset.`;
+                showToast(message, 'warning');
+                return;
+            }
+            if (!response.ok) throw new Error(data.error || 'Whitelist action failed.');
+
+            const successMessage = this.actionSuccessMessage();
+            this.closeActionModal(true);
+            this.review = { kind: null, item: null, action: null, reason: '' };
+            showToast(successMessage);
+            await this.loadItems(this.activeTab, true);
+        },
+
+        deferCurrentReviewForVerification() {
+            this.rememberCurrentReview();
+            this.closeActionModal(true);
+            this.setLocked('Whitelist verification expired. Verify again; the configuration will be shown again before any change.');
+            showToast('Verification expired. No whitelist change was made.', 'warning');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        },
+
+        async openSecurityMethods() {
+            if (!this.verified) return;
+            this.showSecurityModal = true;
+            this.securityError = '';
+            this.refreshIcons();
+            await this.loadSecurityMethods();
+        },
+
+        closeSecurityMethods(force = false) {
+            if (this.securityBusy && !force) return;
+            this.showSecurityModal = false;
+            this.securityError = '';
+            this.editingPasskeyId = null;
+            this.pendingPasskeyRevoke = null;
+            this.confirmTotpRemoval = false;
+            this.clearTotpSetup();
+        },
+
+        async loadSecurityMethods() {
+            this.securityLoading = true;
+            this.securityError = '';
+            try {
+                const [passkeysResponse, totpResponse, recoveryResponse] = await Promise.all([
+                    fetch('/admin/api/whitelist/passkeys'),
+                    fetch('/admin/api/whitelist/totp'),
+                    fetch('/admin/api/whitelist/recovery/status'),
+                ]);
+                if ([passkeysResponse, totpResponse, recoveryResponse].some(response => response.status === 401)) {
+                    this.setLocked('Whitelist verification expired. Verify again to manage security methods.');
+                    return;
+                }
+                const [passkeysData, totpData, recoveryData] = await Promise.all([
+                    this.responseData(passkeysResponse), this.responseData(totpResponse), this.responseData(recoveryResponse),
+                ]);
+                if (!passkeysResponse.ok) throw new Error(passkeysData.error || 'Could not load passkeys.');
+                if (!totpResponse.ok) throw new Error(totpData.error || 'Could not load authenticator status.');
+                if (!recoveryResponse.ok) throw new Error(recoveryData.error || 'Could not load recovery status.');
+                this.passkeys = passkeysData.passkeys || [];
+                this.passkeyDrafts = Object.fromEntries(this.passkeys.map(passkey => [passkey.credential_id, passkey.label || this.passkeyFallbackLabel(passkey)]));
+                this.totpConfigured = Boolean(totpData.configured);
+                this.recoveryAvailable = Boolean(recoveryData.recovery_available);
+                this.refreshIcons();
+            } catch (error) {
+                this.securityError = error.message || 'Could not load security methods.';
+            } finally {
+                this.securityLoading = false;
+            }
+        },
+
+        async registerPasskey() {
+            if (this.securityBusy || !this.newPasskeyLabel.trim()) return;
+            this.securityBusy = true;
+            this.securityOperation = 'register-passkey';
+            this.securityError = '';
+            try {
+                const optionsResponse = await fetch('/admin/api/whitelist/passkeys/register/options', { method: 'POST' });
+                const optionsData = await this.responseData(optionsResponse);
+                if (!optionsResponse.ok) throw new Error(optionsData.error || 'Passkey registration could not start.');
+                const credential = await navigator.credentials.create({ publicKey: decodePublicKeyOptions(optionsData.publicKey) });
+                const verifyResponse = await fetch('/admin/api/whitelist/passkeys/register/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ credential: serializeCredential(credential), label: this.newPasskeyLabel.trim() }),
+                });
+                const verifyData = await this.responseData(verifyResponse);
+                if (!verifyResponse.ok) throw new Error(verifyData.error || 'Passkey registration failed.');
+                this.newPasskeyLabel = '';
+                showToast('Passkey registered.');
+                await this.loadSecurityMethods();
+            } catch (error) {
+                this.securityError = webAuthnErrorMessage(error, 'Passkey registration failed.');
+            } finally {
+                this.securityBusy = false;
+                this.securityOperation = '';
+                this.refreshIcons();
+            }
+        },
+
+        beginPasskeyRename(passkey) {
+            this.editingPasskeyId = passkey.credential_id;
+            this.passkeyDrafts[passkey.credential_id] = passkey.label || this.passkeyFallbackLabel(passkey);
+        },
+
+        async savePasskeyLabel(passkey) {
+            const label = (this.passkeyDrafts[passkey.credential_id] || '').trim();
+            if (this.securityBusy || !label) return;
+            this.securityBusy = true;
+            this.securityError = '';
+            try {
+                const response = await fetch(`/admin/api/whitelist/passkeys/${encodeURIComponent(passkey.credential_id)}`, {
+                    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label }),
+                });
+                const data = await this.responseData(response);
+                if (!response.ok) throw new Error(data.error || 'Passkey could not be renamed.');
+                this.editingPasskeyId = null;
+                showToast('Passkey renamed.');
+                await this.loadSecurityMethods();
+            } catch (error) {
+                this.securityError = error.message || 'Passkey could not be renamed.';
+            } finally {
+                this.securityBusy = false;
+            }
+        },
+
+        async revokePasskey(passkey) {
+            if (this.securityBusy) return;
+            this.securityBusy = true;
+            this.securityError = '';
+            try {
+                const response = await fetch(`/admin/api/whitelist/passkeys/${encodeURIComponent(passkey.credential_id)}`, { method: 'DELETE' });
+                const data = await this.responseData(response);
+                if (!response.ok) throw new Error(data.error || 'Passkey could not be removed.');
+                this.pendingPasskeyRevoke = null;
+                showToast('Passkey removed.');
+                await this.loadSecurityMethods();
+            } catch (error) {
+                this.securityError = error.message || 'Passkey could not be removed.';
+            } finally {
+                this.securityBusy = false;
+            }
+        },
+
+        async startTotpSetup() {
+            if (this.securityBusy) return;
+            this.securityBusy = true;
+            this.securityError = '';
+            try {
+                const response = await fetch('/admin/api/whitelist/totp/setup', { method: 'POST' });
+                const data = await this.responseData(response);
+                if (!response.ok) throw new Error(data.error || 'Authenticator setup could not start.');
+                this.totpSetupSecret = data.secret || '';
+                this.totpSetupUrl = data.otpauth_url || '';
+                this.totpSetupQrDataUri = data.qr_data_uri || '';
+                this.totpSetupCode = '';
+                this.refreshIcons();
+            } catch (error) {
+                this.securityError = error.message || 'Authenticator setup could not start.';
+            } finally {
+                this.securityBusy = false;
+            }
+        },
+
+        async confirmTotpSetup() {
+            if (this.securityBusy || this.totpSetupCode.length !== 6) return;
+            this.securityBusy = true;
+            this.securityError = '';
+            try {
+                const response = await fetch('/admin/api/whitelist/totp/confirm', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: this.totpSetupCode }),
+                });
+                const data = await this.responseData(response);
+                if (!response.ok) throw new Error(data.error || 'Authenticator code was not accepted.');
+                this.clearTotpSetup();
+                this.totpConfigured = true;
+                showToast('Authenticator configured. Use the next code when verifying.');
+            } catch (error) {
+                this.securityError = error.message || 'Authenticator setup could not be confirmed.';
+            } finally {
+                this.securityBusy = false;
+            }
+        },
+
+        clearTotpSetup() {
+            this.totpSetupSecret = '';
+            this.totpSetupUrl = '';
+            this.totpSetupQrDataUri = '';
+            this.totpSetupCode = '';
+        },
+
+        async removeTotp() {
+            if (this.securityBusy || this.sessionMethod !== 'passkey') return;
+            this.securityBusy = true;
+            this.securityError = '';
+            try {
+                const response = await fetch('/admin/api/whitelist/totp', { method: 'DELETE' });
+                const data = await this.responseData(response);
+                if (!response.ok) throw new Error(data.error || 'Authenticator could not be removed.');
+                this.totpConfigured = false;
+                this.confirmTotpRemoval = false;
+                showToast('Authenticator removed.');
+            } catch (error) {
+                this.securityError = error.message || 'Authenticator could not be removed.';
+            } finally {
+                this.securityBusy = false;
+            }
+        },
+
+        async copyText(value, message) {
+            if (!value) return;
+            try {
+                await navigator.clipboard.writeText(value);
+            } catch (_error) {
+                const field = document.createElement('textarea');
+                field.value = value;
+                field.setAttribute('readonly', '');
+                field.style.position = 'fixed';
+                field.style.opacity = '0';
+                document.body.appendChild(field);
+                field.select();
+                document.execCommand('copy');
+                field.remove();
+            }
+            showToast(message);
+        },
+
+        handleEscape() {
+            if (this.showActionModal) this.closeActionModal();
+            else if (this.showSecurityModal) this.closeSecurityMethods();
+        },
+
+        sortEntries(items) {
+            const order = { pending: 0, approved: 1, rejected: 2, revoked: 3 };
+            return [...items].sort((a, b) => (order[a.approval_state] ?? 99) - (order[b.approval_state] ?? 99) || String(a.name || '').localeCompare(String(b.name || '')));
+        },
+
+        isHighRisk(kind, item) {
+            if (kind === 'server') return ['stdio', 'pipe'].includes(String(item?.transport_type || '').toLowerCase());
+            return ['http_call', 'stdio_call', 'pipeline_call'].includes(String(item?.execution_type || '').toLowerCase());
+        },
+
+        reviewIsHighRisk() {
+            return this.review.action === 'approve' && this.isHighRisk(this.review.kind, this.review.item);
+        },
+
+        actionTitle() {
+            const verb = { approve: 'Approve', reject: 'Reject', revoke: 'Revoke approval for' }[this.review.action] || 'Review';
+            return `${verb} ${this.review.item?.name || 'item'}`;
+        },
+
+        actionIcon() {
+            return { approve: 'shield-check', reject: 'x-circle', revoke: 'shield-off' }[this.review.action] || 'shield';
+        },
+
+        actionOutcomeHeading() {
+            if (this.review.action === 'approve') return this.reviewIsHighRisk() ? 'This grants local execution permission' : 'This grants operating permission';
+            if (this.review.action === 'reject') return 'This denies the pending request';
+            return 'This removes an existing approval';
+        },
+
+        actionOutcomeDescription() {
+            const item = this.review.kind === 'server' ? 'server' : 'virtual tool';
+            if (this.review.action === 'approve' && this.reviewIsHighRisk()) return `AuthMCP Gateway may start the reviewed local process for this ${item}. Only the exact fingerprint shown below can be approved.`;
+            if (this.review.action === 'approve') return `The reviewed ${item} may operate. If its configuration changes, approval is removed until it is reviewed again.`;
+            if (this.review.action === 'reject') return `The ${item} remains unable to operate. It may be reviewed and approved later.`;
+            return this.review.kind === 'server'
+                ? 'The server is blocked and stopped immediately. It must be reviewed before it can operate again.'
+                : 'The virtual tool becomes unavailable immediately and must be reviewed before it can operate again.';
+        },
+
+        resultState() {
+            return { approve: 'approved', reject: 'rejected', revoke: 'revoked' }[this.review.action] || 'unchanged';
+        },
+
+        reviewKindLabel() {
+            return this.review.kind === 'server' ? 'MCP server' : 'Virtual tool';
+        },
+
+        actionButtonLabel() {
+            if (this.actionBusy) {
+                if (this.actionPhase === 'passkey') return 'Waiting for passkey…';
+                return 'Applying change…';
+            }
+            if (this.reviewIsHighRisk()) return 'Verify with passkey and approve';
+            if (this.review.action === 'approve') return `Approve ${this.review.kind === 'server' ? 'server' : 'virtual tool'}`;
+            if (this.review.action === 'reject') return `Reject ${this.review.kind === 'server' ? 'server' : 'virtual tool'}`;
+            return `Revoke ${this.review.kind === 'server' ? 'server' : 'virtual tool'} approval`;
+        },
+
+        actionSuccessMessage() {
+            const label = this.review.kind === 'server' ? 'Server' : 'Virtual tool';
+            return {
+                approve: `${label} approved.`,
+                reject: `${label} rejected.`,
+                revoke: `${label} approval revoked.`,
+            }[this.review.action] || 'Whitelist updated.';
+        },
+
+        sessionMethodLabel() {
+            return { passkey: 'passkey', totp: 'authenticator code', legacy: 'legacy token' }[this.sessionMethod] || 'secure method';
+        },
+
+        cardClass(state) {
+            return { pending: 'border-l-amber-400', approved: 'border-l-emerald-500', rejected: 'border-l-red-400', revoked: 'border-l-gray-400' }[state] || 'border-l-gray-300';
+        },
+
+        badgeClass(state) {
+            return { pending: 'bg-amber-100 text-amber-800', approved: 'bg-emerald-100 text-emerald-800', rejected: 'bg-red-100 text-red-800', revoked: 'bg-gray-200 text-gray-700' }[state] || 'bg-gray-100 text-gray-700';
+        },
+
+        commandArgs(server) {
+            if (Array.isArray(server?.command_args)) return server.command_args.map(value => String(value));
+            if (typeof server?.command_args === 'string' && server.command_args.trim()) return [server.command_args];
+            return [];
+        },
+
+        formatCommand(server) {
+            return [server?.command || '', ...this.commandArgs(server)].filter(Boolean).join(' ');
+        },
+
+        environmentEntries(server) {
+            return Object.entries(server?.env_vars && typeof server.env_vars === 'object' ? server.env_vars : {});
+        },
+
+        formatValue(value) {
+            if (value == null || value === '') return 'empty';
+            if (typeof value === 'object') return JSON.stringify(value);
+            return String(value);
+        },
+
+        formatJson(value) {
+            try { return JSON.stringify(value, null, 2); } catch (_error) { return '{}'; }
+        },
+
+        shortFingerprint(value) {
+            return value ? `${value.slice(0, 12)}…${value.slice(-6)}` : 'Unavailable';
+        },
+
+        humanize(value) {
+            return String(value || '').replace(/[_-]+/g, ' ').replace(/\b\w/g, character => character.toUpperCase());
+        },
+
+        formatExpiry(value) {
+            if (!value) return 'soon';
+            try { return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch (_error) { return 'soon'; }
+        },
+
+        formatDate(value) {
+            if (!value) return 'never';
+            try { return new Date(value).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }); } catch (_error) { return 'unknown'; }
+        },
+
+        passkeyFallbackLabel(passkey) {
+            const id = String(passkey?.credential_id || '');
+            return id ? `Passkey · ${id.slice(-6)}` : 'Passkey';
+        },
+    };
+}
+</script>
+{% endblock %}

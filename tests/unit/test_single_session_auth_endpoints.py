@@ -11,7 +11,13 @@ from authmcp_gateway.auth.jwt_handler import decode_token_unsafe
 from authmcp_gateway.auth.oauth_code_flow import generate_authorization_code
 from authmcp_gateway.auth.password import hash_password
 from authmcp_gateway.auth.user_store import create_user, get_current_user_token_jti
-from authmcp_gateway.config import AppConfig, AuthConfig, JWTConfig, RateLimitConfig
+from authmcp_gateway.config import (
+    AppConfig,
+    AuthConfig,
+    JWTConfig,
+    RateLimitConfig,
+    WhitelistAuthConfig,
+)
 
 
 def _create_test_client(db_path: str, *, allow_dcr: bool = False) -> TestClient:
@@ -42,6 +48,9 @@ def _create_test_client(db_path: str, *, allow_dcr: bool = False) -> TestClient:
         rate_limit=RateLimitConfig(enabled=False),
         mcp_public_url="http://localhost:8000",
         auth_required=True,
+        whitelist_auth=WhitelistAuthConfig(
+            credential_encryption_key="MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="
+        ),
     )
     app = create_app(config)
     return TestClient(app)

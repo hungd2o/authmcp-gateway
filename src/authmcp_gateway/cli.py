@@ -107,12 +107,26 @@ For more information, visit: https://github.com/loglux/authmcp-gateway
         help="Path to SQLite database (default: data/auth.db)",
     )
 
+    subparsers.add_parser(
+        "init-whitelist-security",
+        help="Create the Whitelist credential-encryption key in the local .env file",
+    )
+
     # Create admin command
     admin_parser = subparsers.add_parser("create-admin", help="Create admin user")
     admin_parser.add_argument("--username", required=True, help="Admin username")
     admin_parser.add_argument("--email", required=True, help="Admin email")
     admin_parser.add_argument("--password", help="Admin password (will prompt if not provided)")
     admin_parser.add_argument(
+        "--db-path",
+        type=Path,
+        default="data/auth.db",
+        help="Path to SQLite database (default: data/auth.db)",
+    )
+
+    # Local break-glass recovery. No code-bearing arguments are accepted.
+    recovery_parser = subparsers.add_parser("recover", help="Manage Whitelist recovery locally")
+    recovery_parser.add_argument(
         "--db-path",
         type=Path,
         default="data/auth.db",
@@ -143,8 +157,15 @@ For more information, visit: https://github.com/loglux/authmcp-gateway
         gateway_status(args)
     elif args.command == "init-db":
         init_database(args)
+    elif args.command == "init-whitelist-security":
+        from authmcp_gateway.config import initialize_whitelist_credential_key
+
+        initialize_whitelist_credential_key()
+        print("✓ Whitelist credential-encryption key is ready in .env")
     elif args.command == "create-admin":
         create_admin_user(args)
+    elif args.command == "recover":
+        recover_whitelist_security(args)
     elif args.command == "version":
         show_version()
 
@@ -349,9 +370,7 @@ def _launch_background_server(args, server_url: str) -> None:
         "✓ AuthMCP Gateway is running in the background.\n"
         f"  URL: {server_url}\n"
         "  Mode: system tray\n"
-        f"  PID: {running_pid}\n"
-        + log_hint
-        + "  Stop with: authmcp-gateway stop\n"
+        f"  PID: {running_pid}\n" + log_hint + "  Stop with: authmcp-gateway stop\n"
     )
 
 
@@ -545,6 +564,7 @@ def init_database(args):
     """Initialize the SQLite database."""
     from authmcp_gateway.auth.oauth_code_flow import create_authorization_code_table
     from authmcp_gateway.auth.user_store import init_database as init_db
+    from authmcp_gateway.auth.whitelist_store import init_whitelist_database
 
     db_path = str(args.db_path)
 
@@ -556,6 +576,7 @@ def init_database(args):
     try:
         init_db(db_path)
         create_authorization_code_table(db_path)
+        init_whitelist_database(db_path)
         print("✓ Database initialized successfully")
     except (sqlite3.Error, OSError) as e:
         print(f"✗ Error initializing database: {e}")
@@ -610,6 +631,103 @@ def create_admin_user(args):
     except (sqlite3.Error, ValueError) as e:
         print(f"✗ Error creating user: {e}")
         sys.exit(1)
+
+
+def _recovery_user(db_path: str) -> tuple[int, str] | None:
+    with sqlite3.connect(db_path) as connection:
+        users = connection.execute(
+            "SELECT id, username FROM users WHERE is_superuser = 1 ORDER BY username"
+        ).fetchall()
+    if not users:
+        print("✗ No administrator account is available.", file=sys.stderr)
+        return None
+    for user_id, username in users:
+        print(f"  {user_id}. {username}")
+    try:
+        selected = int(input("Select administrator ID: ").strip())
+    except ValueError:
+        print("✗ Invalid administrator selection.", file=sys.stderr)
+        return None
+    for user_id, username in users:
+        if user_id == selected:
+            return int(user_id), str(username)
+    print("✗ Invalid administrator selection.", file=sys.stderr)
+    return None
+
+
+def _print_recovery_url(code: str) -> None:
+    from urllib.parse import quote
+
+    try:
+        port = int(os.getenv("PORT", "8000").strip())
+    except ValueError:
+        port = 8000
+    print(
+        f"Recovery URL (expires in 5 minutes): http://localhost:{port}/whitelist/recover#code={quote(code)}"
+    )
+
+
+def recover_whitelist_security(args) -> None:
+    """Run local, interactive break-glass operations without accepting a code as input."""
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        print("✗ The recover command requires interactive input and output TTYs.", file=sys.stderr)
+        return
+    db_path = str(args.db_path)
+    if not Path(db_path).is_file():
+        print("✗ Database not found. Run 'authmcp-gateway init-db' first.", file=sys.stderr)
+        return
+    from authmcp_gateway.auth import totp, whitelist_recovery, webauthn_store
+    from authmcp_gateway.security.logger import log_security_event
+
+    selected = _recovery_user(db_path)
+    if selected is None:
+        return
+    user_id, username = selected
+    print(
+        "\n1. Restore browser access\n2. Register a new passkey\n3. Reset authenticator app\n4. Rotate recovery credential\n5. Show security status\n6. Cancel"
+    )
+    choice = input("Choose an action: ").strip()
+    if choice in {"1", "2", "4"}:
+        verb = "ROTATE" if choice == "4" else "CREATE"
+        print(
+            "This creates a one-time link that expires in five minutes and invalidates "
+            "any previous unconsumed recovery link."
+        )
+        if input(f"Type {verb} to continue: ").strip() != verb:
+            print("Recovery action cancelled.")
+            return
+        code = whitelist_recovery.create_recovery_code(db_path, user_id)
+        _print_recovery_url(code)
+        event = (
+            "whitelist_recovery_code_rotated"
+            if choice == "4"
+            else "whitelist_recovery_code_created"
+        )
+        log_security_event(db_path, event, "high", user_id=user_id, username=username)
+    elif choice == "3":
+        print(
+            f"This removes the authenticator app credential for {username}. "
+            "It does not remove passkeys or approve any MCP item."
+        )
+        if input(f'Type "RESET {username}" to continue: ').strip() != f"RESET {username}":
+            print("Authenticator reset cancelled.")
+            return
+        removed = totp.remove_totp(db_path, user_id)
+        print("Authenticator removed." if removed else "No configured authenticator found.")
+        log_security_event(
+            db_path, "whitelist_totp_reset_local", "high", user_id=user_id, username=username
+        )
+    elif choice == "5":
+        print(f"Passkeys: {len(webauthn_store.list_passkeys(db_path, user_id))}")
+        print(
+            f"Authenticator configured: {bool(totp.get_totp_credential(db_path, user_id, confirmed_only=True))}"
+        )
+        print(f"Recovery credential active: {whitelist_recovery.recovery_status(db_path, user_id)}")
+        log_security_event(
+            db_path, "whitelist_security_status_viewed", "low", user_id=user_id, username=username
+        )
+    elif choice != "6":
+        print("✗ Invalid action.", file=sys.stderr)
 
 
 def show_version():

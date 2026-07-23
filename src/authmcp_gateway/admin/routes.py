@@ -238,6 +238,8 @@ from .api_keys_api import *  # noqa: E402,F401,F403
 from .logs_api import *  # noqa: E402,F401,F403
 from .mcp_activity_api import *  # noqa: E402,F401,F403
 from .mcp_servers_api import *  # noqa: E402,F401,F403
+from .whitelist_api import *  # noqa: E402,F401,F403
+from .whitelist_security_api import *  # noqa: E402,F401,F403
 from .mcp_tokens_api import *  # noqa: E402,F401,F403
 from .settings_api import *  # noqa: E402,F401,F403
 from .user_api import *  # noqa: E402,F401,F403

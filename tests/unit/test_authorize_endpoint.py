@@ -6,7 +6,13 @@ from pathlib import Path
 from starlette.testclient import TestClient
 
 from authmcp_gateway.app import create_app
-from authmcp_gateway.config import AppConfig, AuthConfig, JWTConfig, RateLimitConfig
+from authmcp_gateway.config import (
+    AppConfig,
+    AuthConfig,
+    JWTConfig,
+    RateLimitConfig,
+    WhitelistAuthConfig,
+)
 
 
 def _create_test_client(db_path: str) -> TestClient:
@@ -31,6 +37,9 @@ def _create_test_client(db_path: str) -> TestClient:
         rate_limit=RateLimitConfig(enabled=False),
         mcp_public_url="http://localhost:8000",
         auth_required=True,
+        whitelist_auth=WhitelistAuthConfig(
+            credential_encryption_key="MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="
+        ),
     )
     app = create_app(config)
     return TestClient(app)

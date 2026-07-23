@@ -1,10 +1,8 @@
 """Admin API: MCP server management."""
 
 import asyncio
-import hmac
 import json
 import logging
-import os
 import re
 import shlex
 from uuid import uuid4
@@ -102,7 +100,6 @@ _PROCESS_DETAIL_WORKER_INTEGER_FIELDS = frozenset(
 
 __all__ = [
     "admin_mcp_servers",
-    "admin_whitelist",
     "parse_jwt_expiration",
     "api_list_mcp_servers",
     "api_mcp_servers_token_status",
@@ -116,9 +113,6 @@ __all__ = [
     "api_control_plane_operation",
     "api_control_plane_availability",
     "api_update_management_profile",
-    "api_whitelist_pending",
-    "api_whitelist_servers_action",
-    "api_whitelist_virtual_tools_action",
     "api_create_virtual_tool",
     "api_delete_virtual_tool",
 ]
@@ -139,11 +133,6 @@ async def admin_mcp_servers(_: Request) -> HTMLResponse:
         active_page="mcp-servers",
         default_timeout=default_timeout,
     )
-
-
-async def admin_whitelist(_: Request) -> HTMLResponse:
-    """Whitelist approval page."""
-    return render_template("admin/whitelist.html", active_page="whitelist")
 
 
 def parse_jwt_expiration(token: str) -> dict:
@@ -1197,129 +1186,6 @@ async def api_mcp_server_process_action(request: Request) -> JSONResponse:
     if process_detail is not None:
         response["process_detail"] = process_detail
     return JSONResponse(response)
-
-
-def _has_valid_whitelist_token(request: Request) -> bool:
-    expected_token = (os.getenv("MCP_WHITELIST_TOKEN") or "").strip()
-    provided_token = (request.headers.get("x-whitelist-token") or "").strip()
-    return bool(
-        expected_token and provided_token and hmac.compare_digest(provided_token, expected_token)
-    )
-
-
-def _whitelist_token_error() -> JSONResponse:
-    return JSONResponse({"error": "Valid whitelist token required"}, status_code=401)
-
-
-@api_error_handler
-async def api_whitelist_pending(request: Request) -> JSONResponse:
-    from authmcp_gateway.mcp.store import list_mcp_servers_by_state, list_virtual_tools_by_state
-    from authmcp_gateway.mcp.trust import (
-        APPROVAL_APPROVED,
-        APPROVAL_PENDING,
-        APPROVAL_REJECTED,
-        APPROVAL_REVOKED,
-    )
-
-    if not _has_valid_whitelist_token(request):
-        return _whitelist_token_error()
-
-    db_path = get_config(request).auth.sqlite_path
-    state_param = (request.query_params.get("state") or "").strip().lower() or None
-
-    valid_states = {APPROVAL_PENDING, APPROVAL_APPROVED, APPROVAL_REJECTED, APPROVAL_REVOKED}
-    if state_param and state_param not in valid_states:
-        return JSONResponse(
-            {"error": f"Invalid state. Must be one of: {', '.join(sorted(valid_states))}"},
-            status_code=400,
-        )
-
-    servers = list_mcp_servers_by_state(db_path, state_param)
-    virtual_tools = list_virtual_tools_by_state(db_path, state_param)
-
-    return JSONResponse(
-        {
-            "servers": servers,
-            "virtual_tools": virtual_tools,
-            "state_filter": state_param,
-        }
-    )
-
-
-@api_error_handler
-async def api_whitelist_servers_action(request: Request) -> JSONResponse:
-    from authmcp_gateway.mcp.store import update_server_approval
-
-    if not _has_valid_whitelist_token(request):
-        return _whitelist_token_error()
-
-    server_id = int(request.path_params["server_id"])
-    payload = await request.json()
-    action = (payload.get("action") or "").lower()
-    reason = payload.get("reason")
-    allowlist_policy = payload.get("allowlist_policy")
-    actor = payload.get("actor") or "whitelist-admin"
-    approval_state = {"approve": "approved", "reject": "rejected", "revoke": "revoked"}.get(action)
-    if not approval_state:
-        return JSONResponse({"error": "Invalid action"}, status_code=400)
-    expected_fingerprint = payload.get("config_fingerprint")
-    if approval_state == "approved" and (
-        not isinstance(expected_fingerprint, str) or not expected_fingerprint
-    ):
-        return JSONResponse({"error": "Reload this server before approving it"}, status_code=400)
-
-    runtime = get_mcp_runtime(request)
-    fenced_for_revocation = approval_state != "approved"
-    if fenced_for_revocation:
-        await runtime.block_and_stop_server(server_id)
-
-    success = update_server_approval(
-        get_config(request).auth.sqlite_path,
-        server_id=server_id,
-        approval_state=approval_state,
-        actor=actor,
-        blocked_reason=reason,
-        allowlist_policy=allowlist_policy,
-        expected_fingerprint=expected_fingerprint,
-    )
-    if not success:
-        return JSONResponse(
-            {
-                "error": "Server changed or does not match the allowlist policy; reload and review it again"
-            },
-            status_code=409,
-        )
-    if approval_state == "approved":
-        await runtime.allow_server(server_id)
-    elif not fenced_for_revocation:
-        await runtime.block_and_stop_server(server_id)
-    return JSONResponse({"message": f"Server {approval_state}"})
-
-
-@api_error_handler
-async def api_whitelist_virtual_tools_action(request: Request) -> JSONResponse:
-    from authmcp_gateway.mcp.store import update_virtual_tool_approval
-
-    if not _has_valid_whitelist_token(request):
-        return _whitelist_token_error()
-
-    tool_id = int(request.path_params["tool_id"])
-    payload = await request.json()
-    action = (payload.get("action") or "").lower()
-    reason = payload.get("reason")
-    actor = payload.get("actor") or "whitelist-admin"
-    approval_state = {"approve": "approved", "reject": "rejected", "revoke": "revoked"}.get(action)
-    if not approval_state:
-        return JSONResponse({"error": "Invalid action"}, status_code=400)
-    if not update_virtual_tool_approval(
-        get_config(request).auth.sqlite_path,
-        tool_id=tool_id,
-        approval_state=approval_state,
-        actor=actor,
-        blocked_reason=reason,
-    ):
-        return JSONResponse({"error": "Virtual tool not found"}, status_code=404)
-    return JSONResponse({"message": f"Virtual tool {approval_state}"})
 
 
 @api_error_handler

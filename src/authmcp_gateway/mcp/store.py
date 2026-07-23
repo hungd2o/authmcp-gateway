@@ -212,14 +212,13 @@ def init_mcp_database(db_path: str) -> None:
         try:
             cursor.execute(
                 "ALTER TABLE mcp_servers ADD COLUMN management_config "
-                "TEXT NOT NULL DEFAULT '{\"mode\":\"none\"}'"
+                'TEXT NOT NULL DEFAULT \'{"mode":"none"}\''
             )
         except sqlite3.OperationalError:
             pass
         if schema_version < 1:
             cursor.execute("PRAGMA user_version = 1")
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS management_audit (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 mcp_server_id INTEGER NOT NULL,
@@ -237,10 +236,8 @@ def init_mcp_database(db_path: str) -> None:
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (mcp_server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
             )
-            """
-        )
-        cursor.execute(
-            """
+            """)
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS management_idempotency (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 idempotency_key TEXT NOT NULL UNIQUE,
@@ -253,10 +250,8 @@ def init_mcp_database(db_path: str) -> None:
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (mcp_server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
             )
-            """
-        )
-        cursor.execute(
-            """
+            """)
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS management_probe (
                 mcp_server_id INTEGER PRIMARY KEY,
                 adapter TEXT NOT NULL,
@@ -267,10 +262,8 @@ def init_mcp_database(db_path: str) -> None:
                 checked_at TIMESTAMP NOT NULL,
                 FOREIGN KEY (mcp_server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
             )
-            """
-        )
-        cursor.execute(
-            """
+            """)
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS management_runtime_state (
                 mcp_server_id INTEGER PRIMARY KEY,
                 active_revision TEXT NOT NULL,
@@ -278,8 +271,7 @@ def init_mcp_database(db_path: str) -> None:
                 applied_at TIMESTAMP NOT NULL,
                 FOREIGN KEY (mcp_server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
             )
-            """
-        )
+            """)
         audit_columns = {
             row[1] for row in cursor.execute("PRAGMA table_info(management_audit)").fetchall()
         }
@@ -458,11 +450,18 @@ def create_mcp_server(
         cursor = conn.cursor()
         normalized_transport = (transport_type or "http").lower()
         config_for_fingerprint = {
+            "enabled": enabled,
             "transport_type": normalized_transport,
             "url": url,
+            "tool_prefix": tool_prefix,
+            "auth_type": auth_type,
+            "auth_token": auth_token,
+            "routing_strategy": routing_strategy,
+            "timeout": timeout,
             "command": command,
             "command_args": command_args or [],
             "pipe_path": pipe_path,
+            "expose_port": expose_port,
             "working_dir": working_dir,
             "env_vars": env_vars or {},
         }
@@ -1049,8 +1048,12 @@ def prepare_management_config(
             path = str(Path(executable).resolve())
             try:
                 result = subprocess.run(
-                    [path, "--version"], text=True, capture_output=True,
-                    timeout=10, shell=False, check=False,
+                    [path, "--version"],
+                    text=True,
+                    capture_output=True,
+                    timeout=10,
+                    shell=False,
+                    check=False,
                 )
             except (OSError, subprocess.TimeoutExpired) as exc:
                 raise ValueError("management executable is unavailable") from exc
@@ -1066,16 +1069,12 @@ def prepare_management_config(
     return management
 
 
-def persist_management_config(
-    db_path: str, server_id: int, management: Dict[str, Any]
-) -> bool:
+def persist_management_config(db_path: str, server_id: int, management: Dict[str, Any]) -> bool:
     """Persist a previously validated management binding."""
     return update_mcp_server(db_path, server_id, management_config=management)
 
 
-def update_management_config(
-    db_path: str, server_id: int, management: Dict[str, Any]
-) -> bool:
+def update_management_config(db_path: str, server_id: int, management: Dict[str, Any]) -> bool:
     """Validate, pin, and persist a reviewed binding."""
     prepared = prepare_management_config(db_path, server_id, management)
     return persist_management_config(db_path, server_id, prepared)
@@ -1182,21 +1181,22 @@ def set_management_runtime_state(
                 config_fingerprint = excluded.config_fingerprint,
                 applied_at = excluded.applied_at
             """,
-            (server_id, active_revision, config_fingerprint, datetime.now(timezone.utc).isoformat()),
+            (
+                server_id,
+                active_revision,
+                config_fingerprint,
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
 
 
 def clear_management_runtime_state(db_path: str, server_id: int) -> None:
     """Remove a prior apply marker before attempting a fresh runtime start."""
     with _db_conn(db_path) as conn:
-        conn.execute(
-            "DELETE FROM management_runtime_state WHERE mcp_server_id = ?", (server_id,)
-        )
+        conn.execute("DELETE FROM management_runtime_state WHERE mcp_server_id = ?", (server_id,))
 
 
-def get_management_idempotency(
-    db_path: str, idempotency_key: str
-) -> Optional[Dict[str, Any]]:
+def get_management_idempotency(db_path: str, idempotency_key: str) -> Optional[Dict[str, Any]]:
     """Return a non-expired retry receipt for an idempotent mutation."""
     from .control_plane_contract import validate_idempotency_key
 
@@ -1237,8 +1237,14 @@ def complete_management_idempotency(
             WHERE idempotency_key = ? AND mcp_server_id = ? AND operation = ?
               AND request_fingerprint = ? AND status = 'pending'
             """,
-            (result_json, status, validate_idempotency_key(idempotency_key), mcp_server_id,
-             operation, request_fingerprint),
+            (
+                result_json,
+                status,
+                validate_idempotency_key(idempotency_key),
+                mcp_server_id,
+                operation,
+                request_fingerprint,
+            ),
         )
     return cursor.rowcount == 1
 
@@ -1268,11 +1274,15 @@ def save_management_probe(
                 observed_package=excluded.observed_package, observed_version=excluded.observed_version,
                 failure_reason=excluded.failure_reason, checked_at=excluded.checked_at
             """,
-            (server_id, truncate_untrusted_text(adapter, limit=64), int(compatible),
-             truncate_untrusted_text(observed_package, limit=120) if observed_package else None,
-             truncate_untrusted_text(observed_version, limit=120) if observed_version else None,
-             truncate_untrusted_text(failure_reason, limit=512) if failure_reason else None,
-             datetime.now(timezone.utc).isoformat()),
+            (
+                server_id,
+                truncate_untrusted_text(adapter, limit=64),
+                int(compatible),
+                truncate_untrusted_text(observed_package, limit=120) if observed_package else None,
+                truncate_untrusted_text(observed_version, limit=120) if observed_version else None,
+                truncate_untrusted_text(failure_reason, limit=512) if failure_reason else None,
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
 
 
@@ -1563,8 +1573,21 @@ def update_server_approval(
         return False
 
     now = datetime.now(timezone.utc).isoformat()
+    # HTTP handlers always supply a reviewed fingerprint. Internal services
+    # may use this helper directly, so bind those writes to the current read.
+    expected_fingerprint = expected_fingerprint or server.get("config_fingerprint")
+    from authmcp_gateway.mcp.whitelist_review import build_server_approval_snapshot
+
     metadata = dict(server.get("approval_metadata") or {})
-    metadata.update({"actor": actor, "updated_at": now, "approval_state": approval_state})
+    metadata.update(
+        {
+            "actor": actor,
+            "updated_at": now,
+            "approval_state": approval_state,
+            "reason": blocked_reason,
+            "snapshot": build_server_approval_snapshot(server),
+        }
+    )
 
     policy = allowlist_policy
     if approval_state == APPROVAL_APPROVED:
@@ -1573,39 +1596,77 @@ def update_server_approval(
         if not server_matches_allowlist_policy(server, policy):
             return False
 
-        if expected_fingerprint is not None:
-            with _db_conn(db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    """
-                    UPDATE mcp_servers
-                    SET approval_state = ?, approval_metadata = ?, blocked_reason = NULL,
-                        allowlist_policy = ?, updated_at = ?
-                    WHERE id = ? AND approval_state != ? AND config_fingerprint = ?
-                    """,
-                    (
-                        approval_state,
-                        json.dumps(metadata),
-                        json.dumps(policy),
-                        now,
-                        server_id,
-                        APPROVAL_APPROVED,
-                        expected_fingerprint,
-                    ),
-                )
-                return cursor.rowcount == 1
+    with _db_conn(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE mcp_servers
+            SET approval_state = ?, approval_metadata = ?, blocked_reason = ?,
+                allowlist_policy = COALESCE(?, allowlist_policy), updated_at = ?
+            WHERE id = ? AND config_fingerprint = ?
+            """,
+            (
+                approval_state,
+                json.dumps(metadata),
+                None if approval_state == APPROVAL_APPROVED else blocked_reason,
+                json.dumps(policy) if policy is not None else None,
+                now,
+                server_id,
+                expected_fingerprint,
+            ),
+        )
+        return cursor.rowcount == 1
 
-    updates: Dict[str, Any] = {
-        "approval_state": approval_state,
-        "approval_metadata": metadata,
-        "blocked_reason": blocked_reason,
-    }
-    if policy is not None:
-        updates["allowlist_policy"] = policy
 
-    if approval_state == APPROVAL_APPROVED:
-        updates["blocked_reason"] = None
-    return update_mcp_server(db_path, server_id, **updates)
+def migrate_whitelist_approval_fingerprints(db_path: str) -> int:
+    """Invalidate approvals created under an older fingerprint contract.
+
+    The migration is idempotent.  A newly covered setting cannot silently keep
+    an existing approval: affected records become pending and need review.
+    """
+    changed = 0
+    now = datetime.now(timezone.utc).isoformat()
+    for server in list_mcp_servers(db_path):
+        current = build_server_fingerprint(server)
+        if current == server.get("config_fingerprint"):
+            continue
+        state = (
+            APPROVAL_PENDING
+            if server.get("approval_state") == APPROVAL_APPROVED
+            else server.get("approval_state")
+        )
+        reason = (
+            "Approval fingerprint policy changed; review is required"
+            if state == APPROVAL_PENDING
+            else server.get("blocked_reason")
+        )
+        with _db_conn(db_path) as conn:
+            result = conn.execute(
+                "UPDATE mcp_servers SET config_fingerprint = ?, approval_state = ?, blocked_reason = ?, updated_at = ? WHERE id = ? AND config_fingerprint != ?",
+                (current, state, reason, now, server["id"], current),
+            )
+            changed += result.rowcount
+    for tool in list_virtual_tools(db_path):
+        current = build_virtual_tool_fingerprint(tool)
+        if current == tool.get("config_fingerprint"):
+            continue
+        state = (
+            APPROVAL_PENDING
+            if tool.get("approval_state") == APPROVAL_APPROVED
+            else tool.get("approval_state")
+        )
+        reason = (
+            "Approval fingerprint policy changed; review is required"
+            if state == APPROVAL_PENDING
+            else tool.get("blocked_reason")
+        )
+        with _db_conn(db_path) as conn:
+            result = conn.execute(
+                "UPDATE virtual_tools SET config_fingerprint = ?, approval_state = ?, blocked_reason = ?, updated_at = ? WHERE id = ? AND config_fingerprint != ?",
+                (current, state, reason, now, tool["id"], current),
+            )
+            changed += result.rowcount
+    return changed
 
 
 def list_pending_mcp_servers(db_path: str) -> List[Dict[str, Any]]:
@@ -1622,7 +1683,13 @@ def create_virtual_tool(
     enabled: bool = True,
 ) -> int:
     now = datetime.now(timezone.utc).isoformat()
-    tool_obj = {"name": name, "execution_type": execution_type, "config": config or {}}
+    tool_obj = {
+        "mcp_server_id": mcp_server_id,
+        "enabled": enabled,
+        "name": name,
+        "execution_type": execution_type,
+        "config": config or {},
+    }
     fingerprint = build_virtual_tool_fingerprint(tool_obj)
     risk_level = RISK_LOW
     with _db_conn(db_path) as conn:
@@ -1773,26 +1840,42 @@ def update_virtual_tool_approval(
     approval_state: str,
     actor: str,
     blocked_reason: Optional[str] = None,
+    expected_fingerprint: Optional[str] = None,
 ) -> bool:
     tool = get_virtual_tool(db_path, tool_id)
     if not tool:
         return False
+    expected_fingerprint = expected_fingerprint or tool.get("config_fingerprint")
+    from authmcp_gateway.mcp.whitelist_review import build_virtual_tool_approval_snapshot
+
     metadata = dict(tool.get("approval_metadata") or {})
     metadata.update(
         {
             "actor": actor,
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "approval_state": approval_state,
+            "reason": blocked_reason,
+            "snapshot": build_virtual_tool_approval_snapshot(tool),
         }
     )
-    updates: Dict[str, Any] = {
-        "approval_state": approval_state,
-        "approval_metadata": metadata,
-        "blocked_reason": blocked_reason,
-    }
-    if approval_state == APPROVAL_APPROVED:
-        updates["blocked_reason"] = None
-    return update_virtual_tool(db_path, tool_id, **updates)
+    with _db_conn(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE virtual_tools
+            SET approval_state = ?, approval_metadata = ?, blocked_reason = ?, updated_at = ?
+            WHERE id = ? AND config_fingerprint = ?
+            """,
+            (
+                approval_state,
+                json.dumps(metadata),
+                None if approval_state == APPROVAL_APPROVED else blocked_reason,
+                datetime.now(timezone.utc).isoformat(),
+                tool_id,
+                expected_fingerprint,
+            ),
+        )
+        return cursor.rowcount == 1
 
 
 def list_pending_virtual_tools(db_path: str) -> List[Dict[str, Any]]:

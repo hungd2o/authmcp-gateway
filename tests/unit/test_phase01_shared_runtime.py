@@ -6,7 +6,7 @@ import pytest
 from starlette.testclient import TestClient
 from starlette.requests import Request
 
-from authmcp_gateway.admin import mcp_servers_api
+from authmcp_gateway.admin import mcp_servers_api, whitelist_api
 from authmcp_gateway.mcp.proxy import McpProxy
 
 
@@ -79,7 +79,9 @@ async def test_api_delete_mcp_server_uses_shared_runtime(monkeypatch):
 
     request = _request("POST", "/admin/api/mcp-servers/3", {"server_id": "3"}, FakeRuntime())
     monkeypatch.setattr(mcp_servers_api, "get_config", lambda _req: DummyConfig())
-    monkeypatch.setattr("authmcp_gateway.mcp.store.delete_mcp_server", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        "authmcp_gateway.mcp.store.delete_mcp_server", lambda *_args, **_kwargs: True
+    )
 
     response = await mcp_servers_api.api_delete_mcp_server(request)
 
@@ -153,28 +155,47 @@ async def test_runtime_reconciles_only_an_active_authorized_stdio_pool(monkeypat
 @pytest.mark.asyncio
 async def test_runtime_forced_reconcile_starts_or_generation_swaps(monkeypatch):
     from authmcp_gateway.admin import routes
+
     for name, value in vars(mcp_servers_api).items():
         if callable(value) and (name.startswith("admin_") or name.startswith("api_")):
             monkeypatch.setattr(routes, name, value, raising=False)
     from authmcp_gateway.app import McpRuntime
 
     class Manager:
-        def __init__(self): self.running, self.calls = False, []
-        async def unblock_server(self, server_id): self.calls.append(("unblock", server_id))
-        def requires_reapproval(self, _server_id): return False
-        def get_status(self, _server_id): return "running" if self.running else "stopped"
-        async def start_server(self, server_id, _server): self.running = True; self.calls.append(("start", server_id))
-        async def reconcile(self, server_id, _server, *, force_generation_swap=False): self.calls.append(("swap", server_id, force_generation_swap))
+        def __init__(self):
+            self.running, self.calls = False, []
+
+        async def unblock_server(self, server_id):
+            self.calls.append(("unblock", server_id))
+
+        def requires_reapproval(self, _server_id):
+            return False
+
+        def get_status(self, _server_id):
+            return "running" if self.running else "stopped"
+
+        async def start_server(self, server_id, _server):
+            self.running = True
+            self.calls.append(("start", server_id))
+
+        async def reconcile(self, server_id, _server, *, force_generation_swap=False):
+            self.calls.append(("swap", server_id, force_generation_swap))
 
     class Proxy:
-        def invalidate_cache(self, _server_id): pass
+        def invalidate_cache(self, _server_id):
+            pass
 
     runtime = McpRuntime(Proxy(), Manager())
     server = {"id": 10, "transport_type": "stdio", "enabled": True, "approval_state": "approved"}
     await runtime.reconcile_server(server, force_restart=True)
     await runtime.reconcile_server(server, force_restart=True)
 
-    assert runtime.process_manager.calls == [("unblock", 10), ("start", 10), ("unblock", 10), ("swap", 10, True)]
+    assert runtime.process_manager.calls == [
+        ("unblock", 10),
+        ("start", 10),
+        ("unblock", 10),
+        ("swap", 10, True),
+    ]
 
 
 def test_gateway_boot_does_not_rewrite_management_runtime_state(monkeypatch, tmp_path):
@@ -185,12 +206,18 @@ def test_gateway_boot_does_not_rewrite_management_runtime_state(monkeypatch, tmp
             return default
 
     class FakeHealthChecker:
-        def start(self): return None
-        async def stop(self): return None
+        def start(self):
+            return None
+
+        async def stop(self):
+            return None
 
     class FakeTokenRefresher:
-        def start(self): return None
-        async def stop(self): return None
+        def start(self):
+            return None
+
+        async def stop(self):
+            return None
 
     class FakeProcessManager:
         instances = []
@@ -268,7 +295,15 @@ def test_gateway_boot_does_not_rewrite_management_runtime_state(monkeypatch, tmp
         transport_type="stdio",
         command="python",
     )
-    store.update_server_approval(str(sqlite_path), server_id, "approved", actor="test")
+    server = store.get_mcp_server(str(sqlite_path), server_id)
+    assert server is not None
+    store.update_server_approval(
+        str(sqlite_path),
+        server_id,
+        "approved",
+        actor="test",
+        expected_fingerprint=server["config_fingerprint"],
+    )
 
     class DummyConfig:
         auth = SimpleNamespace(
@@ -296,6 +331,13 @@ def test_gateway_boot_does_not_rewrite_management_runtime_state(monkeypatch, tmp
         auth_required = False
         mcp_public_url = "http://example.test"
         whitelist_token = "token"
+        whitelist_auth = SimpleNamespace(
+            credential_encryption_key="MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
+            session_minutes=15,
+            passkey_fresh_seconds=120,
+            webauthn_rp_ids=["example.test"],
+            webauthn_allowed_origins=["http://example.test"],
+        )
         rate_limit = SimpleNamespace(enabled=False)
 
     from authmcp_gateway.admin import routes
@@ -304,9 +346,15 @@ def test_gateway_boot_does_not_rewrite_management_runtime_state(monkeypatch, tmp
         if callable(value) and (name.startswith("admin_") or name.startswith("api_")):
             monkeypatch.setattr(routes, name, value, raising=False)
 
-    monkeypatch.setattr("authmcp_gateway.app.initialize_settings", lambda *_args, **_kwargs: DummySettings())
-    monkeypatch.setattr("authmcp_gateway.app.initialize_health_checker", lambda **_kwargs: FakeHealthChecker())
-    monkeypatch.setattr("authmcp_gateway.app.initialize_token_refresher", lambda **_kwargs: FakeTokenRefresher())
+    monkeypatch.setattr(
+        "authmcp_gateway.app.initialize_settings", lambda *_args, **_kwargs: DummySettings()
+    )
+    monkeypatch.setattr(
+        "authmcp_gateway.app.initialize_health_checker", lambda **_kwargs: FakeHealthChecker()
+    )
+    monkeypatch.setattr(
+        "authmcp_gateway.app.initialize_token_refresher", lambda **_kwargs: FakeTokenRefresher()
+    )
     monkeypatch.setattr("authmcp_gateway.app.initialize_token_manager", lambda **_kwargs: None)
     monkeypatch.setattr("authmcp_gateway.app.StdioProcessManager", FakeProcessManager)
     monkeypatch.setattr("authmcp_gateway.app.McpProxy", FakeProxy)
@@ -410,31 +458,31 @@ async def test_api_whitelist_reject_uses_shared_runtime(monkeypatch):
 
     request = _request(
         "POST",
-        "/admin/api/mcp-servers/5/whitelist",
+        "/admin/api/whitelist/servers/5",
         {"server_id": "5"},
         FakeRuntime(),
-        body=json.dumps({"action": "reject", "reason": "denied"}).encode("utf-8"),
-        headers=[
-            (b"content-type", b"application/json"),
-            (b"x-whitelist-token", b"token-5"),
-        ],
+        body=json.dumps(
+            {"action": "reject", "reason": "denied", "config_fingerprint": "current"}
+        ).encode("utf-8"),
     )
-    monkeypatch.setenv("MCP_WHITELIST_TOKEN", "token-5")
-    monkeypatch.setattr(
-        mcp_servers_api,
-        "get_config",
-        lambda _req: DummyConfig(),
-    )
+    request.state.username = "admin"
+    request.state.user_id = 1
+    monkeypatch.setattr(whitelist_api, "get_config", lambda _req: DummyConfig())
+    monkeypatch.setattr(whitelist_api, "require_whitelist_session", lambda _req: {"verified": True})
     monkeypatch.setattr(
         "authmcp_gateway.mcp.store.update_server_approval",
         lambda *_args, **_kwargs: True,
     )
     monkeypatch.setattr(
         "authmcp_gateway.mcp.store.get_mcp_server",
-        lambda *_args, **_kwargs: {"id": 5, "approval_state": "rejected"},
+        lambda *_args, **_kwargs: {
+            "id": 5,
+            "approval_state": "rejected",
+            "config_fingerprint": "current",
+        },
     )
 
-    response = await mcp_servers_api.api_whitelist_servers_action(request)
+    response = await whitelist_api.api_whitelist_servers_action(request)
 
     assert response.status_code == 200
     assert calls == [("block", 5)]

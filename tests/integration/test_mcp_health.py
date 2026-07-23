@@ -279,6 +279,15 @@ async def test_check_server_401_with_refresh_hash_attempts_token_refresh(mcp_db,
     store.update_mcp_server(
         mcp_db, sid, refresh_token_hash="sha-fake", refresh_token_encrypted=None
     )
+    refreshed_server = store.get_mcp_server(mcp_db, sid)
+    assert refreshed_server is not None
+    assert store.update_server_approval(
+        mcp_db,
+        sid,
+        "approved",
+        actor="test",
+        expected_fingerprint=refreshed_server["config_fingerprint"],
+    )
 
     call_count = {"n": 0}
 

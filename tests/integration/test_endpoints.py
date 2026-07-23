@@ -20,7 +20,13 @@ from starlette.testclient import TestClient
 
 from authmcp_gateway.app import create_app
 from authmcp_gateway.auth import endpoints as ep
-from authmcp_gateway.config import AppConfig, AuthConfig, JWTConfig, RateLimitConfig
+from authmcp_gateway.config import (
+    AppConfig,
+    AuthConfig,
+    JWTConfig,
+    RateLimitConfig,
+    WhitelistAuthConfig,
+)
 from authmcp_gateway.mcp.proxy import StdioCapacityExceeded
 from authmcp_gateway.mcp.stdio_pool_config import WorkerPoolOverloadedError
 
@@ -57,6 +63,9 @@ def config(initialized_db) -> AppConfig:
         ),
         rate_limit=RateLimitConfig(enabled=False),
         mcp_public_url="http://localhost:8000",
+        whitelist_auth=WhitelistAuthConfig(
+            credential_encryption_key="MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="
+        ),
     )
 
 
@@ -819,9 +828,7 @@ def _mcp_initialize_request() -> dict:
 
 
 @pytest.mark.asyncio
-async def test_mcp_initialize_and_sse_message_post_map_capacity_to_503(
-    config, monkeypatch
-):
+async def test_mcp_initialize_and_sse_message_post_map_capacity_to_503(config, monkeypatch):
     config.static_bearer_tokens = ["static-secret"]
 
     async def raise_capacity(*_args, **_kwargs):

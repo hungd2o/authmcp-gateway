@@ -33,20 +33,43 @@ def approval_is_active(state: Optional[str]) -> bool:
 
 
 def build_server_fingerprint(server: Dict[str, Any]) -> str:
-    """Return deterministic SHA256 fingerprint for a server runtime config."""
+    """Return deterministic fingerprint of every approval-relevant setting.
+
+    Secret values are represented by a digest.  This detects credential
+    changes without ever placing the credential itself in approval metadata.
+    """
     transport = (server.get("transport_type") or "http").lower()
-    payload: Dict[str, Any] = {"transport_type": transport}
+    payload: Dict[str, Any] = {
+        "version": 2,
+        "enabled": bool(server.get("enabled")),
+        "transport_type": transport,
+        "tool_prefix": server.get("tool_prefix") or "",
+        "routing_strategy": server.get("routing_strategy") or "prefix",
+        "timeout": server.get("timeout"),
+    }
     if transport == "http":
-        payload["url"] = server.get("url") or ""
+        payload["http"] = {
+            "url": server.get("url") or "",
+            "auth_type": server.get("auth_type") or "none",
+            "auth_token_digest": _fingerprint_secret(server.get("auth_token")),
+            "refresh_token_digest": _fingerprint_secret(server.get("refresh_token_hash")),
+            "refresh_endpoint": server.get("refresh_endpoint") or "",
+        }
     elif transport == "stdio":
-        payload["command"] = server.get("command") or ""
-        payload["command_args"] = list(server.get("command_args") or [])
-        payload["working_dir"] = server.get("working_dir") or ""
-        payload["env_vars"] = dict(server.get("env_vars") or {})
-        payload["min_workers"] = server.get("min_workers")
-        payload["max_workers"] = server.get("max_workers")
+        payload["process"] = {
+            "command": server.get("command") or "",
+            "command_args": list(server.get("command_args") or []),
+            "working_dir": server.get("working_dir") or "",
+            "env_vars": dict(server.get("env_vars") or {}),
+            "min_workers": server.get("min_workers"),
+            "max_workers": server.get("max_workers"),
+            "expose_port": server.get("expose_port"),
+        }
     elif transport == "pipe":
-        payload["pipe_path"] = server.get("pipe_path") or ""
+        payload["pipe"] = {
+            "pipe_path": server.get("pipe_path") or "",
+            "expose_port": server.get("expose_port"),
+        }
     else:
         payload["raw"] = server
 
@@ -66,12 +89,21 @@ def build_server_fingerprint(server: Dict[str, Any]) -> str:
 
 def build_virtual_tool_fingerprint(tool: Dict[str, Any]) -> str:
     payload = {
+        "version": 2,
+        "mcp_server_id": tool.get("mcp_server_id"),
+        "enabled": bool(tool.get("enabled")),
         "name": tool.get("name") or "",
         "execution_type": tool.get("execution_type") or "",
         "config": tool.get("config") or {},
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()
+
+
+def _fingerprint_secret(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    return hashlib.sha256(str(value).encode("utf-8")).hexdigest()
 
 
 def _normalize_http_policy(policy: Dict[str, Any]) -> Dict[str, Any]:

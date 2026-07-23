@@ -8,7 +8,13 @@ from starlette.testclient import TestClient
 from authmcp_gateway.app import create_app
 from authmcp_gateway.auth.password import hash_password
 from authmcp_gateway.auth.user_store import create_user
-from authmcp_gateway.config import AppConfig, AuthConfig, JWTConfig, RateLimitConfig
+from authmcp_gateway.config import (
+    AppConfig,
+    AuthConfig,
+    JWTConfig,
+    RateLimitConfig,
+    WhitelistAuthConfig,
+)
 from authmcp_gateway.mcp import store
 
 
@@ -31,6 +37,11 @@ def _create_test_client(db_path: str) -> TestClient:
         mcp_public_url="http://localhost:8000",
         auth_required=True,
         whitelist_token="whitelist-secret",
+        whitelist_auth=WhitelistAuthConfig(
+            webauthn_rp_ids=["localhost"],
+            webauthn_allowed_origins=["http://localhost:8000"],
+            credential_encryption_key="MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
+        ),
     )
     return TestClient(create_app(config))
 
@@ -61,40 +72,49 @@ def test_admin_whitelist_page_uses_admin_route_without_embedding_token(db_path):
 
         response = client.get("/admin/whitelist")
         assert response.status_code == 200
-        assert "Whitelist token" in response.text
+        assert "legacy whitelist token" in response.text.lower()
+        assert "Verify with passkey" in response.text
+        assert "Review approval" in response.text
+        assert "Verify with passkey and approve" in response.text
+        assert "Configuration fingerprint" in response.text
         assert "whitelist-secret" not in response.text
-        assert "/admin/api/whitelist/pending" in response.text
+        assert "/admin/api/whitelist/items" in response.text
 
         legacy = client.get("/whitelist-secret/whitelist")
         assert legacy.status_code == 404
 
 
-def test_whitelist_api_requires_header_token_and_approves_pending_server(db_path):
+def test_whitelist_api_requires_verified_session_and_approves_http_server(db_path):
     store.init_mcp_database(db_path)
     server_id = store.create_mcp_server(
         db_path=db_path,
         name="pending-server",
-        url="",
-        transport_type="stdio",
-        command="python",
+        transport_type="http",
+        url="https://example.invalid/mcp",
     )
 
     with _create_test_client(db_path) as client:
         _login_admin(client, db_path)
 
-        missing = client.get("/admin/api/whitelist/pending")
+        missing = client.get("/admin/api/whitelist/items")
         assert missing.status_code == 401
 
-        pending = client.get(
-            "/admin/api/whitelist/pending", headers={"X-Whitelist-Token": "whitelist-secret"}
+        unlocked = client.post(
+            "/admin/api/whitelist/unlock/legacy",
+            json={"token": "whitelist-secret"},
+            headers=_admin_csrf_headers(client),
         )
+        assert unlocked.status_code == 200
+
+        pending = client.get("/admin/api/whitelist/items")
         assert pending.status_code == 200
-        assert pending.json()["servers"][0]["id"] == server_id
+        server = pending.json()["servers"][0]
+        assert server["id"] == server_id
 
         approved = client.post(
             f"/admin/api/whitelist/servers/{server_id}",
-            json={"action": "approve"},
-            headers={"X-Whitelist-Token": "whitelist-secret", **_admin_csrf_headers(client)},
+            json={"action": "approve", "config_fingerprint": server["config_fingerprint"]},
+            headers=_admin_csrf_headers(client),
         )
         assert approved.status_code == 200
 

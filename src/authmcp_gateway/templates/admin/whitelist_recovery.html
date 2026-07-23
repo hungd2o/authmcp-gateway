@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-50">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+    <meta name="referrer" content="no-referrer">
+    <meta name="robots" content="noindex, nofollow, noarchive">
+    <title>Whitelist security recovery · AuthMCP Gateway</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="stylesheet" href="/static/tailwind.css?v={{ app_version }}">
+    <script defer src="/static/alpine.min.js"></script>
+    <script src="/static/lucide.min.js"></script>
+    <style>
+        [x-cloak] { display: none !important; }
+        .whitelist-recovery .bg-emerald-700 { background-color: #047857; }
+        .whitelist-recovery .border-amber-300 { border-color: #fcd34d; }
+        .whitelist-recovery .mb-5 { margin-bottom: 1.25rem; }
+        .whitelist-recovery .mt-auto { margin-top: auto; }
+        .whitelist-recovery .text-emerald-950 { color: #022c22; }
+        .whitelist-recovery .text-red-900 { color: #7f1d1d; }
+        .whitelist-recovery button, .whitelist-recovery a { touch-action: manipulation; }
+        .whitelist-recovery .hover\:bg-amber-100:hover { background-color: #fef3c7; }
+        .whitelist-recovery .hover\:bg-amber-50:hover { background-color: #fffbeb; }
+        .whitelist-recovery .hover\:bg-emerald-800:hover { background-color: #065f46; }
+        .whitelist-recovery .focus\:ring-amber-500:focus { --tw-ring-color: #f59e0b; }
+        .whitelist-recovery .focus\:ring-blue-200:focus { --tw-ring-color: #bfdbfe; }
+        .whitelist-recovery .focus\:ring-emerald-600:focus { --tw-ring-color: #059669; }
+        .whitelist-recovery .focus-within\:ring-2:focus-within { box-shadow: 0 0 0 2px var(--recovery-focus-color, #3b82f6); }
+        .whitelist-recovery .focus-within\:ring-amber-500:focus-within { --recovery-focus-color: #f59e0b; }
+        .whitelist-recovery .focus-within\:ring-red-500:focus-within { --recovery-focus-color: #ef4444; }
+        @media (min-width: 640px) {
+            .whitelist-recovery .sm\:justify-between { justify-content: space-between; }
+            .whitelist-recovery .sm\:p-8 { padding: 2rem; }
+            .whitelist-recovery .sm\:py-12 { padding-top: 3rem; padding-bottom: 3rem; }
+            .whitelist-recovery .sm\:text-3xl { font-size: 1.875rem; line-height: 2.25rem; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .whitelist-recovery *, .whitelist-recovery *::before, .whitelist-recovery *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                scroll-behavior: auto !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
+    </style>
+</head>
+<body class="whitelist-recovery min-h-full bg-gray-50 text-gray-900">
+{% if recovery_local %}
+<main x-data="whitelistRecovery()" x-init="init()" class="mx-auto max-w-3xl px-4 py-8 sm:px-6 sm:py-12">
+    <header class="mb-6 flex items-center gap-3">
+        <span class="rounded-xl bg-gradient-to-br from-blue-600 to-cyan-600 p-3 text-white shadow-lg">
+            <i data-lucide="life-buoy" class="h-7 w-7"></i>
+        </span>
+        <div>
+            <p class="text-xs font-bold uppercase tracking-wider text-blue-700">AuthMCP Gateway</p>
+            <h1 class="mt-0.5 text-2xl font-bold sm:text-3xl">Whitelist security recovery</h1>
+        </div>
+    </header>
+
+    <section class="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4" aria-label="Recovery scope">
+        <div class="flex items-start gap-3">
+            <span class="rounded-full bg-blue-100 p-2 text-blue-700"><i data-lucide="shield-check" class="h-5 w-5"></i></span>
+            <div>
+                <h2 class="font-bold text-blue-950">Recovery is intentionally limited</h2>
+                <p class="mt-1 text-sm leading-relaxed text-blue-900">
+                    This page can register a passkey, reset the authenticator fallback, or rotate the recovery link. It cannot view whitelist items, approve or reject access, revoke approvals, or start an MCP process.
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <section class="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm" aria-labelledby="recovery-status-heading">
+        <div class="p-5 sm:p-6">
+            <div class="flex items-start gap-3">
+                <span class="rounded-full p-2.5" :class="statusClasses()">
+                    <i :data-lucide="statusIcon()" class="h-5 w-5" :class="status === 'checking' && 'animate-spin'"></i>
+                </span>
+                <div class="min-w-0 flex-1">
+                    <h2 id="recovery-status-heading" class="text-lg font-bold" x-text="statusHeading()"></h2>
+                    <p class="mt-1 text-sm leading-relaxed text-gray-600" x-text="statusDescription()"></p>
+                    <p x-show="status === 'active'" x-cloak class="mt-2 text-sm font-semibold text-emerald-800">
+                        Time remaining: <span class="font-mono" x-text="formatRemaining()"></span>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <div x-show="status === 'active'" x-cloak class="mt-5 space-y-4">
+        <section class="rounded-xl border border-gray-200 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="recovery-passkey-heading">
+            <div class="flex items-start gap-3">
+                <span class="rounded-full bg-blue-100 p-2 text-blue-700"><i data-lucide="fingerprint" class="h-5 w-5"></i></span>
+                <div class="min-w-0 flex-1">
+                    <h2 id="recovery-passkey-heading" class="font-bold">Register a new passkey</h2>
+                    <p class="mt-1 text-sm leading-relaxed text-gray-600">Adds a new phishing-resistant method. Existing passkeys remain registered and no whitelist approval changes.</p>
+                    <form @submit.prevent="registerPasskey()" class="mt-4 flex flex-col gap-3 sm:flex-row">
+                        <div class="min-w-0 flex-1">
+                            <label for="recovery-passkey-label" class="block text-sm font-semibold text-gray-800">Recognizable passkey name</label>
+                            <input id="recovery-passkey-label" x-model="passkeyLabel" name="recovery_passkey_label" maxlength="80" autocomplete="off" placeholder="e.g. Replacement laptop…" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200">
+                        </div>
+                        <button type="submit" :disabled="busy || !passkeySupported || !passkeyLabel.trim()" class="mt-auto inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50">
+                            <i :data-lucide="operation === 'passkey' ? 'loader-circle' : 'plus'" class="h-4 w-4" :class="operation === 'passkey' && 'animate-spin'"></i>
+                            <span x-text="operation === 'passkey' ? 'Waiting for passkey…' : 'Register passkey'"></span>
+                        </button>
+                    </form>
+                    <p x-show="!passkeySupported" class="mt-3 text-sm text-amber-800">Passkeys are unavailable in this browser or connection.</p>
+                </div>
+            </div>
+        </section>
+
+        <section class="rounded-xl border border-gray-200 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="recovery-totp-heading">
+            <div class="flex items-start gap-3">
+                <span class="rounded-full bg-violet-100 p-2 text-violet-700"><i data-lucide="smartphone" class="h-5 w-5"></i></span>
+                <div class="min-w-0 flex-1">
+                    <h2 id="recovery-totp-heading" class="font-bold">Reset authenticator app</h2>
+                    <p class="mt-1 text-sm leading-relaxed text-gray-600">Removes the current authenticator credential. Its codes stop working immediately; passkeys and whitelist decisions are unchanged.</p>
+                    <button x-show="!showTotpConfirmation" type="button" @click="showTotpConfirmation = true; refreshIcons()" :disabled="busy" class="mt-4 rounded-lg border border-red-300 bg-white px-4 py-2.5 text-sm font-bold text-red-700 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50">Review authenticator reset</button>
+                    <div x-show="showTotpConfirmation" x-cloak class="mt-4 rounded-xl border border-red-200 bg-red-50 p-4">
+                        <h3 class="text-sm font-bold text-red-900">Confirm removal of the authenticator credential</h3>
+                        <label class="mt-3 flex cursor-pointer items-start gap-3 rounded-lg bg-white p-3 focus-within:ring-2 focus-within:ring-red-500">
+                            <input x-model="totpResetAcknowledged" type="checkbox" name="confirm_totp_reset" class="mt-0.5 h-5 w-5 rounded border-gray-300 text-red-600 focus:ring-red-500">
+                            <span class="text-sm leading-relaxed text-gray-800">I understand authenticator codes will stop working and I will need to configure a new authenticator from the admin whitelist page.</span>
+                        </label>
+                        <div class="mt-3 flex flex-wrap gap-2">
+                            <button type="button" @click="resetTotp()" :disabled="busy || !totpResetAcknowledged" class="rounded-lg bg-red-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50">Reset authenticator</button>
+                            <button type="button" @click="showTotpConfirmation = false; totpResetAcknowledged = false" :disabled="busy" class="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="rounded-xl border border-gray-200 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="recovery-rotate-heading">
+            <div class="flex items-start gap-3">
+                <span class="rounded-full bg-amber-100 p-2 text-amber-700"><i data-lucide="rotate-cw" class="h-5 w-5"></i></span>
+                <div class="min-w-0 flex-1">
+                    <h2 id="recovery-rotate-heading" class="font-bold">Rotate recovery link</h2>
+                    <p class="mt-1 text-sm leading-relaxed text-gray-600">Creates a new one-time link that expires in five minutes and invalidates every previous unconsumed recovery link.</p>
+                    <button x-show="!showRotateConfirmation && !newRecoveryUrl" type="button" @click="showRotateConfirmation = true; refreshIcons()" :disabled="busy" class="mt-4 rounded-lg border border-amber-300 bg-white px-4 py-2.5 text-sm font-bold text-amber-900 hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 disabled:opacity-50">Review recovery rotation</button>
+                    <div x-show="showRotateConfirmation" x-cloak class="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                        <h3 class="text-sm font-bold text-amber-950">Confirm recovery-link rotation</h3>
+                        <label class="mt-3 flex cursor-pointer items-start gap-3 rounded-lg bg-white p-3 focus-within:ring-2 focus-within:ring-amber-500">
+                            <input x-model="rotateAcknowledged" type="checkbox" name="confirm_recovery_rotation" class="mt-0.5 h-5 w-5 rounded border-gray-300 text-amber-600 focus:ring-amber-500">
+                            <span class="text-sm leading-relaxed text-gray-800">I understand older unconsumed recovery links will stop working and the replacement link is shown only here.</span>
+                        </label>
+                        <div class="mt-3 flex flex-wrap gap-2">
+                            <button type="button" @click="rotateRecovery()" :disabled="busy || !rotateAcknowledged" class="rounded-lg bg-amber-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50">Create replacement link</button>
+                            <button type="button" @click="showRotateConfirmation = false; rotateAcknowledged = false" :disabled="busy" class="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50">Cancel</button>
+                        </div>
+                    </div>
+                    <div x-show="newRecoveryUrl" x-cloak class="mt-4 rounded-xl border-2 border-amber-300 bg-amber-50 p-4">
+                        <div class="flex items-start gap-2 text-amber-950"><i data-lucide="eye" class="mt-0.5 h-4 w-4"></i><p class="text-sm"><span class="font-bold">Store this replacement now.</span> It expires in five minutes, works once, and is not available again after leaving this page.</p></div>
+                        <label for="replacement-recovery-url" class="mt-3 block text-xs font-bold uppercase tracking-wide text-amber-950">Replacement recovery link</label>
+                        <div class="mt-1 flex gap-2">
+                            <input id="replacement-recovery-url" :value="newRecoveryUrl" name="replacement_recovery_url" autocomplete="off" spellcheck="false" readonly class="min-w-0 flex-1 rounded-lg border border-amber-300 bg-white px-3 py-2 font-mono text-xs text-gray-900">
+                            <button type="button" @click="copyRecoveryUrl()" class="rounded-lg border border-amber-300 bg-white px-3 py-2 text-amber-900 hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-500" aria-label="Copy replacement recovery link"><i data-lucide="copy" class="h-4 w-4"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div><h2 class="font-bold text-emerald-950">Finished recovering?</h2><p class="mt-1 text-sm text-emerald-900">Close this tab. The restricted recovery grant expires automatically and cannot access whitelist decisions.</p></div>
+                <a href="/admin/whitelist" class="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:ring-offset-2"><i data-lucide="arrow-left" class="h-4 w-4"></i>Return to whitelist</a>
+            </div>
+        </section>
+    </div>
+
+    <div x-show="notice" x-cloak class="mt-5 rounded-xl border px-4 py-3 text-sm font-medium" :class="noticeType === 'error' ? 'border-red-200 bg-red-50 text-red-800' : noticeType === 'warning' ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900'" role="status" aria-live="polite">
+        <div class="flex items-start gap-2"><i :data-lucide="noticeType === 'error' ? 'circle-alert' : noticeType === 'warning' ? 'triangle-alert' : 'check-circle'" class="mt-0.5 h-4 w-4 flex-shrink-0"></i><span x-text="notice"></span></div>
+    </div>
+
+    <footer class="mt-8 text-center text-xs text-gray-500">Recovery requests are local-only, audited, short-lived, and never include secrets in logs.</footer>
+</main>
+
+<script>
+function recoveryBase64UrlToBuffer(value) {
+    const normalized = String(value).replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
+    const binary = atob(padded);
+    return Uint8Array.from(binary, character => character.charCodeAt(0)).buffer;
+}
+
+function recoveryBufferToBase64Url(value) {
+    if (value == null) return null;
+    let binary = '';
+    new Uint8Array(value).forEach(byte => { binary += String.fromCharCode(byte); });
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function recoveryDecodeOptions(options) {
+    const decoded = { ...options, challenge: recoveryBase64UrlToBuffer(options.challenge) };
+    if (options.user?.id) decoded.user = { ...options.user, id: recoveryBase64UrlToBuffer(options.user.id) };
+    if (Array.isArray(options.excludeCredentials)) {
+        decoded.excludeCredentials = options.excludeCredentials.map(item => ({ ...item, id: recoveryBase64UrlToBuffer(item.id) }));
+    }
+    return decoded;
+}
+
+function recoverySerializeCredential(credential) {
+    const response = {
+        clientDataJSON: recoveryBufferToBase64Url(credential.response.clientDataJSON),
+        attestationObject: recoveryBufferToBase64Url(credential.response.attestationObject),
+    };
+    if (typeof credential.response.getTransports === 'function') response.transports = credential.response.getTransports();
+    return {
+        id: credential.id,
+        rawId: recoveryBufferToBase64Url(credential.rawId),
+        type: credential.type,
+        authenticatorAttachment: credential.authenticatorAttachment || null,
+        clientExtensionResults: credential.getClientExtensionResults(),
+        response,
+    };
+}
+
+function recoveryCsrfToken() {
+    const match = document.cookie.match(/(?:^|; )csrf_token=([^;]*)/);
+    return match ? decodeURIComponent(match[1]) : '';
+}
+
+function whitelistRecovery() {
+    return {
+        status: 'checking',
+        expiresAt: 0,
+        remainingSeconds: 0,
+        timer: null,
+        busy: false,
+        operation: '',
+        notice: '',
+        noticeType: 'success',
+        passkeySupported: false,
+        passkeyLabel: '',
+        showTotpConfirmation: false,
+        totpResetAcknowledged: false,
+        showRotateConfirmation: false,
+        rotateAcknowledged: false,
+        newRecoveryUrl: '',
+
+        async init() {
+            this.passkeySupported = Boolean(window.PublicKeyCredential && navigator.credentials);
+            const code = new URLSearchParams(window.location.hash.slice(1)).get('code');
+            window.history.replaceState({}, document.title, '/whitelist/recover');
+            this.refreshIcons();
+            if (!code) {
+                this.status = 'error';
+                this.notice = 'Open the one-time URL generated by the local authmcp-gateway recover command.';
+                this.noticeType = 'error';
+                return;
+            }
+            try {
+                const response = await this.post('/whitelist/recovery/claim', { code });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(data.error || 'This recovery link is invalid or expired.');
+                this.status = 'active';
+                this.expiresAt = Date.now() + Number(data.expires_in || 600) * 1000;
+                this.updateRemaining();
+                this.timer = window.setInterval(() => this.updateRemaining(), 1000);
+            } catch (error) {
+                this.status = 'error';
+                this.notice = error.message || 'This recovery link is invalid or expired.';
+                this.noticeType = 'error';
+            } finally {
+                this.refreshIcons();
+            }
+        },
+
+        async post(path, body = {}) {
+            return fetch(path, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': recoveryCsrfToken() },
+                body: JSON.stringify(body),
+            });
+        },
+
+        updateRemaining() {
+            this.remainingSeconds = Math.max(0, Math.ceil((this.expiresAt - Date.now()) / 1000));
+            if (this.remainingSeconds === 0 && this.status === 'active') {
+                this.status = 'expired';
+                this.notice = 'Recovery access expired. Generate a new one-time link from the local CLI if more work is needed.';
+                this.noticeType = 'warning';
+                window.clearInterval(this.timer);
+                this.refreshIcons();
+            }
+        },
+
+        async registerPasskey() {
+            if (this.busy || !this.passkeyLabel.trim() || !this.passkeySupported) return;
+            this.beginOperation('passkey');
+            try {
+                const optionsResponse = await this.post('/whitelist/recovery/passkeys/register/options');
+                const optionsData = await optionsResponse.json().catch(() => ({}));
+                if (!optionsResponse.ok) throw new Error(optionsData.error || 'Passkey registration could not start.');
+                const credential = await navigator.credentials.create({ publicKey: recoveryDecodeOptions(optionsData.publicKey) });
+                const verifyResponse = await this.post('/whitelist/recovery/passkeys/register/verify', {
+                    credential: recoverySerializeCredential(credential),
+                    label: this.passkeyLabel.trim(),
+                });
+                const verifyData = await verifyResponse.json().catch(() => ({}));
+                if (!verifyResponse.ok) throw new Error(verifyData.error || 'Passkey registration failed.');
+                this.passkeyLabel = '';
+                this.setNotice('Passkey registered. Existing passkeys and whitelist decisions were not changed.', 'success');
+            } catch (error) {
+                const message = ['NotAllowedError', 'AbortError'].includes(error?.name)
+                    ? 'The passkey prompt was cancelled or timed out. No change was made.'
+                    : error.message || 'Passkey registration failed.';
+                this.setNotice(message, 'error');
+                this.handleExpiredMessage(message);
+            } finally {
+                this.endOperation();
+            }
+        },
+
+        async resetTotp() {
+            if (this.busy || !this.totpResetAcknowledged) return;
+            this.beginOperation('totp');
+            try {
+                const response = await this.post('/whitelist/recovery/totp/reset');
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(data.error || 'Authenticator reset failed.');
+                this.showTotpConfirmation = false;
+                this.totpResetAcknowledged = false;
+                this.setNotice(data.removed
+                    ? 'Authenticator credential removed. Its codes no longer unlock whitelist actions.'
+                    : 'No active authenticator credential was found; nothing was changed.', data.removed ? 'success' : 'warning');
+            } catch (error) {
+                this.setNotice(error.message || 'Authenticator reset failed.', 'error');
+                this.handleExpiredMessage(error.message);
+            } finally {
+                this.endOperation();
+            }
+        },
+
+        async rotateRecovery() {
+            if (this.busy || !this.rotateAcknowledged) return;
+            this.beginOperation('rotate');
+            try {
+                const response = await this.post('/whitelist/recovery/rotate');
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(data.error || 'Recovery link rotation failed.');
+                this.newRecoveryUrl = new URL(data.recovery_url, window.location.origin).toString();
+                this.showRotateConfirmation = false;
+                this.rotateAcknowledged = false;
+                this.setNotice('Replacement recovery link created. Store it now; all previous unconsumed links are invalid.', 'success');
+            } catch (error) {
+                this.setNotice(error.message || 'Recovery link rotation failed.', 'error');
+                this.handleExpiredMessage(error.message);
+            } finally {
+                this.endOperation();
+                this.refreshIcons();
+            }
+        },
+
+        async copyRecoveryUrl() {
+            if (!this.newRecoveryUrl) return;
+            try {
+                await navigator.clipboard.writeText(this.newRecoveryUrl);
+                this.setNotice('Replacement recovery link copied. Store it in a secure location.', 'success');
+            } catch (_error) {
+                const field = document.getElementById('replacement-recovery-url');
+                field.focus();
+                field.select();
+                document.execCommand('copy');
+                this.setNotice('Replacement recovery link copied. Store it in a secure location.', 'success');
+            }
+        },
+
+        beginOperation(operation) {
+            this.busy = true;
+            this.operation = operation;
+            this.notice = '';
+        },
+
+        endOperation() {
+            this.busy = false;
+            this.operation = '';
+            this.refreshIcons();
+        },
+
+        handleExpiredMessage(message = '') {
+            if (/invalid or expired|grant is invalid|expired/i.test(message || '')) {
+                this.status = 'expired';
+                window.clearInterval(this.timer);
+            }
+        },
+
+        setNotice(message, type) {
+            this.notice = message;
+            this.noticeType = type;
+            this.refreshIcons();
+        },
+
+        statusHeading() {
+            return { checking: 'Validating one-time recovery link…', active: 'Restricted recovery access is active', error: 'Recovery link could not be used', expired: 'Recovery access expired' }[this.status] || 'Recovery status';
+        },
+
+        statusDescription() {
+            return { checking: 'The recovery code is being exchanged for a short-lived, recovery-only browser grant.', active: 'The one-time code has been consumed and removed from the address bar. Only the recovery actions below are available.', error: 'No recovery action is available. Generate a new local one-time link if needed.', expired: 'No further recovery action can be sent from this page.' }[this.status] || '';
+        },
+
+        statusIcon() {
+            return { checking: 'loader-circle', active: 'shield-check', error: 'circle-alert', expired: 'clock-alert' }[this.status] || 'shield';
+        },
+
+        statusClasses() {
+            return { checking: 'bg-blue-100 text-blue-700', active: 'bg-emerald-100 text-emerald-700', error: 'bg-red-100 text-red-700', expired: 'bg-amber-100 text-amber-700' }[this.status] || 'bg-gray-100 text-gray-700';
+        },
+
+        formatRemaining() {
+            const minutes = Math.floor(this.remainingSeconds / 60).toString().padStart(2, '0');
+            const seconds = (this.remainingSeconds % 60).toString().padStart(2, '0');
+            return `${minutes}:${seconds}`;
+        },
+
+        refreshIcons() {
+            setTimeout(() => {
+                lucide.createIcons();
+                document.querySelectorAll('.whitelist-recovery svg.lucide').forEach(icon => icon.setAttribute('aria-hidden', 'true'));
+            }, 0);
+        },
+    };
+}
+
+document.addEventListener('DOMContentLoaded', () => lucide.createIcons());
+</script>
+{% else %}
+<main class="mx-auto flex min-h-screen max-w-xl items-center px-4 py-10 sm:px-6">
+    <section class="w-full rounded-xl border border-red-200 bg-white p-6 text-center shadow-lg sm:p-8">
+        <span class="mx-auto inline-flex rounded-full bg-red-100 p-3 text-red-700"><i data-lucide="shield-x" class="h-7 w-7"></i></span>
+        <h1 class="mt-4 text-2xl font-bold text-gray-900">Recovery is local-only</h1>
+        <p class="mt-2 text-sm leading-relaxed text-gray-600">For your protection, whitelist security recovery can only be opened directly from the machine running AuthMCP Gateway.</p>
+    </section>
+</main>
+<script>document.addEventListener('DOMContentLoaded', () => { lucide.createIcons(); document.querySelectorAll('.whitelist-recovery svg.lucide').forEach(icon => icon.setAttribute('aria-hidden', 'true')); });</script>
+{% endif %}
+</body>
+</html>
